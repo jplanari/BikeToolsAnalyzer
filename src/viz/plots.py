@@ -2,6 +2,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import pandas as pd
+import matplotlib.ticker as ticker
+
 
 def plot_elevation(df, outpath=None):
     fig = plt.figure(figsize=(10, 6))
@@ -36,27 +39,51 @@ def plot_x_time(df, col, ylabel, outpath=None):
         plt.close()
     return fig
 
-def plot_power_curve(pcurve_dict, outpath=None):
-    durations = sorted(pcurve_dict.keys())
-    values = [pcurve_dict[d] for d in durations]
+def plot_power_curve(current_curve, best_curve=None):
+    """
+    Plots the power curve. 
+    current_curve: dict {duration_sec: watts}
+    best_curve: dict {duration_sec: watts} (Optional, for comparison)
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Convert duration to minutes for labels if needed, or keep seconds log scale
-    fig = plt.figure(figsize=(10,6))
-    plt.semilogx(durations, values, marker='o', linestyle='-', color='firebrick')
+    # Prepare Data
+    durations = sorted(current_curve.keys())
+    # Filter only durations that exist in current_curve and are valid numbers
+    x_labels = [d for d in durations if pd.notna(current_curve[d])]
+    y_values = [current_curve[d] for d in x_labels]
+
+    # Create X-axis points (equidistant for readability, not linear time scale)
+    x_pos = np.arange(len(x_labels))
+
+    # 1. Plot User All-Time Best (Background)
+    if best_curve:
+        # Ensure we match the x_labels of the current view
+        y_best = [best_curve.get(d, 0) for d in x_labels]
+        ax.plot(x_pos, y_best, color='lightgray', linestyle='--', linewidth=2, label="All-Time Best", marker='o', alpha=0.7)
+        ax.fill_between(x_pos, y_best, 0, color='lightgray', alpha=0.1)
+
+    # 2. Plot Current Ride (Foreground)
+    ax.plot(x_pos, y_values, marker='o', linestyle='-', color='#FF4B4B', linewidth=2, label="This Ride")
+    ax.fill_between(x_pos, y_values, 0, color='#FF4B4B', alpha=0.1)
+
+    # Formatting
+    ax.set_xticks(x_pos)
     
-    # Set specific ticks
-    ticks = [5, 60, 300, 1200, 3600]
-    labels = ["5s", "1m", "5m", "20m", "60m"]
-    plt.xticks(ticks, labels)
+    # Function to format seconds into 5s, 1m, 20m, etc.
+    def fmt_dur(s):
+        if s < 60: return f"{s}s"
+        elif s < 3600: return f"{int(s/60)}m"
+        else: return f"{int(s/3600)}h"
+
+    ax.set_xticklabels([fmt_dur(x) for x in x_labels])
     
-    plt.grid(True, which="both", ls="--")
-    plt.title("Power Duration Curve")
-    plt.ylabel("Watts")
-    plt.xlabel("Duration (Log Scale)")
-    plt.tight_layout()
-    if outpath:
-        plt.savefig(outpath)
-        plt.close()
+    ax.set_title("Power Duration Curve")
+    ax.set_ylabel("Power (Watts)")
+    ax.set_xlabel("Duration")
+    ax.grid(True, which='both', linestyle='--', alpha=0.5)
+    ax.legend()
+
     return fig
 
 def plot_zone_distribution(zone_times, title, outpath=None):

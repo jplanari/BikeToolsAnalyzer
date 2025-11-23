@@ -5,7 +5,7 @@ import hashlib
 DB_FILE = "bikethools.db"
 
 def init_db():
-    """Initializes the database with users and rides tables."""
+    """Initializes the database with users, rides, and power_records tables."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
@@ -40,12 +40,26 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     ''')
+
+    # NEW: Power Records Table
+    # Stores specific duration bests (e.g., 5s, 60s, 1200s) for each ride
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS power_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            ride_id INTEGER,
+            duration_sec INTEGER,
+            watts REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
     
     conn.commit()
     conn.close()
 
 # --- USER FUNCTIONS ---
-
+# (Keep save_user, get_all_users, get_user_data, delete_user as they are)
 def save_user(name, ftp, lthr, weight):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -93,7 +107,8 @@ def delete_user(name):
 
 # --- RIDE FUNCTIONS ---
 
-def save_ride(user_name, filename, file_bytes, stats):
+# UPDATED: Now accepts `power_curve_dict`
+def save_ride(user_name, filename, file_bytes, stats, power_curve_dict=None):
     user = get_user_data(user_name)
     if not user:
         return False, "User not found."
@@ -103,6 +118,7 @@ def save_ride(user_name, filename, file_bytes, stats):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
+        # 1. Insert Ride
         c.execute('''
             INSERT INTO rides (
                 user_id, filename, file_hash, file_content, date_time, 
@@ -114,6 +130,23 @@ def save_ride(user_name, filename, file_bytes, stats):
             stats['dist_km'], stats['ele_m'], stats['speed'],
             stats['np'], stats['avg_p'], stats['avg_hr']
         ))
+        
+        ride_id = c.lastrowid
+
+        # 2. Insert Power Records (if power data existed)
+        if power_curve_dict:
+            records_data = []
+            for duration, watts in power_curve_dict.items():
+                # We filter out NaNs or 0s to keep DB clean
+                if pd.notna(watts) and watts > 0:
+                    records_data.append((user['id'], ride_id, int(duration), float(watts)))
+            
+            if records_data:
+                c.executemany('''
+                    INSERT INTO power_records (user_id, ride_id, duration_sec, watts)
+                    VALUES (?, ?, ?, ?)
+                ''', records_data)
+
         conn.commit()
         return True, "Ride saved to history!"
     except sqlite3.IntegrityError:
@@ -141,13 +174,35 @@ def get_user_rides(user_name):
     return [dict(row) for row in rows]
 
 def get_ride_file(ride_id):
-    """Retrieves the file content for a specific ride."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # FIXED: Select BOTH filename and file_content
     c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id,))
     row = c.fetchone()
     conn.close()
     if row:
-        return row[0], row[1] # Now this works (filename, blob)
+        return row[0], row[1]
     return None, None
+
+# NEW FUNCTION: Get User's All-Time Best Power Curve
+def get_user_best_power(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return {}
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Query: Find the maximum watts for each duration across ALL rides for this user
+    c.execute('''
+        SELECT duration_sec, MAX(watts) 
+        FROM power_records 
+        WHERE user_id = ? 
+        GROUP BY duration_sec
+        ORDER BY duration_sec ASC
+    ''', (user['id'],))
+    
+    rows = c.fetchall()
+    conn.close()
+    
+    # Convert to dict {duration: watts}
+    return {row[0]: row[1] for row in rows}

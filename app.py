@@ -1,6 +1,6 @@
 import streamlit as st
 from src.data.db import init_db
-from src.viz.dashboard import render_sidebar, process_and_display_analysis, render_history
+from src.viz.dashboard import render_sidebar, process_and_display_analysis, render_history, render_user_corner
 
 # Initialize Database
 init_db()
@@ -24,5 +24,6 @@ if app_mode == "Analyze Upload":
     else:
         st.info("👈 Please upload a GPX file in the Sidebar, or select a ride from **Ride History**.")
 
-elif app_mode == "Ride History":
+elif app_mode == "User Corner":
+    render_user_corner(selected_user)
     render_history(selected_user)

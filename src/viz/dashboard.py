@@ -10,17 +10,21 @@ from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_sec
 from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
 from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
-from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides
+from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides, get_user_best_power
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 
+def show_centered(fig):
+    c1, c2, c3 = st.columns([1, 3, 1])
+    with c2: st.pyplot(fig)
+
 def render_sidebar():
     """Renders the sidebar and returns all user configuration settings."""
     st.sidebar.header("Navigation")
     
-    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "Ride History"])
+    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "User Corner"])
 
     st.sidebar.markdown("---")
     st.sidebar.header("👤 User Profile")
@@ -123,10 +127,15 @@ def process_and_display_analysis(file_obj, user_name, settings):
         current_ftp = settings['ftp']
         ride_if = IF(norm_power, current_ftp)
         ride_tss = TSS(norm_power, duration_s, current_ftp)
+        
+        current_curve = {}
+        if 'power' in df.columns:
+            current_curve = power_curve(df['power'])
+
 
         # Auto-Save
         if user_name:
-             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power, ride_tss, ride_if)
+             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power, ride_tss, ride_if, current_curve)
 
     # Detect Climbs
     detected_climbs = []
@@ -158,11 +167,11 @@ def process_and_display_analysis(file_obj, user_name, settings):
     st.markdown("---")
 
     # Visualizations
-    _render_plots(df, settings, detected_climbs)
+    _render_plots(df, settings, detected_climbs, current_curve, user_name)
     
     if os.path.exists("temp.gpx"): os.remove("temp.gpx")
 
-def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val):
+def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val, power_curve_dict):
     """Helper to handle database saving logic."""
     def safe_mean(series):
         if series.empty: return 0
@@ -187,7 +196,7 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_v
     file_hash = hashlib.md5(file_bytes).hexdigest()
     
     if file_hash not in st.session_state['saved_hashes']:
-        success, msg = save_ride(user_name, filename, file_bytes, stats)
+        success, msg = save_ride(user_name, filename, file_bytes, stats, power_curve_dict)
         if success:
             st.toast(f"✅ Saved to History: {filename}")
             st.session_state['saved_hashes'].add(file_hash)
@@ -196,10 +205,7 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_v
         else:
             st.error(f"Save Error: {msg}")
 
-def _render_plots(df, settings, detected_climbs):
-    def show_centered(fig):
-        c1, c2, c3 = st.columns([1, 3, 1])
-        with c2: st.pyplot(fig)
+def _render_plots(df, settings, detected_climbs, current_curve, user_name):
 
     if settings['show_map']:
         st.subheader("Route Map")
@@ -255,7 +261,11 @@ def _render_plots(df, settings, detected_climbs):
             st.info("No CdA data available.")
     if settings['show_curve'] and 'power' in df.columns:
         st.subheader("Power Curve")
-        show_centered(plot_power_curve(power_curve(df['power'])))
+        best_curve = None
+        if user_name:
+            best_curve = get_user_best_power(user_name)
+
+        show_centered(plot_power_curve(power_curve(df['power']), best_curve))
 
     if settings['show_zones']:
         st.subheader("Zone Distribution")
@@ -339,3 +349,42 @@ def render_history(user_name):
         hist_df[['date_time', 'filename', 'distance_km', 'elevation_m', 'norm_power']],
         hide_index=True,
     )
+
+def render_user_corner(user_name):
+    st.header("👤 User Corner")
+
+    if not user_name:
+        st.warning("Please select a user in the sidebar to view profile details.")
+        return
+    user_data = get_user_data(user_name)
+    if not user_data:
+        st.error("User data not found.")
+        return
+    st.subheader(f"Profile: {user_name}")
+    st.markdown(f"- **FTP:** {user_data['ftp']} W")
+    st.markdown(f"- **LTHR:** {user_data['lthr']} bpm")
+    st.markdown(f"- **Weight:** {user_data['weight']} kg")
+    best_power = get_user_best_power(user_name)
+
+    if best_power:
+        st.subheader("🏆 Best Power Records")
+        data = []
+        for duration, watts in sorted(best_power.items()):
+            dur_label = f"{duration}s"
+            if duration >= 60:
+                dur_label = f"{int(duration/60)}m"
+            if duration >= 3600:
+                dur_label = f"{int(duration/3600)}h"
+            
+            data.append({"Duration": dur_label, "Watts": watts, "W/kg": round(watts / user_data['weight'], 2)})
+            
+        bp_df = pd.DataFrame(data)        
+        st.dataframe(bp_df, hide_index=False)
+        st.subheader("All-Time Best Power Curve")
+        fig = plot_power_curve(best_power, None)
+        show_centered(fig)
+
+    else:
+        st.info("No best power records found.")
+    
+
