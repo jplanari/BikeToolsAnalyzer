@@ -6,15 +6,15 @@ import hashlib
 from streamlit_folium import st_folium
 
 # Imports from your existing modules
-from src.utilities import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.graphical import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
-from src.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
-from src.hr import estimate_hr_threshold, time_in_hr_zones
-from src.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides
-from src.climbs import detect_climbs, get_climb_segments
-from src.map_view import create_route_map
-from src.aerodyn import calculate_CdA, get_avg_cda
-from src.weather import fetch_ride_weather  # Ensure this is imported
+from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
+from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
+from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
+from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
+from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides
+from src.analysis.climbs import detect_climbs, get_climb_segments
+from src.viz.maps import create_route_map
+from src.physics.aerodyn import calculate_CdA, get_avg_cda
+from src.data.weather import fetch_ride_weather  # Ensure this is imported
 
 def render_sidebar():
     """Renders the sidebar and returns all user configuration settings."""

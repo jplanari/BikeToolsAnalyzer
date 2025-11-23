@@ -1,6 +1,6 @@
 import streamlit as st
-from src.db import init_db
-from src.ui import render_sidebar, process_and_display_analysis, render_history
+from src.data.db import init_db
+from src.viz.dashboard import render_sidebar, process_and_display_analysis, render_history
 
 # Initialize Database
 init_db()
