@@ -8,7 +8,7 @@ from streamlit_folium import st_folium
 # Imports from your existing modules
 from src.utilities import parse_gpx, compute_distance_and_ascent, resample_to_seconds
 from src.graphical import plot_elevation, plot_power_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
-from src.power import NP, power_curve, time_in_zones, coggan_zones
+from src.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
 from src.hr import estimate_hr_threshold, time_in_hr_zones
 from src.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides
 from src.climbs import detect_climbs, get_climb_segments
@@ -109,13 +109,18 @@ def process_and_display_analysis(file_obj, user_name, settings):
         # Basic Stats
         duration_s = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
         avg_speed = (total_dist / duration_s) * 3.6 if duration_s > 0 else 0
+        avg_power = df['power'].mean() if 'power' in df.columns else 0
         norm_power = NP(df['power']) if 'power' in df.columns else 0
+        # IF and TSS could be calculated/displayed if desired
+        current_ftp = settings['ftp']
+        ride_if = IF(norm_power, current_ftp)
+        ride_tss = TSS(norm_power, duration_s, current_ftp)
 
         # Auto-Save Logic
         # We try to save. If it's a duplicate, the DB function returns False,
         # but that's fine - we just catch it and don't show an error.
         if user_name:
-             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power)
+             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power, ride_tss, ride_if)
 
     # Detect Climbs
     detected_climbs = []
@@ -123,12 +128,20 @@ def process_and_display_analysis(file_obj, user_name, settings):
          detected_climbs = detect_climbs(df, min_length=1000, join_dist=1000)
 
     # Dashboard
-    c1, c2, c3, c4 = st.columns(4)
+    st.subheader("Ride Summary")
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Distance", f"{total_dist/1000:.2f} km")
     c2.metric("Elevation", f"{int(total_ascent)} m")
     c3.metric("Avg Speed", f"{avg_speed:.1f} km/h")
-    c4.metric("Norm Power", f"{int(norm_power)} W" if norm_power else "N/A")
-
+    c4.metric("Avg Power", f"{int(avg_power)} W" if avg_power else "N/A")
+    c5.metric("Duration", f"{int(duration_s//60)} min")
+    
+    st.subheader("Performance Metrics")
+    c6, c7, c8 = st.columns(3)
+    c6.metric("Norm Power", f"{int(norm_power)} W" if norm_power else "N/A")
+    c7.metric("Intensity Factor", f"{ride_if:.2f}" if norm_power else "N/A")
+    c8.metric("TSS", f"{int(ride_tss)}" if norm_power else "N/A")
+    
     st.markdown("---")
 
     # Visualizations
@@ -136,7 +149,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
     
     if os.path.exists("temp.gpx"): os.remove("temp.gpx")
 
-def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val):
+def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val):
     """Helper to handle database saving logic."""
     def safe_mean(series):
         if series.empty: return 0
@@ -150,6 +163,8 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_v
         'speed': speed,
         'np': int(np_val) if pd.notna(np_val) else 0,
         'avg_p': safe_mean(df['power']) if 'power' in df.columns else 0,
+        'tss': int(tss),
+        'if': if_val,
         'avg_hr': safe_mean(df['hr']) if 'hr' in df.columns else 0
     }
     

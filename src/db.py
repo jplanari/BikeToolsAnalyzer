@@ -34,6 +34,8 @@ def init_db():
             avg_speed_kph REAL,
             norm_power INTEGER,
             avg_power INTEGER,
+            tss INTEGER,
+            if_factor REAL,
             avg_hr INTEGER,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )

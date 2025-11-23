@@ -22,6 +22,21 @@ def NP(power_series):
     npower = (np.mean(av30 ** 4)) ** 0.25
     return npower
 
+def IF(norm_power, ftp):
+    """
+    Compute Intensity Factor (IF).
+    """
+    if ftp == 0 or ftp is None:
+        return 0.0
+    return norm_power / ftp
+
+def TSS(norm_power, duration_seconds, ftp):
+
+    if ftp is None or ftp == 0:
+        return 0.0
+    if_val = IF(norm_power, ftp)
+    return (duration_seconds * norm_power * if_val) / (ftp * 3600) * 100
+
 def power_curve(power_series, duration_s=None):
     """
     Compute the max-average power for a list of durations.
