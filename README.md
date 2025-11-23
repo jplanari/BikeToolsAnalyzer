@@ -94,6 +94,16 @@ Where:
 - $P_{roll} = C_{rr} \cdot Mass \cdot g \cdot v$ (Default $C_{rr} = 0.004$).
 - $P_{grav} = m \cdot g \cdot v \cdot \sin(\text{slope})$.Note: CdA estimation requires power meter data and is most accurate during steady-state riding.
 
+## How to Obtain Strava Session Cookies
+
+To retrieve your Strava session cookies to upload GPX files directly from your Strava account, follow these steps:
+1. Log in to your Strava account using a web browser (preferably Chrome or Firefox).
+2. Open the Developer Tools (F12 or right-click and select "Inspect").:
+3. Navigate to the "Application" tab (in Chrome) or "Storage" tab (in Firefox).
+4. Under "Cookies," find and select the Strava domain (https://www.strava.com).
+5. Look for the cookie named "strava_session" and copy its value.
+6. Paste this value into the Strava Session Cookie field in the BikeTools Analyzer app when prompted.
+
 ## Requirements
 Python 3.8 + 
 ```

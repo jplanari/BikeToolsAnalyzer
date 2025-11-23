@@ -15,6 +15,7 @@ from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
+from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
 
 def show_centered(fig):
     c1, c2, c3 = st.columns([1, 3, 1])
@@ -31,63 +32,104 @@ def render_sidebar():
 
     # User Management
     tab_select, tab_create = st.sidebar.tabs(["Select User", "Create/Edit"])
-    selected_user_data = None
+    
     selected_user_name = None
-
+    
     with tab_select:
         users = get_all_users()
         if users:
-            selected_user_name = st.selectbox("Active User", users)
+            selected_user_name = st.selectbox("Current User", users)
             if selected_user_name:
-                selected_user_data = get_user_data(selected_user_name)
-                if st.button("Delete User", type="primary"):
-                    delete_user(selected_user_name)
-                    st.rerun()
+                u_data = get_user_data(selected_user_name)
+                if u_data:
+                    user_ftp = u_data['ftp']
+                    user_lthr = u_data['lthr']
+                    user_weight = u_data['weight']
+
+
+            if st.button("Delete User", type="primary"):
+                delete_user(selected_user_name)
+                st.rerun()
         else:
             st.info("No users found. Create one!")
 
     with tab_create:
         with st.form("user_form"):
             new_name = st.text_input("Name")
-            new_ftp = st.number_input("FTP", value=200)
-            new_lthr = st.number_input("LTHR", value=170)
+            new_ftp = st.number_input("FTP (Watts)", value=200)
+            new_lthr = st.number_input("LTHR (bpm)", value=170)
             new_weight = st.number_input("Weight (kg)", value=70.0)
-            submitted = st.form_submit_button("Save Profile")
-            
+            submitted = st.form_submit_button("Save User")
             if submitted and new_name:
                 success, msg = save_user(new_name, new_ftp, new_lthr, new_weight)
                 if success:
-                    st.success(f"Saved {new_name}!")
+                    st.success(msg)
                     st.rerun()
                 else:
-                    st.error(f"Error: {msg}")
+                    st.error(msg)
 
     st.sidebar.markdown("---")
-
-    # Upload
-    uploaded_file = st.sidebar.file_uploader("Upload GPX File", type=["gpx"])
-
-    # Analysis Settings
-    st.sidebar.header("📊 Analysis Settings")
+    st.sidebar.header("📂 Data Import")
     
-    default_ftp = selected_user_data['ftp'] if selected_user_data else 250
-    default_lthr = selected_user_data['lthr'] if selected_user_data else 0
-    user_weight = selected_user_data['weight'] if selected_user_data else 70.0
+    # 1. Initialize current_file to None by default
+    current_file = None
+    
+    import_method = st.sidebar.radio("Source", ["Upload GPX", "Strava URL"])
 
+    if import_method == "Upload GPX":
+        uploaded_file = st.sidebar.file_uploader("Upload .gpx file", type=["gpx"])
+        # If user uploaded a file, assign it to current_file
+        if uploaded_file is not None:
+            current_file = uploaded_file
+
+    elif import_method == "Strava URL":
+        st.sidebar.info("Requires your '_strava4_session' cookie from your browser.")
+        
+        strava_url = st.sidebar.text_input("Strava Activity URL")
+        strava_cookie = st.sidebar.text_input("Strava Session Cookie", type="password")
+        
+        if st.sidebar.button("Fetch from Strava"):
+            if strava_url and strava_cookie:
+                with st.spinner("Downloading GPX from Strava..."):
+                    file_obj, error = fetch_gpx_from_strava(strava_url, strava_cookie)
+                    
+                    if file_obj:
+                        st.sidebar.success("Download successful!")
+                        # Extract ID from URL for the filename
+                        activity_id = strava_url.split('/activities/')[-1].split('/')[0]
+                        file_obj.name = f"strava_{activity_id}.gpx"
+                        
+                        # Save to session state so it persists after rerun
+                        st.session_state['temp_strava_file'] = file_obj
+                        current_file = file_obj
+                    else:
+                        st.sidebar.error(error)
+            else:
+                st.sidebar.warning("URL and Cookie are required.")
+        
+        # Restore from session state if available (so the file stays loaded)
+        if current_file is None and 'temp_strava_file' in st.session_state:
+            current_file = st.session_state['temp_strava_file']
+
+    # Settings
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Settings")
     settings = {
-        "ftp": st.sidebar.number_input("FTP (Watts)", min_value=0, value=default_ftp, step=5),
-        "lthr": st.sidebar.number_input("Threshold HR (bpm)", min_value=0, value=default_lthr, step=1),
-        "weight": user_weight,
-        "show_map": st.sidebar.checkbox("Route Map", value=True),
-        "show_ele": st.sidebar.checkbox("Elevation Profile", value=True),
-        "show_power": st.sidebar.checkbox("Rida Analysis", value=True),
-        "show_aero": st.sidebar.checkbox("CdA Estimate (Beta)", value=True),
-        "show_curve": st.sidebar.checkbox("Power Curve", value=True),
-        "show_zones": st.sidebar.checkbox("Zone Distributions", value=True),
-        "show_climbs": st.sidebar.checkbox("Climb Analysis", value=False)
+        'show_map': st.sidebar.checkbox("Show Map", value=True),
+        'show_curve': st.sidebar.checkbox("Show Power Curve", value=True),
+        'show_zones': st.sidebar.checkbox("Show Zones", value=True),
+        'show_ele': st.sidebar.checkbox("Show Elevation Profile", value=True),
+        'show_power': st.sidebar.checkbox("Show Power & Metrics", value=True),
+        'show_climbs': st.sidebar.checkbox("Show Climb Analysis", value=True),
+        'show_aero': st.sidebar.checkbox("Show Aerodynamic Analysis (Beta)", value=False),
+
+        'ftp': user_ftp,
+        'lthr': user_lthr,
+        'weight': user_weight
     }
 
-    return app_mode, selected_user_name, uploaded_file, settings
+    # RETURN 'current_file' (which works for both logic paths)
+    return app_mode, selected_user_name, current_file, settings
 
 def process_and_display_analysis(file_obj, user_name, settings):
     """Main logic to parse GPX, calculate stats, and render plots."""
