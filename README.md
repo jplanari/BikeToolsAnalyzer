@@ -88,7 +88,16 @@ bike-tools-analyzer/
         └── plots.py        # (Was graphical.py)
 ```
 ## The Physics Model
-The application uses a forward-integration physics model to solve for Aerodynamic Drag ($F_{aero}$):$$ P_{legs} \cdot (1 - Loss_{dt}) = P_{aero} + P_{roll} + P_{grav} + P_{accel} $$Where:$P_{aero}$: Derived from calculated Air Speed (Ground Speed + Wind Vector).Air Density ($\rho$): Calculated dynamically using Ideal Gas Law based on historical Temp/Pressure.$P_{roll}$: $C_{rr} \cdot Mass \cdot g \cdot v$ (Default $C_{rr} = 0.004$).$P_{grav}$: $Mass \cdot g \cdot v \cdot \sin(\text{slope})$.Note: CdA estimation requires power meter data and is most accurate during steady-state riding.
+The application uses a forward-integration physics model to solve for Aerodynamic Drag ($F_{aero}$):
+
+$P_{legs} \cdot (1 - Loss_{dt}) = P_{aero} + P_{roll} + P_{grav} + P_{accel} $
+
+Where:
+
+$P_{aero}$: Derived from calculated Air Speed (Ground Speed + Wind Vector).
+Air Density ($\rho$): Calculated dynamically using Ideal Gas Law based on historical Temp/Pressure.
+$P_{roll} = C_{rr} \cdot Mass \cdot g \cdot v$ (Default $C_{rr} = 0.004$).
+$P_{grav} = m \cdot g \cdot v \cdot \sin(\text{slope})$.Note: CdA estimation requires power meter data and is most accurate during steady-state riding.
 
 ## Requirements
 Python 3.8 + 
