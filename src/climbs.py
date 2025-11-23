@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-def detect_climbs(df, min_gradient=2.0, min_length=500, join_dist=200):
+def detect_climbs(df, min_gradient=1, min_length=1000, join_dist=1000):
     """
     Detect climbs in the ride data.
     """
