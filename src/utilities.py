@@ -139,6 +139,46 @@ def compute_distance_and_ascent(df):
     
     return df, total_dist, total_climb
 
+def compute_speed(df):
+    """
+    Computes speed in m/s from distance and time.
+    """
+    if df.empty or 'dist_m' not in df.columns:
+        return df
+
+    df = df.copy()
+    df['time_diff'] = df['time'].diff().dt.total_seconds().fillna(0)
+    df['dist_diff'] = df['dist_m'].diff().fillna(0)
+
+    # Speed = distance / time
+    df['speed'] = df.apply(
+        lambda row: row['dist_diff'] / row['time_diff'] if row['time_diff'] > 0 else 0,
+        axis=1
+    )
+
+    df['speed_kmh'] = df['speed'] * 3.6  # Convert m/s to km/h
+
+    return df
+
+def compute_grade(df):
+    """
+    Computes grade (%) from elevation and distance.
+    """
+    if df.empty or 'ele' not in df.columns or 'dist_m' not in df.columns:
+        return df
+
+    df = df.copy()
+    df['ele_diff'] = df['ele'].diff().fillna(0)
+    df['grade'] = df.apply(
+        lambda row: (row['ele_diff'] / row['segment_dist'] * 100) if row['segment_dist'] > 0 else 0,
+        axis=1
+    )
+
+    # Smooth grade with rolling mean (window=5s)
+    df['grade_smooth'] = df['grade'].rolling(window=5, min_periods=1, center=True).mean()
+
+    return df
+
 def resample_to_seconds(df):
     """
     Resamples data to 1-second intervals.

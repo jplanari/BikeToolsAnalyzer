@@ -16,21 +16,20 @@ def plot_elevation(df, outpath=None):
         plt.close()
     return fig
 
-def plot_power_time(df, outpath=None):
-    # Using rolling average for smoother power graph
-    x = df['power'].rolling(window=15, min_periods=1).mean()
+def plot_x_time(df, col, ylabel, outpath=None):
+    x = df[col].rolling(window=100, min_periods=1).mean()
     fig, ax1 = plt.subplots(figsize=(10,6))
-    
+
     ax1.set_xlabel('Time')
-    ax1.set_ylabel('Power (W)', color='green')
-    ax1.plot(df['time'], x, color='green', linewidth=1, alpha=0.8)
-    
+    ax1.set_ylabel(ylabel, color='blue')
+    ax1.plot(df['time'], x, color='blue', linewidth=1, alpha=0.8)
+
     ax2 = ax1.twinx()
     ax2.set_ylabel('Elevation (m)', color='gray')
     ax2.plot(df['time'], df['ele'], color='gray', linewidth=0.5, alpha=0.3)
     ax2.fill_between(df['time'], df['ele'], color='gray', alpha=0.1)
-    
-    plt.title('Power vs Time')
+
+    plt.title(f'{ylabel} vs Time')
     plt.tight_layout()
     if outpath:
         plt.savefig(outpath)
