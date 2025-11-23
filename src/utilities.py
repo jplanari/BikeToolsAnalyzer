@@ -179,6 +179,29 @@ def compute_grade(df):
 
     return df
 
+def calculate_bearing(df):
+
+    if 'lat' not in df.columns or 'lon' not in df.columns:
+        return pd.Series(0, index=df.index)
+
+    lat1 = np.radians(df['lat'])
+    lon1 = np.radians(df['lon'])
+    lat2 = np.radians(df['lat'].shift(-1).fillna(method='ffill'))
+    lon2 = np.radians(df['lon'].shift(-1).fillna(method='ffill'))
+
+    d_lon = lon2 - lon1
+    
+    x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(d_lon)
+    y = np.sin(d_lon) * np.cos(lat2)
+
+    bearing_rad = np.arctan2(y, x)
+    bearing_deg = (np.degrees(bearing_rad) + 360) % 360
+
+    #Normalize to 0-360
+    bearing_deg = (bearing_deg + 360) % 360
+
+    return bearing_deg
+
 def resample_to_seconds(df):
     """
     Resamples data to 1-second intervals.

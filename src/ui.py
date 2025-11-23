@@ -6,7 +6,7 @@ import hashlib
 from streamlit_folium import st_folium
 
 # Imports from your existing modules
-from src.utilities import parse_gpx, compute_distance_and_ascent, resample_to_seconds, compute_speed, compute_grade
+from src.utilities import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
 from src.graphical import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
 from src.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
 from src.hr import estimate_hr_threshold, time_in_hr_zones
@@ -14,6 +14,7 @@ from src.db import save_user, get_all_users, get_user_data, delete_user, save_ri
 from src.climbs import detect_climbs, get_climb_segments
 from src.map_view import create_route_map
 from src.aerodyn import calculate_CdA, get_avg_cda
+from src.weather import fetch_ride_weather  # Ensure this is imported
 
 def render_sidebar():
     """Renders the sidebar and returns all user configuration settings."""
@@ -32,7 +33,6 @@ def render_sidebar():
     with tab_select:
         users = get_all_users()
         if users:
-            # Simple selectbox
             selected_user_name = st.selectbox("Active User", users)
             if selected_user_name:
                 selected_user_data = get_user_data(selected_user_name)
@@ -60,23 +60,24 @@ def render_sidebar():
 
     st.sidebar.markdown("---")
 
-    # --- SIMPLIFIED FILE UPLOAD ---
-    # We allow re-uploading the same file by not using any state keys that block it.
+    # Upload
     uploaded_file = st.sidebar.file_uploader("Upload GPX File", type=["gpx"])
 
     # Analysis Settings
     st.sidebar.header("📊 Analysis Settings")
+    
     default_ftp = selected_user_data['ftp'] if selected_user_data else 250
     default_lthr = selected_user_data['lthr'] if selected_user_data else 0
-    default_wght = selected_user_data['weight'] if selected_user_data else 75.0
+    user_weight = selected_user_data['weight'] if selected_user_data else 70.0
 
     settings = {
         "ftp": st.sidebar.number_input("FTP (Watts)", min_value=0, value=default_ftp, step=5),
         "lthr": st.sidebar.number_input("Threshold HR (bpm)", min_value=0, value=default_lthr, step=1),
-        "weight": st.sidebar.number_input("Rider Weight (kg)", min_value=30.0, value=default_wght, step=0.5),
+        "weight": user_weight,
         "show_map": st.sidebar.checkbox("Route Map", value=True),
         "show_ele": st.sidebar.checkbox("Elevation Profile", value=True),
-        "show_power": st.sidebar.checkbox("Ride Statistics", value=True),
+        "show_power": st.sidebar.checkbox("Rida Analysis", value=True),
+        "show_aero": st.sidebar.checkbox("CdA Estimate (Beta)", value=True),
         "show_curve": st.sidebar.checkbox("Power Curve", value=True),
         "show_zones": st.sidebar.checkbox("Zone Distributions", value=True),
         "show_climbs": st.sidebar.checkbox("Climb Analysis", value=False)
@@ -87,25 +88,28 @@ def render_sidebar():
 def process_and_display_analysis(file_obj, user_name, settings):
     """Main logic to parse GPX, calculate stats, and render plots."""
     
-    # We REMOVED the check that prevents processing if hash exists.
-    # Analysis happens every time.
-
     file_bytes = file_obj.getvalue()
     
-    # We still calculate hash for DB saving logic later
-    file_hash = hashlib.md5(file_bytes).hexdigest()
-
     with open("temp.gpx", "wb") as f:
         f.write(file_bytes)
 
-    with st.spinner(f"Processing {file_obj.name}..."):
+    with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
+            # 1. Standard Parsing
             df = parse_gpx("temp.gpx")
             df, total_dist, total_ascent = compute_distance_and_ascent(df)
             df = resample_to_seconds(df)
             df, total_dist, total_ascent = compute_distance_and_ascent(df)
             df = compute_speed(df)
             df = compute_grade(df)
+
+            # 2. Physics Prep
+            df['bearing'] = calculate_bearing(df)
+
+            # 3. AUTOMATIC WEATHER FETCH
+            # We attempt to fetch it immediately. If it fails, df remains unchanged.
+            df = fetch_ride_weather(df)
+
         except Exception as e:
             st.error(f"Error parsing GPX: {e}")
             if os.path.exists("temp.gpx"): os.remove("temp.gpx")
@@ -116,23 +120,11 @@ def process_and_display_analysis(file_obj, user_name, settings):
         avg_speed = (total_dist / duration_s) * 3.6 if duration_s > 0 else 0
         avg_power = df['power'].mean() if 'power' in df.columns else 0
         norm_power = NP(df['power']) if 'power' in df.columns else 0
-        # IF and TSS could be calculated/displayed if desired
         current_ftp = settings['ftp']
         ride_if = IF(norm_power, current_ftp)
         ride_tss = TSS(norm_power, duration_s, current_ftp)
-        
-        # Aerodynamic Analysis
-        rider_weight = settings['weight']
-        bike_weight = 8.0  # kg, assumed
-        rho = 1.225  # kg/m^3, standard sea level
-        df['cda'], df['p_aero'] = calculate_CdA(df, rider_weight, bike_mass=bike_weight, rho=rho)
-        avg_cda = get_avg_cda(df['cda'])
-        avg_p_aero = df['p_aero'].mean() if not df['p_aero'].empty else 0
 
-
-        # Auto-Save Logic
-        # We try to save. If it's a duplicate, the DB function returns False,
-        # but that's fine - we just catch it and don't show an error.
+        # Auto-Save
         if user_name:
              _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power, ride_tss, ride_if)
 
@@ -143,6 +135,13 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
     # Dashboard
     st.subheader("Ride Summary")
+    
+    # Display Weather Badge if data exists
+    if 'wind_speed' in df.columns:
+        avg_w = df['wind_speed'].mean() * 3.6
+        avg_t = df['temp_c'].mean()
+        st.caption(f"🌤️ Weather Data Integrated: {avg_t:.1f}°C, Wind ~{avg_w:.1f} km/h")
+    
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Distance", f"{total_dist/1000:.2f} km")
     c2.metric("Elevation", f"{int(total_ascent)} m")
@@ -156,11 +155,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
     c7.metric("Intensity Factor", f"{ride_if:.2f}" if norm_power else "N/A")
     c8.metric("TSS", f"{int(ride_tss)}" if norm_power else "N/A")
     
-    st.subheader("Aerodynamic Analysis")
-    c9, c10 = st.columns(2)
-    c9.metric("Avg CdA", f"{avg_cda:.3f} m²" if not pd.isna(avg_cda) else "N/A")
-    c10.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if avg_p_aero else "N/A")
-
     st.markdown("---")
 
     # Visualizations
@@ -187,23 +181,17 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_v
         'avg_hr': safe_mean(df['hr']) if 'hr' in df.columns else 0
     }
     
-    # We use a session state set to avoid showing the Toast notification 
-    # every single time you refresh the page, but we allow the save attempt.
     if 'saved_hashes' not in st.session_state:
         st.session_state['saved_hashes'] = set()
         
     file_hash = hashlib.md5(file_bytes).hexdigest()
     
-    # Only try to write to DB if we haven't successfully done so in this session
     if file_hash not in st.session_state['saved_hashes']:
         success, msg = save_ride(user_name, filename, file_bytes, stats)
-        
         if success:
             st.toast(f"✅ Saved to History: {filename}")
             st.session_state['saved_hashes'].add(file_hash)
         elif "duplicate" in msg.lower():
-            # It's in the DB already. That's fine! 
-            # We just don't toast, and we mark it as 'handled' for this session.
             st.session_state['saved_hashes'].add(file_hash)
         else:
             st.error(f"Save Error: {msg}")
@@ -222,6 +210,21 @@ def _render_plots(df, settings, detected_climbs):
     if settings['show_ele']:
         st.subheader("Elevation Profile")
         show_centered(plot_elevation(df))
+
+    # --- CdA SECTION ---
+    if settings.get('show_aero', False) and 'power' in df.columns:
+        st.subheader("💨 Aerodynamic Analysis (Beta)")
+        
+        # Calculation happens automatically here using available columns
+        df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
+        avg_cda = get_avg_cda(df['cda'])
+        avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
+        if pd.notna(avg_cda):
+            c1, c2 = st.columns(2)        
+            c1.metric("Est. CdA", f"{avg_cda:.3f} m²" if pd.notna(avg_cda) else "N/A")
+            c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
+        else:
+            st.warning("Not enough stable data points (Speed > 18km/h required).")
 
     if settings['show_power']:
         st.subheader("Speed vs Time")
@@ -250,7 +253,6 @@ def _render_plots(df, settings, detected_climbs):
             show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
         else:
             st.info("No CdA data available.")
-
     if settings['show_curve'] and 'power' in df.columns:
         st.subheader("Power Curve")
         show_centered(plot_power_curve(power_curve(df['power'])))
@@ -331,7 +333,7 @@ def render_history(user_name):
         return
 
     hist_df = pd.DataFrame(history)
-    st.info("Here is a log of your past rides. (Loading historical charts is disabled).")
+    st.info("Here is a log of your past rides.")
 
     st.dataframe(
         hist_df[['date_time', 'filename', 'distance_km', 'elevation_m', 'norm_power']],

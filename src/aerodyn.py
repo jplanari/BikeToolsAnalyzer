@@ -26,7 +26,20 @@ def calculate_CdA(df, rider_mass, bike_mass=8.0, crr=0.004, rho=1.225, drivetrai
     else:
         slope = 0.0
 
-    v = df['speed'] # m/s
+    v = df['speed'] # m/s. Ground speed
+
+    if 'wind_speed' in df.columns and 'bearing' in df.columns:
+        w_speed = df['wind_speed'].fillna(0)
+        w_deg = df['wind_deg'].fillna(0)
+        ride_bearing = df['bearing'].fillna(0)
+        rad_diff = np.radians(w_deg - ride_bearing)
+        v_hdwind = w_speed * np.cos(rad_diff)
+        v_air = v + v_hdwind
+
+        v_air = v_air.abs()
+    else:
+        v_air = v
+
     p_input = df['power']
 
     p_wheel = p_input * (1 - drivetrain_loss)
@@ -47,7 +60,7 @@ def calculate_CdA(df, rider_mass, bike_mass=8.0, crr=0.004, rho=1.225, drivetrai
 
     valid_speed_mask = v > 5.0
 
-    cda_series = p_aero / (0.5 * rho * v**3)
+    cda_series = p_aero / (0.5 * rho * v**2*v_air)
     cda_series = cda_series.where(valid_speed_mask, np.nan)
 
     cda_series = cda_series.mask(cda_series < 0, np.nan)
