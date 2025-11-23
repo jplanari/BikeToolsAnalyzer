@@ -6,15 +6,15 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 
 📊 Performance Metrics
 
-*Power Analysis: Calculates Normalized Power (NP), Intensity Factor (IF), and Training Stress Score (TSS).
-*Power Curve: Generates a Mean Maximal Power (MMP) curve to analyze best efforts across durations.
-*Heart Rate: Automatic LTHR estimation (Friel method) and Time-in-Zone distributions.
+-Power Analysis: Calculates Normalized Power (NP), Intensity Factor (IF), and Training Stress Score (TSS).
+-Power Curve: Generates a Mean Maximal Power (MMP) curve to analyze best efforts across durations.
+-Heart Rate: Automatic LTHR estimation (Friel method) and Time-in-Zone distributions.
 
 💨 Aerodynamic Analysis (Beta)
 
-*CdA Estimation: Estimates your Coefficient of Drag * Area (CdA) by solving the equation of motion.
-*Weather Integration: Automatically fetches historical Wind Speed, Wind Direction, Temperature, and Pressure from the Open-Meteo API for the exact time and location of your ride.
-*Vector Math: Calculates "Air Speed" (vs Ground Speed) by computing the headwind/tailwind component relative to the rider's compass bearing.
+-CdA Estimation: Estimates your Coefficient of Drag * Area (CdA) by solving the equation of motion.
+-Weather Integration: Automatically fetches historical Wind Speed, Wind Direction, Temperature, and Pressure from the Open-Meteo API for the exact time and location of your ride.
+-Vector Math: Calculates "Air Speed" (vs Ground Speed) by computing the headwind/tailwind component relative to the rider's compass bearing.
 
 🏔️ Climb Detection
 
