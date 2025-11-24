@@ -58,29 +58,23 @@ streamlit run app.py
 ```
 bike-tools-analyzer/
 ├── app.py                  # Entry point
-├── biketools_db.sqlite     # (Auto-generated)
 ├── requirements.txt
-├── README.md
 └── src/
-    ├── __init__.py
     ├── analysis/           # Algorithms & Detection
-    │   ├── __init__.py
     │   └── climbs.py
     ├── data/               # IO, Database, & Parsing
-    │   ├── __init__.py
     │   ├── db.py
-    │   ├── gpx.py          # (Was utilities.py)
+    │   ├── gpx.py          
     │   └── weather.py
+    │   └── strava.py
     ├── physics/            # Core Science Logic
-    │   ├── __init__.py
     │   ├── aerodyn.py
     │   ├── hr.py
     │   └── power.py
     └── viz/                # UI & Visualization
-        ├── __init__.py
-        ├── dashboard.py    # (Was ui.py)
-        ├── maps.py         # (Was map_view.py)
-        └── plots.py        # (Was graphical.py)
+        ├── dashboard.py    
+        ├── maps.py         
+        └── plots.py        
 ```
 ## The Physics Model
 The application uses a forward-integration physics model to solve for Aerodynamic Drag ($F_{aero}$):
