@@ -7,13 +7,13 @@ from streamlit_folium import st_folium
 
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb
+from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb, plot_power_budget
 from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides, get_user_best_power
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, get_avg_cda
+from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
 
@@ -260,8 +260,8 @@ def _render_plots(df, settings, detected_climbs, current_curve, user_name):
         show_centered(plot_elevation(df))
 
     # --- CdA SECTION ---
-    if settings.get('show_aero', False) and 'power' in df.columns:
-        st.subheader("💨 Aerodynamic Analysis (Beta)")
+    if settings.get('show_aero', True) and 'power' in df.columns and 'speed' in df.columns:
+        st.subheader("💨 Aerodynamic Analysis & Power Budget")
         
         # Calculation happens automatically here using available columns
         df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
@@ -274,29 +274,36 @@ def _render_plots(df, settings, detected_climbs, current_curve, user_name):
         else:
             st.warning("Not enough stable data points (Speed > 18km/h required).")
 
+        st.markdown("**Power Budget: Where did your watts go?**")
+        with st.spinner("Calculating power components..."):
+            df['p_grav'], df['p_roll'], df['p_accel']  = calculate_power_components(df, settings['weight'])
+            if not df.empty:
+                fig_budget = plot_power_budget(df)
+                show_centered(fig_budget)
+                
     if settings['show_power']:
-        st.subheader("Speed vs Time")
+        st.subheader("Speed")
         show_centered(plot_x_time(df, 'speed_kmh', 'Speed (km/h)'))
 
-        st.subheader("Power vs Time")
+        st.subheader("Power")
         if 'power' not in df.columns:
             st.info("No power data available.")
         else:
             show_centered(plot_x_time(df, 'power', 'Power (W)'))
 
-        st.subheader("Cadence vs Time")
+        st.subheader("Cadence")
         if 'cadence' in df.columns:
             show_centered(plot_x_time(df, 'cadence', 'Cadence (rpm)'))
         else:
             st.info("No cadence data available.")
 
-        st.subheader("Heart Rate vs Time")
+        st.subheader("Heart Rate")
         if 'hr' in df.columns:
             show_centered(plot_x_time(df, 'hr', 'Heart Rate (bpm)'))
         else:
             st.info("No heart rate data available.")
 
-        st.subheader("CdA vs Time")
+        st.subheader("CdA")
         if 'cda' in df.columns:
             show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
         else:

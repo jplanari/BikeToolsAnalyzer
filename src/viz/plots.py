@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import pandas as pd
 import matplotlib.ticker as ticker
-
+import matplotlib.dates as mdates
 
 def plot_elevation(df, outpath=None):
     fig = plt.figure(figsize=(10, 6))
@@ -23,16 +23,16 @@ def plot_x_time(df, col, ylabel, outpath=None):
     x = df[col].rolling(window=100, min_periods=1).mean()
     fig, ax1 = plt.subplots(figsize=(10,6))
 
-    ax1.set_xlabel('Time')
+    ax1.set_xlabel('Distance (km)')
     ax1.set_ylabel(ylabel, color='blue')
-    ax1.plot(df['time'], x, color='blue', linewidth=1, alpha=0.8)
+    ax1.plot(df['dist_m']/1000, x, color='blue', linewidth=1, alpha=0.8)
 
     ax2 = ax1.twinx()
     ax2.set_ylabel('Elevation (m)', color='gray')
-    ax2.plot(df['time'], df['ele'], color='gray', linewidth=0.5, alpha=0.3)
-    ax2.fill_between(df['time'], df['ele'], color='gray', alpha=0.1)
+    ax2.plot(df['dist_m']/1000, df['ele'], color='gray', linewidth=0.5, alpha=0.3)
+    ax2.fill_between(df['dist_m']/1000, df['ele'], color='gray', alpha=0.1)
 
-    plt.title(f'{ylabel} vs Time')
+    plt.title(f'{ylabel}')
     plt.tight_layout()
     if outpath:
         plt.savefig(outpath)
@@ -196,5 +196,84 @@ def plot_detailed_climb(df, start_idx, end_idx, segments):
     ]
     ax.legend(handles=patches, loc='upper left', fontsize='small')
 
+    plt.tight_layout()
+    return fig
+
+def plot_power_budget(df):
+    """
+    Plots the breakdown of power components.
+    comps_df: DataFrame with columns p_aero, p_grav, p_roll, p_accel, p_loss
+    """
+    comps_df = df[['p_aero', 'p_grav', 'p_roll', 'p_accel','ele','dist_m']].copy()
+    
+    # --- FIX: Ensure DatetimeIndex ---
+    # If comps_df doesn't have a DatetimeIndex, try to recover it from the original df
+    if not isinstance(comps_df.index, pd.DatetimeIndex):
+        if 'time' in df.columns:
+            comps_df = comps_df.set_index(pd.to_datetime(df['time']))
+        elif isinstance(df.index, pd.DatetimeIndex):
+             comps_df.index = df.index
+        else:
+            # Fallback: Create a dummy index if real time is missing (start at 0, 1s steps)
+            start = pd.Timestamp.now()
+            comps_df.index = pd.date_range(start=start, periods=len(comps_df), freq='1s')
+    # 1. Resample and Fill NaNs
+    # We use .mean() to smooth, then .fillna(0) to ensure stackplot doesn't break on gaps
+    resampled = comps_df.resample('30s').mean().fillna(0)
+    
+    # 2. Setup Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    
+    x = resampled['dist_m']/1000
+    
+    # 3. Prepare Data Components (Absolute)
+    # Ensure no negative values for the stacked chart logic (though gravity/accel can be negative)
+    # For a "Budget" chart, we typically visualize the *Cost* (positive loads).
+    y_aero = resampled['p_aero'].clip(lower=0) 
+    y_roll = resampled['p_roll'].clip(lower=0)
+    y_grav = resampled['p_grav'].clip(lower=0) 
+    y_accel = resampled['p_accel'].clip(lower=0)
+    
+    labels = ["Rolling Res.", "Acceleration", "Gravity (Climb)", "Aerodynamic"]
+    colors = ["#2ca02c", "#ff7f0e", "#d62728", "#1f77b4"] 
+    
+    # 4. Plot Absolute (Stackplot)
+    ax1.stackplot(x, y_roll, y_accel, y_grav, y_aero, labels=labels, colors=colors, alpha=0.8)
+    ax1.set_ylabel("Power (W)")
+    ax1.legend(loc='upper left')
+    ax1.grid(True, alpha=0.3)
+    
+    ax3 = ax1.twinx()
+    ax3.plot(x, resampled['ele'], linewidth=2.5, color='black')
+    ax3.set_ylabel("Elevation (m)")
+
+    # 5. Prepare Relative Data (Percentage)
+    total_cost = y_roll + y_accel + y_grav + y_aero
+    
+    # Avoid division by zero: only calculate ratio where total power is significant (>10W)
+    mask = total_cost > 10
+    
+    # Helper to safe-divide
+    def get_pct(series):
+        return (series / total_cost).where(mask, 0) * 100
+
+    y_roll_pct = get_pct(y_roll)
+    y_accel_pct = get_pct(y_accel)
+    y_grav_pct = get_pct(y_grav)
+    y_aero_pct = get_pct(y_aero)
+    
+    # 6. Plot Relative (Stackplot)
+    ax2.stackplot(x, y_roll_pct, y_accel_pct, y_grav_pct, y_aero_pct, labels=labels, colors=colors, alpha=0.8)
+    
+    ax2.set_ylabel("Ratio of Total Power (%)")
+    ax2.set_xlabel("Distance (km)")
+    ax2.set_ylim(0, 100)
+    ax2.grid(True, alpha=0.3)
+   
+    ax4 = ax2.twinx()
+    ax4.plot(x, resampled['ele'], linewidth=2.5, color='black')
+    ax4.set_ylabel("Elevation (m)")
+
+    
     plt.tight_layout()
     return fig

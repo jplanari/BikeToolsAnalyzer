@@ -22,7 +22,7 @@ if app_mode == "Analyze Upload":
     if current_file is not None:
         process_and_display_analysis(current_file, selected_user, settings)
     else:
-        st.info("👈 Please upload a GPX file in the Sidebar, or select a ride from **Ride History**.")
+        st.info("👈 Please upload a GPX file in the Sidebar or load it from **Strava**.")
 
 elif app_mode == "User Corner":
     render_user_corner(selected_user)
