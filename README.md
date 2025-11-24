@@ -71,6 +71,7 @@ bike-tools-analyzer/
     │   ├── db.py
     │   ├── gpx.py          # (Was utilities.py)
     │   └── weather.py
+    │   └── strava.py
     ├── physics/            # Core Science Logic
     │   ├── __init__.py
     │   ├── aerodyn.py
