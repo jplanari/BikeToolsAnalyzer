@@ -277,3 +277,27 @@ def plot_power_budget(df):
     
     plt.tight_layout()
     return fig
+
+def plot_w_prime_balance(df, w_val_series, w_prime_cap):
+    fig, ax = plt.subplots(figsize=(10,5))
+
+    #x = df.index if isinstance(df.index, pd.Datetimeindex) else df['time']
+    x = df['dist_m'] / 1000.0  # Distance in km
+    y = w_val_series / 1000.0
+
+    cap_kj = w_prime_cap / 1000.0
+
+    ax.plot(x, y, color='red' , linewidth=1.5, label="W' Balance (kJ)")
+    ax.axhline(cap_kj, color='black', linestyle='--', linewidth=1, label="W' Capacity (kJ)")
+    ax.set_xlabel("Distance (km)")
+    ax.set_ylabel("W' Balance (kJ)")
+    ax.set_title("Anaerobic Battery (W' Balance)")
+    ax.set_ylim(0, cap_kj * 1.1)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    ax2 = ax.twinx()
+    ax2.plot(x, df['ele'], color='gray', linewidth=0.5, alpha=0.5)
+    ax2.fill_between(x, df['ele'], color='gray', alpha=0.1)
+    ax2.set_ylabel("Elevation (m)")
+
+    return fig

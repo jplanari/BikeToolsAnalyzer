@@ -7,8 +7,8 @@ from streamlit_folium import st_folium
 
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb, plot_power_budget
-from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones
+from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance
+from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides, get_user_best_power
 from src.analysis.climbs import detect_climbs, get_climb_segments
@@ -173,7 +173,10 @@ def process_and_display_analysis(file_obj, user_name, settings):
         current_curve = {}
         if 'power' in df.columns:
             current_curve = power_curve(df['power'])
-
+        settings['w_prime_cap'] = 20000.0
+        #W' Balance Calculation (if power data exists)
+        if 'power' in df.columns and current_ftp > 0:
+            df['w_prime_balance'] = calculate_w_prime_balance(df['power'], current_ftp)
 
         # Auto-Save
         if user_name:
@@ -308,6 +311,13 @@ def _render_plots(df, settings, detected_climbs, current_curve, user_name):
             show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
         else:
             st.info("No CdA data available.")
+
+        st.subheader("W' Balance")
+        if 'w_prime_balance' in df.columns:
+            show_centered(plot_w_prime_balance(df,df['w_prime_balance'],settings['w_prime_cap']))
+        else:
+            st.info("No W' Balance data available.")
+
     if settings['show_curve'] and 'power' in df.columns:
         st.subheader("Power Curve")
         best_curve = None

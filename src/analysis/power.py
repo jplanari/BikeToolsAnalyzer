@@ -96,3 +96,29 @@ def time_in_zones(series, zones):
                 counts[z] += 1
                 break
     return counts
+
+def calculate_w_prime_balance(power_series, ftp, w_prime_cap_j=20000, tau=546):
+    """
+    Calculate W' Balance over time.
+    """
+    if ftp is None or ftp == 0 or power_series.empty:
+        return pd.Series(dtype=float)
+
+    p = power_series.fillna(0).to_numpy()
+    w_bal = np.zeros_like(p, dtype=float)
+
+    w_exp = 0.0
+    decay = np.exp(-1 / tau)
+
+    for i, watts in enumerate(p):
+        # Integral model:
+        # W_exp(t) = W_exp(t-1) * exp(-1/tau) + max(0, P(t) - CP)
+
+        excess_power = max(0, watts - ftp)
+        w_exp = w_exp * decay + excess_power
+
+        w_bal[i] = w_prime_cap_j - w_exp
+
+    return pd.Series(w_bal, index=power_series.index)
+
+
