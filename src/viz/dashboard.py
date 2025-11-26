@@ -8,7 +8,7 @@ from streamlit_folium import st_folium
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
 from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance
-from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
+from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, calculate_ride_kJ
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides, get_user_best_power
 from src.analysis.climbs import detect_climbs, get_climb_segments
@@ -20,6 +20,13 @@ from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
 def show_centered(fig):
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2: st.pyplot(fig)
+
+def format_duration(seconds):
+    if not seconds: return "00:00:00"
+
+    m, s =divmod(int(seconds), 60)
+    h, m =divmod(m, 60)
+    return f"{h:02}:{m:02}:{s:02}"
 
 def render_sidebar():
     """Renders the sidebar and returns all user configuration settings."""
@@ -156,6 +163,12 @@ def process_and_display_analysis(file_obj, user_name, settings):
             # We attempt to fetch it immediately. If it fails, df remains unchanged.
             df = fetch_ride_weather(df)
 
+            moving_thresh = 2.0 #m/s
+            is_moving = df['speed'] >= moving_thresh
+
+            moving_time_sec = is_moving.sum()
+            elapsed_time_sec = len(df) #Assuming 1Hz resampled
+
         except Exception as e:
             st.error(f"Error parsing GPX: {e}")
             if os.path.exists("temp.gpx"): os.remove("temp.gpx")
@@ -163,13 +176,19 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
         # Basic Stats
         duration_s = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
-        avg_speed = (total_dist / duration_s) * 3.6 if duration_s > 0 else 0
-        avg_power = df['power'].mean() if 'power' in df.columns else 0
+        if moving_time_sec > 0:
+            avg_speed = df.loc[is_moving, 'speed'].mean() * 3.6
+        else:
+            avg_speed = 0
+
+        avg_power = df.loc[is_moving, 'power'].mean() if 'power' in df.columns and moving_time_sec > 0 else 0
+        avg_hr = df.loc[is_moving, 'hr'].mean() if 'hr' in df.columns and moving_time_sec > 0 else 0
         norm_power = NP(df['power']) if 'power' in df.columns else 0
         current_ftp = settings['ftp']
         ride_if = IF(norm_power, current_ftp)
         ride_tss = TSS(norm_power, duration_s, current_ftp)
-        
+        ride_kj = calculate_ride_kJ(df['power']) if 'power' in df.columns else 0
+
         current_curve = {}
         if 'power' in df.columns:
             current_curve = power_curve(df['power'])
@@ -196,18 +215,20 @@ def process_and_display_analysis(file_obj, user_name, settings):
         avg_t = df['temp_c'].mean()
         st.caption(f"🌤️ Weather Data Integrated: {avg_t:.1f}°C, Wind ~{avg_w:.1f} km/h")
     
+    dHHMMSS = format_duration(duration_s)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Distance", f"{total_dist/1000:.2f} km")
     c2.metric("Elevation", f"{int(total_ascent)} m")
     c3.metric("Avg Speed", f"{avg_speed:.1f} km/h")
     c4.metric("Avg Power", f"{int(avg_power)} W" if avg_power else "N/A")
-    c5.metric("Duration", f"{int(duration_s//60)} min")
+    c5.metric("Duration", f"{dHHMMSS}")
     
     st.subheader("Performance Metrics")
-    c6, c7, c8 = st.columns(3)
+    c6, c7, c8, c9 = st.columns(4)
     c6.metric("Norm Power", f"{int(norm_power)} W" if norm_power else "N/A")
     c7.metric("Intensity Factor", f"{ride_if:.2f}" if norm_power else "N/A")
     c8.metric("TSS", f"{int(ride_tss)}" if norm_power else "N/A")
+    c9.metric("Work", f"{int(ride_kj)} kJ" if norm_power else "N/A")
     
     st.markdown("---")
 

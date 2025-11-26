@@ -121,4 +121,11 @@ def calculate_w_prime_balance(power_series, ftp, w_prime_cap_j=20000, tau=546):
 
     return pd.Series(w_bal, index=power_series.index)
 
+def calculate_ride_kJ(power_series):
+    """ Assume series sampled a 1Hz """
+    if power_series.empty:
+        return 0.0
+
+    total_kJ = power_series.fillna(0).sum() / 1000.0
+    return total_kJ
 
