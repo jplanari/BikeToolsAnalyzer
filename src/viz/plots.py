@@ -301,3 +301,38 @@ def plot_w_prime_balance(df, w_val_series, w_prime_cap):
     ax2.set_ylabel("Elevation (m)")
 
     return fig
+
+def plot_pmc(pmc_df):
+    fig, ax1 = plt.subplots(figsize=(10,6))
+
+    col_ctl = '#1f77b4'  # Blue
+    col_atl = '#e377c2'  # Pink
+    col_tsb_pos = '#ff7f0e'  # Yellow
+    col_tsb_neg = '#d62728'  # Red
+
+    x = pmc_df.index
+
+    ax2 = ax1.twinx()
+
+    tsb_colors = [col_tsb_pos if v >= 0 else col_tsb_neg for v in pmc_df['TSB']]
+    ax2.bar(x, pmc_df['TSB'], color=tsb_colors, alpha=0.3, width=1, label='TSB (Form)')
+    ax2.set_ylabel("TSB (Form)", color='gray')
+    ax2.axhline(0, color='black', linestyle='--', linewidth=1)
+
+    ax1.plot(x, pmc_df['CTL'], color=col_ctl, linewidth=2, label='CTL (Fitness)')
+    ax1.fill_between(x, pmc_df['CTL'], 0, color=col_ctl, alpha=0.1)
+    ax1.plot(x, pmc_df['ATL'], color=col_atl, linewidth=2, label='ATL (Fatigue)')
+
+    ax1.set_title("Performance Management Chart (PMC)")
+    ax1.set_ylabel("Training Load")
+    ax1.grid(True, alpha=0.2)
+
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
+
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+    plt.tight_layout()
+
+    return fig
+

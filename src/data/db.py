@@ -123,12 +123,12 @@ def save_ride(user_name, filename, file_bytes, stats, power_curve_dict=None):
             INSERT INTO rides (
                 user_id, filename, file_hash, file_content, date_time, 
                 distance_km, elevation_m, avg_speed_kph, 
-                norm_power, avg_power, avg_hr
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                norm_power, avg_power, avg_hr, tss, if_factor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             user['id'], filename, file_hash, file_bytes, str(stats['date_time']),
             stats['dist_km'], stats['ele_m'], stats['speed'],
-            stats['np'], stats['avg_p'], stats['avg_hr']
+            stats['np'], stats['avg_p'], stats['avg_hr'], stats.get('tss',0), stats.get('if_factor', stats.get('if',0.0))
         ))
         
         ride_id = c.lastrowid
@@ -206,3 +206,23 @@ def get_user_best_power(user_name):
     
     # Convert to dict {duration: watts}
     return {row[0]: row[1] for row in rows}
+
+def get_user_tss_history(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return []
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    c.execute('''
+        SELECT date_time, tss
+        FROM rides
+        WHERE user_id = ?
+        ORDER BY date_time ASC
+    ''', (user['id'],))
+
+    rows = c.fetchall()
+    conn.close()
+
+    return [{'date': row[0], 'tss': row[1]} for row in rows]

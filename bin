@@ -1,0 +1,70 @@
+def render_user_corner(user_name):
+    st.header("👤 User Corner")
+
+    if not user_name:
+        st.warning("Please select a user in the sidebar to view profile details.")
+        return
+    user_data = get_user_data(user_name)
+    if not user_data:
+        st.error("User data not found.")
+        return
+    st.subheader(f"Profile: {user_name}")
+    st.markdown(f"- **FTP:** {user_data['ftp']} W")
+    st.markdown(f"- **LTHR:** {user_data['lthr']} bpm")
+    st.markdown(f"- **Weight:** {user_data['weight']} kg")
+    
+    st.markdown("---")
+
+    st.subheader("📈 TSS History")
+
+    #Fetch Data
+    history_data = get_user_tss_history(user_name)
+
+    if len(history_data) > 0:
+        pmc_df = pd.DataFrame(history_data)
+        pmc_df['date'] = pd.to_datetime(pmc_df['date'])
+        pmc_df = pmc_df.set_index('date')
+
+        full_idx = pd.date_range(start=pmc_df.index.min(), end=pmc_df.index.max(), freq='D')
+        pmc_df = pmc_df.resample('D').sum().reindex(full_idx, fill_value=0)
+
+        pmc_df['CTL'] = pmc_df['tss'].ewm(alpha=1/42, adjust=False).mean()
+        pmc_df['ATL'] = pmc_df['tss'].ewm(alpha=1/7, adjust=False).mean()
+
+        pmc_df['TSB'] = pmc_df['CTL'] - pmc_df['ATL']
+
+        show_centered(plot_pmc(pmc_df))
+
+        #Show current status
+        k1, k2, k3 = st.columns(3)
+        k1.metric("CTL", f"{pmc_df['CTL'].iloc[-1]:.1f}", help="Chronic Training Load")
+        k2.metric("ATL", f"{pmc_df['ATL'].iloc[-1]:.1f}", help="Acute Training Load")
+        k3.metric("TSB", f"{pmc_df['TSB'].iloc[-1]:.1f}", help="Training Stress Balance")
+    else:
+        st.info("No TSS history data available.")
+
+    st.markdown("---")
+
+    best_power = get_user_best_power(user_name)
+
+    if best_power:
+        st.subheader("🏆 Best Power Records")
+        data = []
+        for duration, watts in sorted(best_power.items()):
+            dur_label = f"{duration}s"
+            if duration >= 60:
+                dur_label = f"{int(duration/60)}m"
+            if duration >= 3600:
+                dur_label = f"{int(duration/3600)}h"
+            
+            data.append({"Duration": dur_label, "Watts": watts, "W/kg": round(watts / user_data['weight'], 2)})
+            
+        bp_df = pd.DataFrame(data)        
+        st.dataframe(bp_df, hide_index=False)
+        st.subheader("All-Time Best Power Curve")
+        fig = plot_power_curve(best_power, None)
+        show_centered(fig)
+
+    else:
+        st.info("No best power records found.")
+

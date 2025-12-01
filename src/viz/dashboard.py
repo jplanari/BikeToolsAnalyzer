@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import os
 import hashlib
@@ -7,10 +8,17 @@ from streamlit_folium import st_folium
 
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.viz.plots import plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance
+from src.viz.plots import (
+        plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, 
+        plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
+        plot_pmc
+    )
 from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, calculate_ride_kJ
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
-from src.data.db import save_user, get_all_users, get_user_data, delete_user, save_ride, get_user_rides, get_user_best_power
+from src.data.db import (
+        save_user, get_all_users, get_user_data, delete_user, 
+        save_ride, get_user_rides, get_user_best_power, get_user_tss_history
+    )
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
@@ -367,9 +375,9 @@ def _render_plots(df, settings, detected_climbs, current_curve, user_name):
             if fig: c2.pyplot(fig)
 
     if settings['show_climbs']:
-        _render_climb_details(df, detected_climbs)
+        _render_climb_details(df, detected_climbs, settings)
 
-def _render_climb_details(df, climbs):
+def _render_climb_details(df, climbs, settings):
     st.subheader("Climb Analysis")
     if not climbs:
         st.info("No significant climbs detected.")
@@ -378,16 +386,39 @@ def _render_climb_details(df, climbs):
     fig = plot_climbs(df, climbs)
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2: st.pyplot(fig)
-
+    
+    user_weight = settings.get('weight', 70)
     data = []
     for i, c in enumerate(climbs):
+
+        avg_p_climb = 0
+        w_kg_climb = 0
+
+        if 'power' in df.columns:
+            seg_pwr = df['power'].iloc[c['start_idx']:c['end_idx']+1]
+            if not seg_pwr.empty:
+                avg_p_climb = int(seg_pwr.mean())
+                w_kg_climb = round(avg_p_climb / user_weight, 2)
+
+        vam = c['vam_mph']
+        grade = c['avg_gradient_pct']
+
+        est_w_kg = 0.0
+        den = 100* (2 + grade/10.0) # Rough empirical formula (Ferrari formula)
+        if den > 0:
+            est_w_kg = round(vam / den, 2)
+
         data.append({
             "ID": i,
             "Climb": f"#{i+1}",
             "Len (km)": round(c['length_m']/1000, 2),
             "Gain (m)": int(c['elev_gain_m']),
             "Grad (%)": round(c['avg_gradient_pct'], 1),
-            "VAM": int(c['vam_mph'])
+            "VAM": int(c['vam_mph']),
+            "Power (W)": avg_p_climb if avg_p_climb > 0 else "-",
+            "W/kg": w_kg_climb if w_kg_climb > 0 else "-",
+            "Est W/kg": est_w_kg,
+            "Error W/kg (%)": round(100*np.abs(w_kg_climb - est_w_kg)/w_kg_climb, 2) if w_kg_climb > 0 else "-"
         })
     
     df_display = pd.DataFrame(data)
@@ -426,7 +457,7 @@ def render_history(user_name):
     st.info("Here is a log of your past rides.")
 
     st.dataframe(
-        hist_df[['date_time', 'filename', 'distance_km', 'elevation_m', 'norm_power']],
+        hist_df[['date_time', 'filename', 'distance_km', 'elevation_m', 'norm_power','tss']],
         hide_index=True,
     )
 
@@ -436,16 +467,80 @@ def render_user_corner(user_name):
     if not user_name:
         st.warning("Please select a user in the sidebar to view profile details.")
         return
+        
     user_data = get_user_data(user_name)
     if not user_data:
         st.error("User data not found.")
         return
-    st.subheader(f"Profile: {user_name}")
-    st.markdown(f"- **FTP:** {user_data['ftp']} W")
-    st.markdown(f"- **LTHR:** {user_data['lthr']} bpm")
-    st.markdown(f"- **Weight:** {user_data['weight']} kg")
-    best_power = get_user_best_power(user_name)
 
+    # 1. Profile Summary
+    c1, c2, c3 = st.columns(3)
+    c1.metric("FTP", f"{user_data['ftp']} W")
+    c2.metric("LTHR", f"{user_data['lthr']} bpm")
+    c3.metric("Weight", f"{user_data['weight']} kg")
+    
+    st.markdown("---")
+
+    # 2. Performance Management Chart (PMC)
+    st.subheader("📈 Fitness & Form (PMC)")
+    
+    # Fetch Data
+    history_data = get_user_tss_history(user_name)
+    
+    # --- CHANGE: Allow chart if we have ANY data (> 0) ---
+    if len(history_data) > 0:
+        # Create DataFrame
+        pmc_df = pd.DataFrame(history_data)
+        pmc_df['date'] = pd.to_datetime(pmc_df['date'])
+        
+        # Sort just in case
+        pmc_df = pmc_df.sort_values('date')
+        
+        # Set index to date
+        pmc_df = pmc_df.set_index('date')
+        
+        # Resample to Daily (Sum TSS if multiple rides per day)
+        # We assume 0 TSS for days with no rides between start and end
+        if len(pmc_df) > 1:
+            full_idx = pd.date_range(start=pmc_df.index.min(), end=pmc_df.index.max(), freq='D')
+            pmc_df = pmc_df.resample('D').sum().reindex(full_idx, fill_value=0)
+        else:
+            # If only 1 day of data, just keep it as is (no resampling needed yet)
+            pass
+        
+        # Calculate Metrics (Exponential Weighted Moving Averages)
+        # CTL = 42-day time constant
+        # ATL = 7-day time constant
+        # We use min_periods=1 so it calculates even with 1 data point
+        pmc_df['CTL'] = pmc_df['tss'].ewm(alpha=1/42, adjust=False, min_periods=1).mean()
+        pmc_df['ATL'] = pmc_df['tss'].ewm(alpha=1/7, adjust=False, min_periods=1).mean()
+        
+        # TSB (Form) = CTL - ATL
+        pmc_df['TSB'] = pmc_df['CTL'] - pmc_df['ATL']
+        
+        # Show Plot
+#        st.pyplot(plot_pmc(pmc_df))
+        
+        # Show Current Status
+        curr = pmc_df.iloc[-1]
+#        k1, k2, k3 = st.columns(3)
+#        k1.metric("Fitness (CTL)", f"{curr['CTL']:.1f}", help="Chronic Training Load (42-day avg)")
+#        k2.metric("Fatigue (ATL)", f"{curr['ATL']:.1f}", help="Acute Training Load (7-day avg)")
+#        k3.metric("Form (TSB)", f"{curr['TSB']:.1f}", 
+#                  delta=f"{curr['TSB']:.1f}", delta_color="normal",
+#                  help="Training Stress Balance (Fitness - Fatigue)")
+                  
+        # DEBUG: Show raw data if user wants to check
+ #       with st.expander("View Raw PMC Data"):
+ #           st.dataframe(pmc_df)
+                  
+    else:
+        st.info("No TSS history data available. Upload a ride to see your chart!")
+
+    st.markdown("---")
+
+    # 3. Best Power Records
+    best_power = get_user_best_power(user_name)
     if best_power:
         st.subheader("🏆 Best Power Records")
         data = []
@@ -456,15 +551,11 @@ def render_user_corner(user_name):
             if duration >= 3600:
                 dur_label = f"{int(duration/3600)}h"
             
-            data.append({"Duration": dur_label, "Watts": watts, "W/kg": round(watts / user_data['weight'], 2)})
-            
-        bp_df = pd.DataFrame(data)        
-        st.dataframe(bp_df, hide_index=False)
-        st.subheader("All-Time Best Power Curve")
-        fig = plot_power_curve(best_power, None)
-        show_centered(fig)
-
-    else:
-        st.info("No best power records found.")
-    
+            data.append({
+                "Duration": dur_label, 
+                "Watts": int(watts), 
+                "W/kg": round(watts / user_data['weight'], 2)
+            })
+        
+        st.dataframe(pd.DataFrame(data), hide_index=True, use_container_width=True)   
 
