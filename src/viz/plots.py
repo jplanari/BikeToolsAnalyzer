@@ -146,7 +146,7 @@ def get_gradient_color(gradient):
     if gradient < 12: return "#FF4500" # Red
     return "#8B0000"                   # Dark Red/Black
 
-def plot_detailed_climb(df, start_idx, end_idx, segments):
+def plot_detailed_climb(df, start_idx, end_idx, segments, rider_weight=70):
     """
     Plots a single climb with colored segments based on gradient.
     """
@@ -162,9 +162,39 @@ def plot_detailed_climb(df, start_idx, end_idx, segments):
     
     max_ele = climb_df['ele'].max()
     min_ele = climb_df['ele'].min()
+
+    ele_range = max_ele - min_ele
     
     for seg in segments:
-        sub_df = df.loc[seg['segment_idx_start']:seg['segment_idx_end']]
+        mask = (climb_df['dist_m'] >= seg['start_dist']) & (climb_df['dist_m'] <= seg['end_dist'])
+        sub_df = climb_df.loc[mask]
+
+        if sub_df.empty:
+            continue
+
+        # --- Calculations ---
+
+        t_start = sub_df['time'].iloc[0]
+        t_end = sub_df['time'].iloc[-1]
+        duration = (t_end - t_start).total_seconds()
+        d_ele = seg['end_ele'] - seg['start_ele']
+
+        vam=0
+        if duration > 1:
+            vam = (d_ele / duration) * 3600
+
+        avg_kph = 0.0
+        distance_m = seg['end_dist'] - seg['start_dist']
+        if duration > 0:
+            avg_kph = (distance_m / duration) * 3.6
+
+        avg_watts = 0
+        if 'power' in sub_df.columns:
+            avg_watts = sub_df['power'].mean()
+
+        wkg = 0.0
+        if rider_weight > 0 and pd.notna(avg_watts):
+            wkg = avg_watts / rider_weight
         
         seg_x = (sub_df['dist_m'] - base_dist) / 1000
         seg_y = sub_df['ele']
@@ -178,13 +208,23 @@ def plot_detailed_climb(df, start_idx, end_idx, segments):
         mid_x_norm = (mid_x - base_dist) / 1000
         mid_y = (seg['start_ele'] + seg['end_ele']) / 2
         
-        ax.text(mid_x_norm, mid_y + (max_ele-min_ele)*0.05, f"{seg['avg_grad']:.1f}%", 
-                ha='center', fontsize=9, fontweight='bold', color='black', rotation=45)
+        label_txt = f"{seg['avg_grad']:.1f}%"
+        if vam > 0:
+            label_txt += f"\n{int(vam)} VAM"
+        if wkg > 0:
+            label_txt += f"\n{wkg:.1f} W/kg"
+        if avg_kph > 0:
+            label_txt += f"\n{avg_kph:.1f} km/h"
+
+        seg_len_km = (seg['end_dist'] - seg['start_dist']) / 1000
+        rotation = 90 if seg_len_km < 0.5 else 0
+
+        ax.text(mid_x_norm, mid_y + (ele_range * 0.1), label_txt, ha='center', va='bottom', fontsize=8, fontweight='bold', color='black', rotation=rotation)
 
     ax.set_title(f"Climb Detail (Length: {(x_axis.iloc[-1]):.2f} km)")
     ax.set_xlabel("Distance (km)")
     ax.set_ylabel("Elevation (m)")
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+    ax.grid(True, alpha=0.2)
     
     # Create Legend
     patches = [

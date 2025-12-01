@@ -136,7 +136,7 @@ def render_sidebar():
         'show_ele': st.sidebar.checkbox("Show Elevation Profile", value=True),
         'show_power': st.sidebar.checkbox("Show Power & Metrics", value=True),
         'show_climbs': st.sidebar.checkbox("Show Climb Analysis", value=True),
-        'show_aero': st.sidebar.checkbox("Show Aerodynamic Analysis (Beta)", value=False),
+        'show_aero': st.sidebar.checkbox("Show Aerodynamic Analysis (Beta)", value=True),
 
         'ftp': user_ftp,
         'lthr': user_lthr,
@@ -411,14 +411,15 @@ def _render_climb_details(df, climbs, settings):
         data.append({
             "ID": i,
             "Climb": f"#{i+1}",
+            #            "Category": c.get('type', 'Unknown'),
             "Len (km)": round(c['length_m']/1000, 2),
             "Gain (m)": int(c['elev_gain_m']),
             "Grad (%)": round(c['avg_gradient_pct'], 1),
             "VAM": int(c['vam_mph']),
             "Power (W)": avg_p_climb if avg_p_climb > 0 else "-",
             "W/kg": w_kg_climb if w_kg_climb > 0 else "-",
-            "Est W/kg": est_w_kg,
-            "Error W/kg (%)": round(100*np.abs(w_kg_climb - est_w_kg)/w_kg_climb, 2) if w_kg_climb > 0 else "-"
+            "Est W/kg": est_w_kg#,
+            #            "Error W/kg (%)": round(100*np.abs(w_kg_climb - est_w_kg)/w_kg_climb, 2) if w_kg_climb > 0 else "-"
         })
     
     df_display = pd.DataFrame(data)
@@ -437,7 +438,7 @@ def _render_climb_details(df, climbs, settings):
         c = climbs[idx]
         st.markdown(f"**Detailed Profile: Climb #{idx+1}**")
         segs = get_climb_segments(df, c['start_idx'], c['end_idx'])
-        fig_det = plot_detailed_climb(df, c['start_idx'], c['end_idx'], segs)
+        fig_det = plot_detailed_climb(df, c['start_idx'], c['end_idx'], segs, settings['weight'])
         st.pyplot(fig_det)
 
 def render_history(user_name):
