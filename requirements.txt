@@ -8,3 +8,4 @@ folium
 streamlit-folium
 geographiclib
 requests
+pytest
