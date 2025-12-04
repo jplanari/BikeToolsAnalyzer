@@ -26,6 +26,34 @@ from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_comp
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
 
+@st.cache_data(show_spinner=False)
+def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp):
+    """
+    Bundles all heavy math into one cached function.
+    Returns: (df_enriched, climbs_list, power_components_df)
+    """
+    # 1. Physics Engine (Aerodyn)
+    # Note: calculate_power_components returns a separate DF, 
+    # but we might want to attach CdA to the main DF too.
+    p_comps = calculate_power_components(
+        df, 
+        rider_mass=rider_mass, 
+        bike_mass=bike_mass, 
+        crr=crr, 
+        drivetrain_loss=drivetrain_loss
+    )
+    
+    # 2. Climb Detection
+    climbs = detect_climbs(df, min_length=1000, join_dist=1000)
+    
+    # 3. W' Balance (if FTP exists)
+    if ftp and 'power' in df.columns:
+        df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp)
+    else:
+        df['w_prime_balance'] = np.nan
+        
+    return df, climbs, p_comps
+
 def show_centered(fig):
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2: st.pyplot(fig)
@@ -217,6 +245,17 @@ def process_and_display_analysis(file_obj, user_name, settings):
         avg_hr = df.loc[is_moving, 'hr'].mean() if 'hr' in df.columns and moving_time_sec > 0 else 0
         norm_power = NP(df['power']) if 'power' in df.columns else 0
         current_ftp = settings['ftp']
+    
+        with st.spinner("Running analysis engine..."):
+            df, climbs, p_comps = run_heavy_analysis(
+                df, 
+                bike_mass=8.0, 
+                crr=0.005, 
+                drivetrain_loss=0.03, 
+                rider_mass=settings['weight'], 
+                ftp=current_ftp
+            )
+
         ride_if = IF(norm_power, current_ftp)
         ride_tss = TSS(norm_power, duration_s, current_ftp)
         ride_kj = calculate_ride_kJ(df['power']) if 'power' in df.columns else 0
@@ -225,9 +264,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
         if 'power' in df.columns:
             current_curve = power_curve(df['power'])
         settings['w_prime_cap'] = 20000.0
-        #W' Balance Calculation (if power data exists)
-        if 'power' in df.columns and current_ftp > 0:
-            df['w_prime_balance'] = calculate_w_prime_balance(df['power'], current_ftp)
 
         # Auto-Save
         if user_name:
@@ -236,7 +272,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
     # Detect Climbs
     detected_climbs = []
     if settings['show_climbs'] or settings['show_map']:
-         detected_climbs = detect_climbs(df, min_length=1000, join_dist=1000)
+         detected_climbs = climbs
 
     # Dashboard
     st.subheader("Ride Summary")
@@ -272,7 +308,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
                 st.dataframe(laps_df)
 
     # Visualizations
-    _render_plots(df, settings, detected_climbs, current_curve, user_name)
+    _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
     
     if os.path.exists("temp.gpx"): os.remove("temp.gpx")
 
@@ -310,7 +346,7 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_v
         else:
             st.error(f"Save Error: {msg}")
 
-def _render_plots(df, settings, detected_climbs, current_curve, user_name):
+def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name):
 
     if settings['show_map']:
         st.subheader("Route Map")
@@ -339,7 +375,7 @@ def _render_plots(df, settings, detected_climbs, current_curve, user_name):
 
         st.markdown("**Power Budget: Where did your watts go?**")
         with st.spinner("Calculating power components..."):
-            df['p_grav'], df['p_roll'], df['p_accel']  = calculate_power_components(df, settings['weight'])
+            df['p_grav'], df['p_roll'], df['p_accel']  = p_comps
             if not df.empty:
                 fig_budget = plot_power_budget(df)
                 show_centered(fig_budget)
