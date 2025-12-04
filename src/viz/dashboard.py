@@ -160,7 +160,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
         try:
             if filename.endswith(".fit"):
                 file_bytes = file_obj.getvalue()
-                df = parse_fit(io.BytesIO(file_bytes))
+                df = parse_fit(file_bytes)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
                 df = resample_to_seconds(df)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
@@ -177,7 +177,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
                 moving_time_sec = is_moving.sum()
                 elapsed_time_sec = len(df) #Assuming 1Hz resampled
-                laps_df = get_fit_laps(file_obj)
+                laps_df = get_fit_laps(file_bytes)
 
             else:
                 # 1. Standard Parsing

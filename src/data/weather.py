@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import streamlit as st
 
+@st.cache_data(show_spinner=False, ttl=3600)
 def fetch_ride_weather(df):
     if df.empty or 'time' not in df.columns:
         return df

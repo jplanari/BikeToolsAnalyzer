@@ -2,13 +2,18 @@
 import fitparse
 import pandas as pd
 import numpy as np
+import io
+import streamlit as st
 
-def parse_fit(file_obj):
+@st.cache_data(show_spinner=False)
+def parse_fit(file_bytes):
     """
     Parses a FIT file object and returns a standardized Pandas DataFrame 
     compatible with the rest of the BikeToolsAnalyzer pipeline.
     """
     # fitparse expects a file path or a file-like object opened in binary mode
+    file_obj = io.BytesIO(file_bytes)
+
     try:
         fitfile = fitparse.FitFile(file_obj)
     except Exception as e:
@@ -87,16 +92,15 @@ def parse_fit(file_obj):
 
 
 
-# src/data/fit.py
-
-def get_fit_laps(file_obj):
+@st.cache_data(show_spinner=False)
+def get_fit_laps(file_bytes):
     """
     Parses a FIT file and extracts user-defined laps.
     Includes robust field mapping and pointer reset.
     """
     # 1. RESET POINTER (Critical!)
     # If parse_fit() ran before this, the pointer is at the end of the file.
-    file_obj.seek(0)
+    file_obj = io.BytesIO(file_bytes)
 
     try:
         fitfile = fitparse.FitFile(file_obj)

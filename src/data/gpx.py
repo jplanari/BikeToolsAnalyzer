@@ -3,7 +3,9 @@ import pandas as pd
 from geographiclib.geodesic import Geodesic
 import numpy as np
 import re
+import streamlit as st
 
+@st.cache_data(show_spinner=False)
 def parse_gpx(file_path):
     """
     Parses GPX file and return DataFrame with time, lat, lon, ele, hr, power, etc.
