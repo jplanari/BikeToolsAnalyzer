@@ -22,6 +22,13 @@ def create_route_map(df, climbs=None):
     # Initialize Map
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles="OpenStreetMap")
 
+    # --- OPTIMIZATION: DOWNSAMPLE ---
+    # Browsers struggle with >5000 points. We target ~1000 points for the blue line.
+    # This does NOT affect the statistics, only the blue line visual.
+    total_points = len(valid_points)
+    stride = max(1, total_points // 1000)
+
+
     # 1. Draw the Full Route (Blue)
     route_coords = valid_points[['lat', 'lon']].values.tolist()
     folium.PolyLine(
