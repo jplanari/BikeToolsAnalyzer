@@ -84,7 +84,7 @@ def detect_climbs(df, min_gradient=1.0, min_length=500, join_dist=1000):
             if dist_gap < join_dist:
                 if drop <= 0:
                     should_merge = True
-                elif drop < (0.1 * cumulative_gain):
+                elif drop < -(0.1 * cumulative_gain):
                     should_merge = True
             
             if should_merge:

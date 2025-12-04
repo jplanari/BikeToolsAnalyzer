@@ -84,3 +84,87 @@ def parse_fit(file_obj):
         df = df.sort_values('time').reset_index(drop=True)
 
     return df
+
+
+
+# src/data/fit.py
+
+def get_fit_laps(file_obj):
+    """
+    Parses a FIT file and extracts user-defined laps.
+    Includes robust field mapping and pointer reset.
+    """
+    # 1. RESET POINTER (Critical!)
+    # If parse_fit() ran before this, the pointer is at the end of the file.
+    file_obj.seek(0)
+
+    try:
+        fitfile = fitparse.FitFile(file_obj)
+    except Exception as e:
+        print(f"FIT Parse Error: {e}")
+        return pd.DataFrame()
+
+    laps_data = []
+
+    # 2. Iterate over 'lap' messages
+    # Note: Some files might use 'session' if there are no manual laps, 
+    # but we specifically want 'lap' messages here.
+    for lap in fitfile.get_messages("lap"):
+        data = {}
+        for record_data in lap:
+            # We capture all raw values first
+            data[record_data.name] = record_data.value
+        laps_data.append(data)
+
+    if not laps_data:
+        print("Debug: No 'lap' messages found in FIT file.")
+        return pd.DataFrame()
+
+    df_laps = pd.DataFrame(laps_data)
+    
+    # Debug: Print found columns to console (check your terminal)
+    print(f"Debug: Found Lap Columns: {df_laps.columns.tolist()}")
+
+    # 3. Robust Column Mapping
+    # FIT fields can vary. We map common variations to our display names.
+    # format: 'Display Name': ['possible_fit_field_1', 'possible_fit_field_2']
+    field_map = {
+        'Duration': ['total_timer_time', 'total_elapsed_time'],
+        'Distance (km)': ['total_distance'],
+        'Avg Power (W)': ['avg_power'],
+        'Max Power (W)': ['max_power'],
+        'Avg HR': ['avg_heart_rate'],
+        'Max HR': ['max_heart_rate'],
+        'Avg Cadence (rpm)': ['avg_cadence'],
+        'Avg Speed (km/h)': ['avg_speed'] # usually m/s
+    }
+    
+    final_df = pd.DataFrame()
+
+    for display_name, candidates in field_map.items():
+        for col in candidates:
+            if col in df_laps.columns:
+                final_df[display_name] = df_laps[col]
+                break # Found a match, move to next field
+
+    # 4. Clean and Format Data
+    if 'Avg Speed (km/h)' in final_df.columns:
+        # Convert m/s to km/h
+        final_df['Avg Speed (km/h)'] = (final_df['Avg Speed (km/h)'] * 3.6).round(1)
+        final_df.rename(columns={'Avg Speed (km/h)': 'Speed (km/h)'}, inplace=True)
+        
+    if 'Distance (km)' in final_df.columns:
+        final_df['Distance (km)'] = final_df['Distance (km)'].round(0)/1000 # kilometers
+
+    if 'Duration' in final_df.columns:
+        # Format seconds to MM:SS
+        def fmt_time(s):
+            m, s = divmod(int(s or 0), 60)
+            return f"{m:02d}:{s:02d}"
+        final_df['Duration'] = final_df['Duration'].apply(fmt_time)
+
+    # 5. Drop empty columns (if a sensor was missing)
+    final_df = final_df.dropna(axis=1, how='all')
+    
+    return final_df
+

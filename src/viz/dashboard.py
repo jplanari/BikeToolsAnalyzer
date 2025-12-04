@@ -8,7 +8,7 @@ from streamlit_folium import st_folium
 
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.data.fit import parse_fit
+from src.data.fit import parse_fit, get_fit_laps
 from src.viz.plots import (
         plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, 
         plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
@@ -159,7 +159,8 @@ def process_and_display_analysis(file_obj, user_name, settings):
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             if filename.endswith(".fit"):
-                df = parse_fit(file_obj)
+                file_bytes = file_obj.getvalue()
+                df = parse_fit(io.BytesIO(file_bytes))
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
                 df = resample_to_seconds(df)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
@@ -176,6 +177,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
                 moving_time_sec = is_moving.sum()
                 elapsed_time_sec = len(df) #Assuming 1Hz resampled
+                laps_df = get_fit_laps(file_obj)
 
             else:
                 # 1. Standard Parsing
@@ -261,6 +263,13 @@ def process_and_display_analysis(file_obj, user_name, settings):
     c9.metric("Work", f"{int(ride_kj)} kJ" if norm_power else "N/A")
     
     st.markdown("---")
+
+    if filename.endswith(".fit"):
+        # Extract laps and show summary
+        st.subheader("Laps Summary")
+        if not laps_df.empty:
+            with st.expander("⏱️ Laps / Intervals"):
+                st.dataframe(laps_df)
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, user_name)
@@ -565,6 +574,11 @@ def render_user_corner(user_name):
     # 3. Best Power Records
     best_power = get_user_best_power(user_name)
     if best_power:
+
+        st.subheader("🏆 User All-Time Power Curve")
+
+        show_centered(plot_power_curve(best_power, None))
+
         st.subheader("🏆 Best Power Records")
         data = []
         for duration, watts in sorted(best_power.items()):
@@ -580,5 +594,6 @@ def render_user_corner(user_name):
                 "W/kg": round(watts / user_data['weight'], 2)
             })
         
-        st.dataframe(pd.DataFrame(data), hide_index=True, use_container_width=True)   
+        st.dataframe(pd.DataFrame(data), hide_index=True, use_container_width=True)  
+
 
