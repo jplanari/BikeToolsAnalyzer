@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
+from src.data.fit import parse_fit
 from src.viz.plots import (
         plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, 
         plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
@@ -89,10 +90,10 @@ def render_sidebar():
     # 1. Initialize current_file to None by default
     current_file = None
     
-    import_method = st.sidebar.radio("Source", ["Upload GPX", "Strava URL"])
+    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava URL"])
 
-    if import_method == "Upload GPX":
-        uploaded_file = st.sidebar.file_uploader("Upload .gpx file", type=["gpx"])
+    if import_method == "Upload Ride":
+        uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
         # If user uploaded a file, assign it to current_file
         if uploaded_file is not None:
             current_file = uploaded_file
@@ -150,32 +151,53 @@ def process_and_display_analysis(file_obj, user_name, settings):
     """Main logic to parse GPX, calculate stats, and render plots."""
     
     file_bytes = file_obj.getvalue()
+    filename = file_obj.name.lower()
     
     with open("temp.gpx", "wb") as f:
         f.write(file_bytes)
 
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
-            # 1. Standard Parsing
-            df = parse_gpx("temp.gpx")
-            df, total_dist, total_ascent = compute_distance_and_ascent(df)
-            df = resample_to_seconds(df)
-            df, total_dist, total_ascent = compute_distance_and_ascent(df)
-            df = compute_speed(df)
-            df = compute_grade(df)
-
+            if filename.endswith(".fit"):
+                df = parse_fit(file_obj)
+                df, total_dist, total_ascent = compute_distance_and_ascent(df)
+                df = resample_to_seconds(df)
+                df, total_dist, total_ascent = compute_distance_and_ascent(df)
+                df = compute_grade(df)
             # 2. Physics Prep
-            df['bearing'] = calculate_bearing(df)
+                df['bearing'] = calculate_bearing(df)
 
             # 3. AUTOMATIC WEATHER FETCH
             # We attempt to fetch it immediately. If it fails, df remains unchanged.
-            df = fetch_ride_weather(df)
+                df = fetch_ride_weather(df)
 
-            moving_thresh = 2.0 #m/s
-            is_moving = df['speed'] >= moving_thresh
+                moving_thresh = 2.0 #m/s
+                is_moving = df['speed'] >= moving_thresh
 
-            moving_time_sec = is_moving.sum()
-            elapsed_time_sec = len(df) #Assuming 1Hz resampled
+                moving_time_sec = is_moving.sum()
+                elapsed_time_sec = len(df) #Assuming 1Hz resampled
+
+            else:
+                # 1. Standard Parsing
+                df = parse_gpx("temp.gpx")
+                df, total_dist, total_ascent = compute_distance_and_ascent(df)
+                df = resample_to_seconds(df)
+                df, total_dist, total_ascent = compute_distance_and_ascent(df)
+                df = compute_speed(df)
+                df = compute_grade(df)
+    
+            # 2. Physics Prep
+                df['bearing'] = calculate_bearing(df)
+
+            # 3. AUTOMATIC WEATHER FETCH
+            # We attempt to fetch it immediately. If it fails, df remains unchanged.
+                df = fetch_ride_weather(df)
+
+                moving_thresh = 2.0 #m/s
+                is_moving = df['speed'] >= moving_thresh
+
+                moving_time_sec = is_moving.sum()
+                elapsed_time_sec = len(df) #Assuming 1Hz resampled
 
         except Exception as e:
             st.error(f"Error parsing GPX: {e}")
