@@ -67,6 +67,11 @@ def format_duration(seconds):
 
 def render_sidebar():
     """Renders the sidebar and returns all user configuration settings."""
+    
+    user_ftp = 200
+    user_weight = 70.0
+    user_lthr = 170
+
     st.sidebar.header("Navigation")
     
     app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "User Corner"])
