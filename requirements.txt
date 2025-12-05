@@ -9,3 +9,5 @@ streamlit-folium
 geographiclib
 requests
 pytest
+fitparse
+plotly

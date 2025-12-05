@@ -56,7 +56,7 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp):
 
 def show_centered(fig):
     c1, c2, c3 = st.columns([1, 3, 1])
-    with c2: st.pyplot(fig)
+    with c2: st.plotly_chart(fig, use_container_width=True)
 
 def format_duration(seconds):
     if not seconds: return "00:00:00"
@@ -410,7 +410,7 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
 
         st.subheader("W' Balance")
         if 'w_prime_balance' in df.columns:
-            show_centered(plot_w_prime_balance(df,df['w_prime_balance'],settings['w_prime_cap']))
+            show_centered(plot_w_prime_balance(df,settings['w_prime_cap']))
         else:
             st.info("No W' Balance data available.")
 
@@ -429,7 +429,7 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
             zones = coggan_zones(settings['ftp'])
             times = time_in_zones(df['power'], zones)
             fig = plot_zone_distribution(times, "Power Zones")
-            if fig: c1.pyplot(fig)
+            if fig: c1.plotly_chart(fig, use_container_width=True)
         
         active_lthr = settings['lthr']
         if not active_lthr and 'hr' in df.columns:
@@ -439,74 +439,43 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
         if 'hr' in df.columns and active_lthr:
             times = time_in_hr_zones(df['hr'], active_lthr)
             fig = plot_zone_distribution(times, "Heart Rate Zones")
-            if fig: c2.pyplot(fig)
+            if fig: c2.plotly_chart(fig, use_container_width=True)
 
     if settings['show_climbs']:
         _render_climb_details(df, detected_climbs, settings)
 
 def _render_climb_details(df, climbs, settings):
-    st.subheader("Climb Analysis")
-    if not climbs:
-        st.info("No significant climbs detected.")
-        return
+    if climbs:
+        st.subheader(f"⛰️ Detected Climbs ({len(climbs)})")        
+        # 1. Overview Plot (Interactive)
+        fig_overview = plot_climbs(df, climbs)
+        st.plotly_chart(fig_overview, use_container_width=True)
+        
+        # 2. Detailed Breakdown
+        with st.expander("View Details for Each Climb"):
+            for i, c in enumerate(climbs):
+                st.markdown(f"### Climb #{i+1}: {c['type']}")
+            
+                # Metrics Row
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Length", f"{c['length_m']/1000:.2f} km")
+                c2.metric("Avg Gradient", f"{c['avg_gradient_pct']:.1f}%")
+                c3.metric("Ascent", f"{int(c['elev_gain_m'])} m")
+                
+                # Check if VAM exists (depends on your physics calc)
+                vam = c.get('vam_mph', 0) # Vertical Ascent Meters per Hour
+                c4.metric("VAM", f"{int(vam)} m/h")
+            
+            # 3. Interactive Detailed Plot
+                segment = df.loc[c['start_idx']:c['end_idx']]
+                if not segment.empty:
+                    fig_climb = plot_detailed_climb(segment)
+                    st.plotly_chart(fig_climb, use_container_width=True, key=f"climb_plot_{i}")
+                
+                st.markdown("---")
+    else:
+        st.info("No significant climbs detected on this route.")
 
-    fig = plot_climbs(df, climbs)
-    c1, c2, c3 = st.columns([1, 3, 1])
-    with c2: st.pyplot(fig)
-    
-    user_weight = settings.get('weight', 70)
-    data = []
-    for i, c in enumerate(climbs):
-
-        avg_p_climb = 0
-        w_kg_climb = 0
-
-        if 'power' in df.columns:
-            seg_pwr = df['power'].iloc[c['start_idx']:c['end_idx']+1]
-            if not seg_pwr.empty:
-                avg_p_climb = int(seg_pwr.mean())
-                w_kg_climb = round(avg_p_climb / user_weight, 2)
-
-        vam = c['vam_mph']
-        grade = c['avg_gradient_pct']
-
-        est_w_kg = 0.0
-        den = 100* (2 + grade/10.0) # Rough empirical formula (Ferrari formula)
-        if den > 0:
-            est_w_kg = round(vam / den, 2)
-
-        data.append({
-            "ID": i,
-            "Climb": f"#{i+1}",
-            #            "Category": c.get('type', 'Unknown'),
-            "Len (km)": round(c['length_m']/1000, 2),
-            "Gain (m)": int(c['elev_gain_m']),
-            "Grad (%)": round(c['avg_gradient_pct'], 1),
-            "VAM": int(c['vam_mph']),
-            "Power (W)": avg_p_climb if avg_p_climb > 0 else "-",
-            "W/kg": w_kg_climb if w_kg_climb > 0 else "-",
-            "Est W/kg": est_w_kg#,
-            #            "Error W/kg (%)": round(100*np.abs(w_kg_climb - est_w_kg)/w_kg_climb, 2) if w_kg_climb > 0 else "-"
-        })
-    
-    df_display = pd.DataFrame(data)
-    st.info("👇 Select a climb to see detailed segments.")
-    
-    sel = st.dataframe(
-        df_display, 
-        column_config={"ID": None}, 
-        hide_index=True, 
-        on_select="rerun", 
-        selection_mode="single-row"
-    )
-
-    if sel.selection.rows:
-        idx = sel.selection.rows[0]
-        c = climbs[idx]
-        st.markdown(f"**Detailed Profile: Climb #{idx+1}**")
-        segs = get_climb_segments(df, c['start_idx'], c['end_idx'])
-        fig_det = plot_detailed_climb(df, c['start_idx'], c['end_idx'], segs, settings['weight'])
-        st.pyplot(fig_det)
 
 def render_history(user_name):
     """Renders the history table purely for viewing stats."""
@@ -587,7 +556,7 @@ def render_user_corner(user_name):
         pmc_df['TSB'] = pmc_df['CTL'] - pmc_df['ATL']
         
         # Show Plot
-#        st.pyplot(plot_pmc(pmc_df))
+#        st.plotly_chart(plot_pmc(pmc_df), use_container_width=True)
         
         # Show Current Status
         curr = pmc_df.iloc[-1]

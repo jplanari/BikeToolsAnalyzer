@@ -1,378 +1,510 @@
 # src/graphical.py
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import pandas as pd
-import matplotlib.ticker as ticker
-import matplotlib.dates as mdates
 
-def plot_elevation(df, outpath=None):
-    fig = plt.figure(figsize=(10, 6))
-    plt.plot(df['dist_m']/1000, df['ele'], color='blue', linewidth=2)
-    plt.fill_between(df['dist_m']/1000, df['ele'], color='lightblue', alpha=0.5)
-    plt.title('Elevation Profile')
-    plt.xlabel('Distance (km)')
-    plt.ylabel('Elevation (m)')
-    plt.tight_layout()
-    if outpath:
-        plt.savefig(outpath)
-        plt.close()
+def _add_elevation_background(fig, df, secondary_y=True):
+    """Helper to add elevation profile in the background of other charts."""
+    if 'ele' in df.columns and 'dist_m' in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df['dist_m'] / 1000,
+                y=df['ele'],
+                name="Elevation",
+                line=dict(color='gray', width=1),
+                fill='tozeroy',
+                opacity=0.2,
+                hoverinfo='skip' # Don't clutter hover tooltip
+            ),
+            secondary_y=secondary_y
+        )
+
+def plot_elevation(df):
+    fig = go.Figure()
+    
+    # Main Elevation Line
+    fig.add_trace(go.Scatter(
+        x=df['dist_m'] / 1000, 
+        y=df['ele'],
+        mode='lines',
+        name='Elevation',
+        fill='tozeroy',
+        line=dict(color='#1f77b4', width=2)
+    ))
+
+    fig.update_layout(
+        title="Elevation Profile",
+        xaxis_title="Distance (km)",
+        yaxis_title="Elevation (m)",
+        hovermode="x unified",
+        template="plotly_white",
+        height=400
+    )
     return fig
 
-def plot_x_time(df, col, ylabel, outpath=None):
-    x = df[col].rolling(window=100, min_periods=1).mean()
-    fig, ax1 = plt.subplots(figsize=(10,6))
-
-    ax1.set_xlabel('Distance (km)')
-    ax1.set_ylabel(ylabel, color='blue')
-    ax1.plot(df['dist_m']/1000, x, color='blue', linewidth=1, alpha=0.8)
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Elevation (m)', color='gray')
-    ax2.plot(df['dist_m']/1000, df['ele'], color='gray', linewidth=0.5, alpha=0.3)
-    ax2.fill_between(df['dist_m']/1000, df['ele'], color='gray', alpha=0.1)
-
-    plt.title(f'{ylabel}')
-    plt.tight_layout()
-    if outpath:
-        plt.savefig(outpath)
-        plt.close()
-    return fig
-
-def plot_power_curve(current_curve, best_curve=None):
+def plot_x_time(df, col, ylabel, color='blue', title=None):
     """
-    Plots the power curve. 
-    current_curve: dict {duration_sec: watts}
-    best_curve: dict {duration_sec: watts} (Optional, for comparison)
+    Plots a metric (Power, HR, Speed) vs Distance, with Elevation in background.
     """
-    fig, ax = plt.subplots(figsize=(10, 6))
+    from plotly.subplots import make_subplots
     
-    # Prepare Data
-    durations = sorted(current_curve.keys())
-    # Filter only durations that exist in current_curve and are valid numbers
-    x_labels = [d for d in durations if pd.notna(current_curve[d])]
-    y_values = [current_curve[d] for d in x_labels]
-
-    # Create X-axis points (equidistant for readability, not linear time scale)
-    x_pos = np.arange(len(x_labels))
-
-    # 1. Plot User All-Time Best (Background)
-    if best_curve:
-        # Ensure we match the x_labels of the current view
-        y_best = [best_curve.get(d, 0) for d in x_labels]
-        ax.plot(x_pos, y_best, color='lightgray', linestyle='--', linewidth=2, label="All-Time Best", marker='o', alpha=0.7)
-        ax.fill_between(x_pos, y_best, 0, color='lightgray', alpha=0.1)
-
-    # 2. Plot Current Ride (Foreground)
-    ax.plot(x_pos, y_values, marker='o', linestyle='-', color='#FF4B4B', linewidth=2, label="This Ride")
-    ax.fill_between(x_pos, y_values, 0, color='#FF4B4B', alpha=0.1)
-
-    # Formatting
-    ax.set_xticks(x_pos)
+    # Create Dual-Axis Plot
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # Function to format seconds into 5s, 1m, 20m, etc.
-    def fmt_dur(s):
-        if s < 60: return f"{s}s"
-        elif s < 3600: return f"{int(s/60)}m"
-        else: return f"{int(s/3600)}h"
-
-    ax.set_xticklabels([fmt_dur(x) for x in x_labels])
+    # 1. Add Background Elevation (Right Axis)
+    _add_elevation_background(fig, df, secondary_y=True)
     
-    ax.set_title("Power Duration Curve")
-    ax.set_ylabel("Power (Watts)")
-    ax.set_xlabel("Duration")
-    ax.grid(True, which='both', linestyle='--', alpha=0.5)
-    ax.legend()
+    # 2. Add Smoothed Metric (Left Axis)
+    # Smooth the data for readability (10s rolling avg)
+    y_smooth = df[col].rolling(window=10, min_periods=1).mean()
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df['dist_m'] / 1000,
+            y=y_smooth,
+            name=ylabel,
+            line=dict(color=color, width=1.5)
+        ),
+        secondary_y=False
+    )
 
+    fig.update_layout(
+        title=title or f"{ylabel} vs Distance",
+        xaxis_title="Distance (km)",
+        yaxis_title=ylabel,
+        yaxis2_title="Elevation (m)",
+        hovermode="x unified",
+        template="plotly_white",
+        showlegend=False,
+        height=400
+    )
     return fig
 
-def plot_zone_distribution(zone_times, title, outpath=None):
-    zones = list(zone_times.keys())
-    sum_times = sum(zone_times.values())
+def plot_power_curve(power_curve_dict, best_curve_dict=None):
+    fig = go.Figure()
     
-    # --- FIX: Handle empty data ---
-    if sum_times == 0:
-        return None
+    # 1. Current Ride Curve
+    durations = sorted(power_curve_dict.keys())
+    watts = [power_curve_dict[d] for d in durations]
     
-    times = [zone_times[z] / sum_times for z in zones]  # Convert to percentages
-    max_time = max(times)
-    fig = plt.figure(figsize=(10,6))
-    bars = plt.bar(zones, times, color='purple', alpha=0.7)
-    plt.title(title)
-    plt.xlabel('Zones')
-    plt.ylim(0, max_time * 1.3)
-
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + 0.01, f'{yval:.2%}', ha='center', va='bottom')
-    if outpath:
-        plt.savefig(outpath)
-        plt.close()
-
-    return fig
-
-def plot_climbs(df, climbs, outpath=None):
-    fig, ax = plt.subplots(figsize=(10,6))
-    # Plot full profile background
-    ax.plot(df['dist_m']/1000, df['ele'], color='gray', alpha=0.3, linewidth=1)
-    ax.fill_between(df['dist_m']/1000, df['ele'], color='gray', alpha=0.1)
+    fig.add_trace(go.Scatter(
+        x=durations, 
+        y=watts,
+        mode='lines+markers',
+        name='This Ride',
+        line=dict(color='blue', width=3)
+    ))
     
-    # Highlight climbs
-    for i, c in enumerate(climbs):
-        sub = df.loc[c['start_idx']:c['end_idx']]
-        ax.plot(sub['dist_m']/1000, sub['ele'], color='red', linewidth=2)
+    # 2. All-Time Best Curve (Ghost Line)
+    if best_curve_dict:
+        # Align durations
+        b_durations = sorted(best_curve_dict.keys())
+        b_watts = [best_curve_dict[d] for d in b_durations]
         
-        # Label
-        mid_x = sub['dist_m'].mean()/1000
-        max_y = sub['ele'].max()
-        ax.text(mid_x, max_y + 10, f"#{i+1}", color='red', fontweight='bold', ha='center')
+        fig.add_trace(go.Scatter(
+            x=b_durations,
+            y=b_watts,
+            mode='lines',
+            name='All-Time Best',
+            line=dict(color='gray', width=2, dash='dash'),
+            opacity=0.7
+        ))
 
-    ax.set_title("Detected Climbs")
-    ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Elevation (m)")
-    plt.tight_layout()
+    # Log Scale for Time (Standard for Power Curves)
+    fig.update_layout(
+        title="Mean Maximal Power Curve",
+        xaxis_title="Duration (seconds)",
+        yaxis_title="Watts",
+        xaxis_type="log",
+        hovermode="x unified",
+        template="plotly_white",
+        xaxis=dict(
+            tickvals=[5, 60, 300, 1200, 3600],
+            ticktext=["5s", "1m", "5m", "20m", "1h"]
+        )
+    )
+    return fig
+
+def plot_climbs(df, climbs):
+    """
+    Plots the full elevation profile with climbs highlighted in Red.
+    """
+    fig = go.Figure()
+
+    # 1. Full Elevation (Gray Background)
+    fig.add_trace(go.Scatter(
+        x=df['dist_m'] / 1000,
+        y=df['ele'],
+        mode='lines',
+        name='Full Route',
+        line=dict(color='lightgray', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(200,200,200,0.2)',
+        hoverinfo='skip'
+    ))
     
-    if outpath:
-        plt.savefig(outpath)
-        plt.close()
+    y_min = df['ele'].min() * 0.95
+    y_max = df['ele'].max() * 1.05
+
+   # 2. Highlight Each Climb
+    for i, c in enumerate(climbs):
+        segment = df.loc[c['start_idx']:c['end_idx']]
+        if segment.empty: continue
+        
+        # Hover text for the climb segment
+        hover_text = (
+            f"Climb #{i+1} - {c['type']}<br>"
+            f"Len: {c['length_m']/1000:.1f}km, Avg: {c['avg_gradient_pct']:.1f}%"
+        )
+        
+        fig.add_trace(go.Scatter(
+            x=segment['dist_m'] / 1000,
+            y=segment['ele'],
+            mode='lines',
+            name=f"Climb #{i+1}",
+            line=dict(color='#d62728', width=3), # Red
+            hoveron='fills+points',
+            text=hover_text,
+            hoverinfo='text+y'
+        ))
+
+    fig.update_layout(
+        title="Route Elevation & Climbs Detected",
+        xaxis_title="Distance (km)",
+        yaxis_title="Elevation (m)",
+        template="plotly_white",
+        showlegend=False,
+        height=300
+    )
+        # Apply calculated limits
+    fig.update_yaxes(
+        range=[y_min, y_max]
+    )
+
     return fig
 
 # --- NEW DETAILED CLIMB PLOTTING ---
 
-def get_gradient_color(gradient):
-    if gradient < 3: return "#90EE90"  # Light Green
-    if gradient < 6: return "#FFD700"  # Gold
-    if gradient < 9: return "#FFA500"  # Orange
-    if gradient < 12: return "#FF4500" # Red
-    return "#8B0000"                   # Dark Red/Black
-
-def plot_detailed_climb(df, start_idx, end_idx, segments, rider_weight=70):
+def plot_detailed_climb(segment):
     """
-    Plots a single climb with colored segments based on gradient.
+    Classic 'Grand Tour' style climb profile.
+    - Visuals: Continuous Elevation Profile (Filled Area).
+    - Coloring: The area is split into segments, each colored by its avg gradient.
+    - Annotations: Gradient % aligned to the bottom of the plot.
     """
-    climb_df = df.loc[start_idx:end_idx]
-    
-    fig, ax = plt.subplots(figsize=(10, 5))
-    
-    # Normalize distance to start at 0km
-    base_dist = climb_df['dist_m'].iloc[0]
-    x_axis = (climb_df['dist_m'] - base_dist) / 1000
-    
-    ax.plot(x_axis, climb_df['ele'], color='black', linewidth=1, alpha=0.5)
-    
-    max_ele = climb_df['ele'].max()
-    min_ele = climb_df['ele'].min()
+    if segment.empty:
+        return go.Figure()
 
-    ele_range = max_ele - min_ele
+    # 1. Setup Data
+    start_dist = segment['dist_m'].iloc[0]
+    df = segment.copy()
+    df['local_dist_m'] = df['dist_m'] - start_dist
     
-    for seg in segments:
-        mask = (climb_df['dist_m'] >= seg['start_dist']) & (climb_df['dist_m'] <= seg['end_dist'])
-        sub_df = climb_df.loc[mask]
+    # 2. Calculate Global Axis Limits (Pre-calculation)
+    min_ele = df['ele'].min()
+    max_ele = df['ele'].max()
+    
+    # Y-Axis range: 95% of min to 105% of max
+    # We use this y_min to anchor the text at the bottom
+    y_min = min_ele * 0.95
+    y_max = max_ele * 1.05
 
-        if sub_df.empty:
+    # Initialize Figure
+    from plotly.subplots import make_subplots
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # 3. Iterate through segments
+    max_dist = df['local_dist_m'].max()
+
+    if max_dist < 1000:
+        segment_length_m = 200
+    elif max_dist < 7000:
+        segment_length_m = 500
+    elif max_dist < 15000:
+        segment_length_m = 1000
+    else:
+        segment_length_m = 2000
+    
+    for start in np.arange(0, max_dist, segment_length_m):
+        end = start + segment_length_m
+        
+        # Get the chunk
+        chunk = df[(df['local_dist_m'] >= start) & (df['local_dist_m'] <= end)]
+        
+        if chunk.empty:
             continue
+            
+        # Connect to previous point
+        if start > 0:
+            prev_point = df[df['local_dist_m'] <= start].iloc[-1]
+            chunk = pd.concat([prev_point.to_frame().T, chunk])
 
-        # --- Calculations ---
-
-        t_start = sub_df['time'].iloc[0]
-        t_end = sub_df['time'].iloc[-1]
-        duration = (t_end - t_start).total_seconds()
-        d_ele = seg['end_ele'] - seg['start_ele']
-
-        vam=0
-        if duration > 1:
-            vam = (d_ele / duration) * 3600
-
-        avg_kph = 0.0
-        distance_m = seg['end_dist'] - seg['start_dist']
-        if duration > 0:
-            avg_kph = (distance_m / duration) * 3.6
-
-        avg_watts = 0
-        if 'power' in sub_df.columns:
-            avg_watts = sub_df['power'].mean()
-
-        wkg = 0.0
-        if rider_weight > 0 and pd.notna(avg_watts):
-            wkg = avg_watts / rider_weight
+        # Calculate Avg Gradient
+        dist_delta = chunk['dist_m'].max() - chunk['dist_m'].min()
+        ele_delta = chunk['ele'].max() - chunk['ele'].min()
         
-        seg_x = (sub_df['dist_m'] - base_dist) / 1000
-        seg_y = sub_df['ele']
-        
-        color = get_gradient_color(seg['avg_grad'])
-        
-        ax.fill_between(seg_x, seg_y, min_ele - 10, color=color, alpha=0.8)
-        
-        # Add text label
-        mid_x = (seg['start_dist'] + seg['end_dist']) / 2
-        mid_x_norm = (mid_x - base_dist) / 1000
-        mid_y = (seg['start_ele'] + seg['end_ele']) / 2
-        
-        label_txt = f"{seg['avg_grad']:.1f}%"
-        if vam > 0:
-            label_txt += f"\n{int(vam)} VAM"
-        if wkg > 0:
-            label_txt += f"\n{wkg:.1f} W/kg"
-        if avg_kph > 0:
-            label_txt += f"\n{avg_kph:.1f} km/h"
+        avg_grade = 0
+        if dist_delta > 0:
+            avg_grade = (ele_delta / dist_delta) * 100
 
-        seg_len_km = (seg['end_dist'] - seg['start_dist']) / 1000
-        rotation = 90 if seg_len_km < 0.5 else 0
+        # Determine Color
+        fill_color = '#aaaaaa' # Default Gray
+        if avg_grade >= 3:  fill_color = '#2ca02c' # Green
+        if avg_grade >= 6:  fill_color = '#ff7f0e' # Orange
+        if avg_grade >= 9:  fill_color = '#d62728' # Red
+        if avg_grade >= 12: fill_color = '#000000' # Black
 
-        ax.text(mid_x_norm, mid_y + (ele_range * 0.1), label_txt, ha='center', va='bottom', fontsize=8, fontweight='bold', color='black', rotation=rotation)
+        # Add the Segment Trace
+        fig.add_trace(
+            go.Scatter(
+                x=chunk['local_dist_m'] / 1000,
+                y=chunk['ele'],
+                mode='lines',
+                line=dict(color='black', width=1), 
+                fill='tozeroy',
+                fillcolor=fill_color,
+                showlegend=False,
+                hovertemplate=f"<b>Seg:</b> {avg_grade:.1f}%<br><b>Elev:</b> %{{y:.0f}}m<extra></extra>"
+            ),
+            secondary_y=False
+        )
+        
+        # Add Annotation (Aligned to Bottom)
+        mid_x = (chunk['local_dist_m'].min() + chunk['local_dist_m'].max()) / 2000 # km
+        
+        if avg_grade > 3:
+            fig.add_annotation(
+                x=mid_x, 
+                y=y_min, # Anchor to the bottom of the axis
+                text=f"{avg_grade:.0f}%",
+                showarrow=False,
+                yshift=15, # Lift slightly off the bottom spine
+                font=dict(color='black', size=11, family="Arial Black")
+            )
 
-    ax.set_title(f"Climb Detail (Length: {(x_axis.iloc[-1]):.2f} km)")
-    ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Elevation (m)")
-    ax.grid(True, alpha=0.2)
+    # 4. Add Power Overlay
+    if 'power' in df.columns:
+        p_smooth = df['power'].rolling(10, min_periods=1).mean()
+        fig.add_trace(
+            go.Scatter(
+                x=df['local_dist_m'] / 1000,
+                y=p_smooth,
+                name='Power (10s)',
+                mode='lines',
+                line=dict(color='purple', width=2),
+                opacity=0.6 
+            ),
+            secondary_y=True
+        )
+
+    # 5. Final Layout
+    fig.update_layout(
+        title=f"Climb Profile",
+        xaxis_title="Distance (km)",
+        yaxis_title="Elevation (m)",
+        yaxis2_title="Power (W)",
+        hovermode="x unified",
+        template="plotly_white",
+        height=400,
+        showlegend=False,
+        shapes=[] 
+    )
     
-    # Create Legend
-    patches = [
-        mpatches.Patch(color="#90EE90", label="< 3%"),
-        mpatches.Patch(color="#FFD700", label="3-6%"),
-        mpatches.Patch(color="#FFA500", label="6-9%"),
-        mpatches.Patch(color="#FF4500", label="9-12%"),
-        mpatches.Patch(color="#8B0000", label="> 12%")
-    ]
-    ax.legend(handles=patches, loc='upper left', fontsize='small')
-
-    plt.tight_layout()
+    # Apply calculated limits
+    fig.update_yaxes(
+        secondary_y=False, 
+        range=[y_min, y_max]
+    )
+    
+    fig.update_yaxes(
+        secondary_y=True, 
+        range=[0.5*df['power'].min(), df['power'].max() * 1.2], 
+        showgrid=False
+    )
+    
     return fig
 
 def plot_power_budget(df):
     """
-    Plots the breakdown of power components.
-    comps_df: DataFrame with columns p_aero, p_grav, p_roll, p_accel, p_loss
+    100% Stacked Area chart showing the relative contribution of each 
+    power component (Aero, Gravity, Rolling, Accel) to the total power cost.
     """
-    comps_df = df[['p_aero', 'p_grav', 'p_roll', 'p_accel','ele','dist_m']].copy()
+    from plotly.subplots import make_subplots
     
-    # --- FIX: Ensure DatetimeIndex ---
-    # If comps_df doesn't have a DatetimeIndex, try to recover it from the original df
-    if not isinstance(comps_df.index, pd.DatetimeIndex):
-        if 'time' in df.columns:
-            comps_df = comps_df.set_index(pd.to_datetime(df['time']))
-        elif isinstance(df.index, pd.DatetimeIndex):
-             comps_df.index = df.index
-        else:
-            # Fallback: Create a dummy index if real time is missing (start at 0, 1s steps)
-            start = pd.Timestamp.now()
-            comps_df.index = pd.date_range(start=start, periods=len(comps_df), freq='1s')
-    # 1. Resample and Fill NaNs
-    # We use .mean() to smooth, then .fillna(0) to ensure stackplot doesn't break on gaps
-    resampled = comps_df.resample('30s').mean().fillna(0)
-    
-    # 2. Setup Plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
-    
-    x = resampled['dist_m']/1000
-    
-    # 3. Prepare Data Components (Absolute)
-    # Ensure no negative values for the stacked chart logic (though gravity/accel can be negative)
-    # For a "Budget" chart, we typically visualize the *Cost* (positive loads).
-    y_aero = resampled['p_aero'].clip(lower=0) 
-    y_roll = resampled['p_roll'].clip(lower=0)
-    y_grav = resampled['p_grav'].clip(lower=0) 
-    y_accel = resampled['p_accel'].clip(lower=0)
-    
-    labels = ["Rolling Res.", "Acceleration", "Gravity (Climb)", "Aerodynamic"]
-    colors = ["#2ca02c", "#ff7f0e", "#d62728", "#1f77b4"] 
-    
-    # 4. Plot Absolute (Stackplot)
-    ax1.stackplot(x, y_roll, y_accel, y_grav, y_aero, labels=labels, colors=colors, alpha=0.8)
-    ax1.set_ylabel("Power (W)")
-    ax1.legend(loc='upper left')
-    ax1.grid(True, alpha=0.3)
-    
-    ax3 = ax1.twinx()
-    ax3.plot(x, resampled['ele'], linewidth=2.5, color='black')
-    ax3.set_ylabel("Elevation (m)")
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # 5. Prepare Relative Data (Percentage)
-    total_cost = y_roll + y_accel + y_grav + y_aero
+    # Smoothing window (seconds) to reduce noise
+    w = 10
     
-    # Avoid division by zero: only calculate ratio where total power is significant (>10W)
-    mask = total_cost > 10
+    # Prepare data
+    # We clip negative values (like descending gravity) because this chart 
+    # shows "Where the watts go" (Costs), not "Where they come from".
+    roll = df['p_roll'].rolling(w).mean().clip(lower=0)
+    grav = df['p_grav'].rolling(w).mean().clip(lower=0)
+    aero = df['p_aero'].rolling(w).mean().clip(lower=0)
+    accel = df['p_accel'].rolling(w).mean().clip(lower=0)
     
-    # Helper to safe-divide
-    def get_pct(series):
-        return (series / total_cost).where(mask, 0) * 100
+    x = df['dist_m'] / 1000 if 'dist_m' in df.columns else df.index
 
-    y_roll_pct = get_pct(y_roll)
-    y_accel_pct = get_pct(y_accel)
-    y_grav_pct = get_pct(y_grav)
-    y_aero_pct = get_pct(y_aero)
-    
-    # 6. Plot Relative (Stackplot)
-    ax2.stackplot(x, y_roll_pct, y_accel_pct, y_grav_pct, y_aero_pct, labels=labels, colors=colors, alpha=0.8)
-    
-    ax2.set_ylabel("Ratio of Total Power (%)")
-    ax2.set_xlabel("Distance (km)")
-    ax2.set_ylim(0, 100)
-    ax2.grid(True, alpha=0.3)
-   
-    ax4 = ax2.twinx()
-    ax4.plot(x, resampled['ele'], linewidth=2.5, color='black')
-    ax4.set_ylabel("Elevation (m)")
+    # Common style for the stack
+    # groupnorm='percent' tells Plotly to normalize the stack to 100 at every X point.
+    stack_kw = dict(stackgroup='one', groupnorm='percent', mode='lines', line=dict(width=0))
 
+    # 1. Rolling Resistance (Green)
+    fig.add_trace(go.Scatter(
+        x=x, y=roll,
+        name='Rolling',
+        fillcolor='rgba(44, 160, 44, 0.7)', # #2ca02c
+        **stack_kw
+    ), secondary_y=False)
     
-    plt.tight_layout()
+    # 2. Gravity (Orange)
+    fig.add_trace(go.Scatter(
+        x=x, y=grav,
+        name='Gravity',
+        fillcolor='rgba(255, 127, 14, 0.7)', # #ff7f0e
+        **stack_kw
+    ), secondary_y=False)
+    
+    # 3. Acceleration (Red)
+    fig.add_trace(go.Scatter(
+        x=x, y=accel,
+        name='Acceleration',
+        fillcolor='rgba(214, 39, 40, 0.7)', # #d62728
+        **stack_kw
+    ), secondary_y=False)
+
+    # 4. Aerodynamic (Blue)
+    # Often the largest, so we put it on top or bottom. Order matters for visuals.
+    fig.add_trace(go.Scatter(
+        x=x, y=aero,
+        name='Aero',
+        fillcolor='rgba(31, 119, 180, 0.7)', # #1f77b4
+        **stack_kw
+    ), secondary_y=False)
+
+    # Elevation
+    fig.add_trace(go.Scatter(
+        x=x, y=df['ele'],
+        name="Elevation",
+        line=dict(color='gray', width=2.5)),
+        secondary_y=True
+    )
+
+    fig.update_layout(
+        title="Power Budget (Relative Cost Breakdown)",
+        xaxis_title="Distance (km)",
+        yaxis_title="Contribution (%)",
+        hovermode="x unified",
+        template="plotly_white",
+        height=400,
+        yaxis=dict(range=[0, 100], fixedrange=True),
+        showlegend=True,
+        legend=dict(orientation="h", y=1.1)
+    )
+    
     return fig
 
-def plot_w_prime_balance(df, w_val_series, w_prime_cap):
-    fig, ax = plt.subplots(figsize=(10,5))
+def plot_w_prime_balance(df, cap_j):
+    from plotly.subplots import make_subplots
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Background Elevation
+    _add_elevation_background(fig, df, secondary_y=True)
+    
+    # W' Balance Line
+    fig.add_trace(
+        go.Scatter(
+            x=df['dist_m'] / 1000,
+            y=df['w_prime_balance'] / 1000, # Convert J to kJ
+            name="W' Balance (kJ)",
+            line=dict(color='red', width=2),
+            fill='tozeroy' # Fill helps visualize "tank emptying"
+        ),
+        secondary_y=False
+    )
+    
+    # Add Capacity Line
+    fig.add_hline(y=cap_j/1000, line_dash="dash", line_color="green", annotation_text="Full Capacity")
+    fig.add_hline(y=0, line_color="black", annotation_text="Empty!")
 
-    #x = df.index if isinstance(df.index, pd.Datetimeindex) else df['time']
-    x = df['dist_m'] / 1000.0  # Distance in km
-    y = w_val_series / 1000.0
-
-    cap_kj = w_prime_cap / 1000.0
-
-    ax.plot(x, y, color='red' , linewidth=1.5, label="W' Balance (kJ)")
-    ax.axhline(cap_kj, color='black', linestyle='--', linewidth=1, label="W' Capacity (kJ)")
-    ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("W' Balance (kJ)")
-    ax.set_title("Anaerobic Battery (W' Balance)")
-    ax.set_ylim(0, cap_kj * 1.1)
-    ax.legend(loc='upper right')
-    ax.grid(True, alpha=0.3)
-    ax2 = ax.twinx()
-    ax2.plot(x, df['ele'], color='gray', linewidth=0.5, alpha=0.5)
-    ax2.fill_between(x, df['ele'], color='gray', alpha=0.1)
-    ax2.set_ylabel("Elevation (m)")
-
+    fig.update_layout(
+        title="Anaerobic Battery (W' Balance)",
+        yaxis_title="Energy Remaining (kJ)",
+        hovermode="x unified",
+        template="plotly_white"
+    )
     return fig
 
 def plot_pmc(pmc_df):
-    fig, ax1 = plt.subplots(figsize=(10,6))
+    """
+    Performance Management Chart (CTL/ATL/TSB)
+    """
+    from plotly.subplots import make_subplots
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # 1. TSB (Form) as Bars on Right Axis
+    # Color logic: Positive = Yellow/Orange, Negative = Red
+    colors = np.where(pmc_df['TSB'] >= 0, '#ff7f0e', '#d62728')
+    
+    fig.add_trace(
+        go.Bar(
+            x=pmc_df.index, y=pmc_df['TSB'],
+            name='TSB (Form)',
+            marker_color=colors,
+            opacity=0.4
+        ),
+        secondary_y=True
+    )
 
-    col_ctl = '#1f77b4'  # Blue
-    col_atl = '#e377c2'  # Pink
-    col_tsb_pos = '#ff7f0e'  # Yellow
-    col_tsb_neg = '#d62728'  # Red
+    # 2. CTL (Fitness) Line
+    fig.add_trace(
+        go.Scatter(x=pmc_df.index, y=pmc_df['CTL'], name='Fitness (CTL)', line=dict(color='#1f77b4', width=3)),
+        secondary_y=False
+    )
 
-    x = pmc_df.index
+    # 3. ATL (Fatigue) Line
+    fig.add_trace(
+        go.Scatter(x=pmc_df.index, y=pmc_df['ATL'], name='Fatigue (ATL)', line=dict(color='#e377c2', width=2)),
+        secondary_y=False
+    )
 
-    ax2 = ax1.twinx()
-
-    tsb_colors = [col_tsb_pos if v >= 0 else col_tsb_neg for v in pmc_df['TSB']]
-    ax2.bar(x, pmc_df['TSB'], color=tsb_colors, alpha=0.3, width=1, label='TSB (Form)')
-    ax2.set_ylabel("TSB (Form)", color='gray')
-    ax2.axhline(0, color='black', linestyle='--', linewidth=1)
-
-    ax1.plot(x, pmc_df['CTL'], color=col_ctl, linewidth=2, label='CTL (Fitness)')
-    ax1.fill_between(x, pmc_df['CTL'], 0, color=col_ctl, alpha=0.1)
-    ax1.plot(x, pmc_df['ATL'], color=col_atl, linewidth=2, label='ATL (Fatigue)')
-
-    ax1.set_title("Performance Management Chart (PMC)")
-    ax1.set_ylabel("Training Load")
-    ax1.grid(True, alpha=0.2)
-
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
-
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
-    plt.tight_layout()
-
+    fig.update_layout(
+        title="Performance Management Chart (PMC)",
+        yaxis_title="Training Load (TSS/day)",
+        yaxis2_title="Form (TSB)",
+        hovermode="x unified",
+        template="plotly_white",
+        legend=dict(orientation="h", y=1.1)
+    )
     return fig
 
+def plot_zone_distribution(zone_counts, title="Zone Distribution"):
+    labels = list(zone_counts.keys())
+    values = list(zone_counts.values())
+    
+    # Calculate %
+    total = sum(values)
+    if total == 0: return go.Figure()
+    
+    # Custom colors for Z1-Z7
+    colors = ['#888888', '#3388ff', '#2ca02c', '#ffbf00', '#ff7f0e', '#d62728', '#9467bd']
+    
+    fig = go.Bar(
+        x=labels, 
+        y=values,
+        marker_color=colors[:len(labels)],
+        text=[f"{v/total:.1%}" for v in values],
+        textposition='auto'
+    )
+    
+    layout = go.Layout(
+        title=title,
+        yaxis_title="Seconds",
+        template="plotly_white"
+    )
+    
+    return go.Figure(data=[fig], layout=layout)
