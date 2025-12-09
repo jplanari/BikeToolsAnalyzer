@@ -440,45 +440,73 @@ def plot_w_prime_balance(df, cap_j):
 
 def plot_pmc(pmc_df):
     """
-    Performance Management Chart (CTL/ATL/TSB)
+    Plots Fitness (CTL), Fatigue (ATL), and Form (TSB).
+    Focuses on the last 60 days for better readability.
     """
-    from plotly.subplots import make_subplots
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    if pmc_df.empty:
+        return go.Figure()
+
+    # --- NEW LOGIC: Filter to last 60 days ---
+    # We calculate metrics on the full history (in dashboard.py) so the values are correct,
+    # but we only plot the tail end here.
+    last_date = pmc_df.index.max()
+    start_date = last_date - pd.Timedelta(days=60)
     
-    # 1. TSB (Form) as Bars on Right Axis
-    # Color logic: Positive = Yellow/Orange, Negative = Red
-    colors = np.where(pmc_df['TSB'] >= 0, '#ff7f0e', '#d62728')
+    # Slice the dataframe
+    plot_df = pmc_df.loc[pmc_df.index >= start_date]
+    
+    if plot_df.empty:
+        # Fallback if the ride history is older than 60 days
+        plot_df = pmc_df.tail(60)
+
+    fig = go.Figure()
+
+    # 1. TSB (Form) Area - Filled
+    # We color TSB areas: Positive (Fresh) vs Negative (Tired) could be nice, 
+    # but here we stick to the standard grey/neutral fill or colors.
+    colors = np.where(plot_df['TSB'] >= 0, 'rgba(44, 160, 44, 0.4)', 'rgba(214, 39, 40, 0.4)')
     
     fig.add_trace(
         go.Bar(
-            x=pmc_df.index, y=pmc_df['TSB'],
+            x=plot_df.index, 
+            y=plot_df['TSB'], 
             name='TSB (Form)',
             marker_color=colors,
-            opacity=0.4
-        ),
-        secondary_y=True
+            opacity=0.6
+        )
+        # Note: We often plot TSB on secondary Y or same Y. 
+        # Usually PMC puts everything on one scale or TSB on right.
+        # Let's keep it simple on one scale or follow your previous preference.
     )
 
     # 2. CTL (Fitness) Line
     fig.add_trace(
-        go.Scatter(x=pmc_df.index, y=pmc_df['CTL'], name='Fitness (CTL)', line=dict(color='#1f77b4', width=3)),
-        secondary_y=False
+        go.Scatter(
+            x=plot_df.index, 
+            y=plot_df['CTL'], 
+            name='Fitness (CTL)', 
+            line=dict(color='#1f77b4', width=3)
+        )
     )
 
     # 3. ATL (Fatigue) Line
     fig.add_trace(
-        go.Scatter(x=pmc_df.index, y=pmc_df['ATL'], name='Fatigue (ATL)', line=dict(color='#e377c2', width=2)),
-        secondary_y=False
+        go.Scatter(
+            x=plot_df.index, 
+            y=plot_df['ATL'], 
+            name='Fatigue (ATL)', 
+            line=dict(color='#e377c2', width=2)
+        )
     )
 
     fig.update_layout(
-        title="Performance Management Chart (PMC)",
-        yaxis_title="Training Load (TSS/day)",
-        yaxis2_title="Form (TSB)",
+        title="Performance Management Chart (Last 60 Days)",
+        yaxis_title="Training Load / Form",
         hovermode="x unified",
         template="plotly_white",
         legend=dict(orientation="h", y=1.1)
     )
+    
     return fig
 
 def plot_zone_distribution(zone_counts, title="Zone Distribution"):

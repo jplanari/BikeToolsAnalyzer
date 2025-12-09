@@ -189,7 +189,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             if filename.endswith(".fit"):
-                file_bytes = file_obj.getvalue()
                 df = parse_fit(file_bytes)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
                 df = resample_to_seconds(df)
@@ -211,7 +210,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
             else:
                 # 1. Standard Parsing
-                df = parse_gpx(file_obj.getvalue())
+                df = parse_gpx(file_bytes)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
                 df = resample_to_seconds(df)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
@@ -530,23 +529,22 @@ def render_user_corner(user_name):
     if len(history_data) > 0:
         # Create DataFrame
         pmc_df = pd.DataFrame(history_data)
-        pmc_df['date'] = pd.to_datetime(pmc_df['date'])
-        
-        # Sort just in case
-        pmc_df = pmc_df.sort_values('date')
+        pmc_df['date'] = pd.to_datetime(pmc_df['date'], errors='coerce')
         
         # Set index to date
+        pmc_df['tss'] = pd.to_numeric(pmc_df['tss'], errors='coerce')
+
+        pmc_df = pmc_df.dropna(subset=['date', 'tss'])
+        pmc_df = pmc_df[pmc_df['tss'] >= 0]
+
+        if pmc_df.empty:
+            st.warning("Found rides, but no valid TSS data to plot PMC.")
+            return
+
         pmc_df = pmc_df.set_index('date')
-        
-        # Resample to Daily (Sum TSS if multiple rides per day)
-        # We assume 0 TSS for days with no rides between start and end
-        if len(pmc_df) > 1:
-            full_idx = pd.date_range(start=pmc_df.index.min(), end=pmc_df.index.max(), freq='D')
-            pmc_df = pmc_df.resample('D').sum().reindex(full_idx, fill_value=0)
-        else:
-            # If only 1 day of data, just keep it as is (no resampling needed yet)
-            pass
-        
+        pmc_df = pmc_df.resample('D').sum().fillna(0)
+
+       
         # Calculate Metrics (Exponential Weighted Moving Averages)
         # CTL = 42-day time constant
         # ATL = 7-day time constant
@@ -558,20 +556,20 @@ def render_user_corner(user_name):
         pmc_df['TSB'] = pmc_df['CTL'] - pmc_df['ATL']
         
         # Show Plot
-#        st.plotly_chart(plot_pmc(pmc_df), use_container_width=True)
+        st.plotly_chart(plot_pmc(pmc_df), use_container_width=True)
         
         # Show Current Status
         curr = pmc_df.iloc[-1]
-#        k1, k2, k3 = st.columns(3)
-#        k1.metric("Fitness (CTL)", f"{curr['CTL']:.1f}", help="Chronic Training Load (42-day avg)")
-#        k2.metric("Fatigue (ATL)", f"{curr['ATL']:.1f}", help="Acute Training Load (7-day avg)")
-#        k3.metric("Form (TSB)", f"{curr['TSB']:.1f}", 
-#                  delta=f"{curr['TSB']:.1f}", delta_color="normal",
-#                  help="Training Stress Balance (Fitness - Fatigue)")
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Fitness (CTL)", f"{curr['CTL']:.1f}", help="Chronic Training Load (42-day avg)")
+        k2.metric("Fatigue (ATL)", f"{curr['ATL']:.1f}", help="Acute Training Load (7-day avg)")
+        k3.metric("Form (TSB)", f"{curr['TSB']:.1f}", 
+                  delta=f"{curr['TSB']:.1f}", delta_color="normal",
+                  help="Training Stress Balance (Fitness - Fatigue)")
                   
         # DEBUG: Show raw data if user wants to check
- #       with st.expander("View Raw PMC Data"):
- #           st.dataframe(pmc_df)
+        with st.expander("View Raw PMC Data"):
+            st.dataframe(pmc_df)
                   
     else:
         st.info("No TSS history data available. Upload a ride to see your chart!")
