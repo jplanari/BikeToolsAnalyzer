@@ -14,7 +14,11 @@ from src.viz.plots import (
         plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
         plot_pmc
     )
-from src.analysis.power import NP, IF, TSS, power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, calculate_ride_kJ
+from src.analysis.power import (
+        NP, IF, TSS, power_curve, time_in_zones, coggan_zones, 
+        calculate_w_prime_balance, calculate_ride_kJ,
+        estimate_critical_power
+    )
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
@@ -49,6 +53,16 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp):
     # 3. W' Balance (if FTP exists)
     if ftp and 'power' in df.columns:
         df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp)
+        breakthrough = df['w_prime_balance'].min()
+        if breakthrough < 0:
+            st.success(f"🚀 **Fitness Breakthrough Detected!**")
+            st.write(f"You depleted your modeled W' battery and kept going. You went **{abs(breakthrough)/1000:.1f} kJ** into the negative.")
+    
+            st.info("""
+    **Interpretation:** Your actual CP or W' is higher than your current settings.
+    - If this was a short, punchy ride: Increase your **W'**.
+    - If this was a long, steady hard ride: Increase your **CP/FTP**.
+    """)
     else:
         df['w_prime_balance'] = np.nan
         
@@ -583,6 +597,43 @@ def render_user_corner(user_name):
         st.subheader("🏆 User All-Time Power Curve")
 
         show_centered(plot_power_curve(best_power, None))
+
+
+        cp_results = estimate_critical_power(best_power)
+        if cp_results:
+            st.markdown("### ⚡ Physiological Model (Critical Power)")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Critical Power (CP)", 
+                    f"{cp_results['cp']:.0f} W",
+                    help="The theoretical power you can sustain 'indefinitely' (aerobic ceiling). Usually slightly higher than FTP."
+                )
+            
+            with col2:
+                w_prime_kj = cp_results['w_prime'] / 1000
+                st.metric(
+                    "W' (Anaerobic Capacity)", 
+                    f"{w_prime_kj:.1f} kJ",
+                    help="Battery size above CP. Typical values: 10kJ (Sprinter) to 25kJ (Pursuiter)."
+                )
+                
+            with col3:
+                st.metric(
+                    "Model Fit (R²)", 
+                    f"{cp_results['r_squared']:.3f}",
+                    help="How well your data fits the model. >0.95 is excellent. If low, you might need more all-out efforts between 3 and 12 mins."
+                )
+                
+            # Suggestion logic based on W'
+            if cp_results['w_prime'] > 20000:
+                st.caption("💡 Insight: You have a high anaerobic capacity. You are likely a **Puncheur** or **Sprinter**.")
+            elif cp_results['w_prime'] < 12000:
+                st.caption("💡 Insight: Your engine is more diesel. You are likely a **Time Trialist** or **Climber** (or you need to do more intervals!).")
+
+        else:
+            st.info("Not enough data to model Critical Power. Upload maximal efforts between 3 and 20 minutes.")            
 
         st.subheader("🏆 Best Power Records")
         data = []

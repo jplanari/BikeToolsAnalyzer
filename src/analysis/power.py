@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 import pandas as pd
+from scipy.stats import linregress
 
 def NP(power_series):
     """
@@ -129,3 +130,72 @@ def calculate_ride_kJ(power_series):
     total_kJ = power_series.fillna(0).sum() / 1000.0
     return total_kJ
 
+
+def estimate_critical_power(power_curve_dict):
+    """
+    Estimate Critical Power (CP) using linear regression on the power-duration curve.
+    power_curve_dict: dict of {duration_s: power_watts}
+    Returns estimated CP in watts.
+    """
+    if not power_curve_dict:
+        return None
+
+    # 1. Convert to arrays
+    # Filter for valid physiological window for CP model (usually 3m to 20m)
+    # Short durations (<180s) are dominated by anaerobic capacity (AC)
+    # Long durations (>1200s) are dominated by VO2max/Efficiency
+    min_sec = 180   # 3 minutes
+    max_sec = 1200  # 20 minutes
+    
+    times = []
+    work = []
+    
+    for t, p in power_curve_dict.items():
+        if min_sec <= t <= max_sec:
+            times.append(t)
+            work.append(p * t) # Joules
+            
+    # We need at least 2 points to draw a line, but 3+ is better
+    if len(times) < 2:
+        return None
+        
+    # 2. Linear Regression (Work vs Time)
+    # Slope = CP, Intercept = W'
+    slope, intercept, r_value, p_value, std_err = linregress(times, work)
+    
+    results = {
+        'cp': slope,               # Critical Power in Watts
+        'w_prime': intercept,      # W' in Joules
+        'r_squared': r_value**2    # Goodness of fit (close to 1.0 is best)
+    }
+    
+    return results   
+
+def detect_breakthrough(w_prime_balance_series):
+    """
+    Checks if W' Balance went negative.
+    Returns the magnitude of the breakthrough (kJ) or 0 if none.
+    """
+    min_w_bal = w_prime_balance_series.min()
+    
+    if min_w_bal < 0:
+        # A negative balance of -5000 J means the rider had 5kJ more capacity
+        # than we thought, OR their CP is higher.
+        return abs(min_w_bal)
+    return 0.0
+
+def suggest_new_cp(breakthrough_kj, current_cp, current_w_prime, duration_above_cp_sec):
+    """
+    Rough estimator to suggest a new CP based on the breakthrough.
+    If we assume W' is correct, how much higher must CP be to avoid this negative dip?
+    
+    Math: Work_done = (CP_old * t) + W_prime_old + Breakthrough
+          Work_done = (CP_new * t) + W_prime_old
+          
+    Therefore: CP_new = CP_old + (Breakthrough / t)
+    """
+    if duration_above_cp_sec == 0:
+        return current_cp
+        
+    cp_increase = breakthrough_kj / duration_above_cp_sec
+    return current_cp + cp_increase
