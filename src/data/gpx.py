@@ -6,12 +6,24 @@ import re
 import streamlit as st
 
 @st.cache_data(show_spinner=False)
-def parse_gpx(file_path):
+def parse_gpx(file_content):
     """
     Parses GPX file and return DataFrame with time, lat, lon, ele, hr, power, etc.
     """
-    with open(file_path, 'r', encoding='utf-8') as f:
-        gpx = gpxpy.parse(f)
+
+    try:
+        if isinstance(file_content, bytes):
+            gpx_xml = file_content.decode('utf-8')
+        elif isinstance(file_content, str):
+            gpx_xml = file_content
+        else:
+            gpx_xml = file_content.read()
+            if isinstance(gpx_xml, bytes):
+                gpx_xml = gpx_xml.decode('utf-8')
+        gpx = gpxpy.parse(gpx_xml)
+    except Exception as e:
+        raise ValueError(f"Failed to parse GPX file: {e}")
+        return pd.DataFrame()
 
     rows = []
     for track in gpx.tracks:

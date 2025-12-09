@@ -186,9 +186,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
     file_bytes = file_obj.getvalue()
     filename = file_obj.name.lower()
     
-    with open("temp.gpx", "wb") as f:
-        f.write(file_bytes)
-
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             if filename.endswith(".fit"):
@@ -214,7 +211,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
             else:
                 # 1. Standard Parsing
-                df = parse_gpx("temp.gpx")
+                df = parse_gpx(file_obj.getvalue())
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
                 df = resample_to_seconds(df)
                 df, total_dist, total_ascent = compute_distance_and_ascent(df)
