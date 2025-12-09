@@ -72,7 +72,6 @@ def plot_x_time(df, col, ylabel, color='blue', title=None):
     )
 
     fig.update_layout(
-        title=title or f"{ylabel} vs Distance",
         xaxis_title="Distance (km)",
         yaxis_title=ylabel,
         yaxis2_title="Elevation (m)",
