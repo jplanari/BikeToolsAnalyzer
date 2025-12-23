@@ -165,23 +165,32 @@ def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clo
         Q_resp_latent = 0.0173 * factr * (5.87 - vp_kpa)
         
         Q_resp = max(0, Q_resp_sensible + Q_resp_latent)
-
-        # Total heat loss
-        Q_loss = Q_dry + Q_evap + Q_resp
-
-        # Net storage
-        S = H - Q_loss 
-        dS = S * dt / (RIDER_MASS * C_BODY)
-
-        t_core += dS
         
-        # Skin temp model: relax towards equilibrium between Core and Air
-        t_skin = 0.8 * t_skin + 0.2 * ((t_core + T_air[i])/2) 
+        alpha_skin = 0.1
+        mass_skin = RIDER_MASS * alpha_skin
+        mass_core = RIDER_MASS * (1 - alpha_skin)
+
+        K_min = 5.28 * A
+        sig_vasodilatation = max(0, t_core - 36.8)
+        K_blood = 150 * A * sig_vasodilatation / (1 + sig_vasodilatation)
+
+        K_total = K_blood + K_min
+
+        Q_transfer = K_total * (t_core - t_skin)
+
+        S_core = H - Q_resp - Q_transfer
+        S_skin = Q_transfer - Q_dry - Q_evap
+
+        dT_core = S_core * dt / (mass_core * C_BODY)
+        dT_skin = S_skin * dt / (mass_skin * 3500)
+
+        t_core += dT_core
+        t_skin += dT_skin
 
         core_temps.append(t_core)
         skin_temps.append(t_skin)
         heat_gen_list.append(H)
-        heat_loss_list.append(Q_loss)
+        heat_loss_list.append(Q_dry + Q_evap + Q_resp)
 
     # --- 4. ASSEMBLE RESULTS ---
     result_df = df.copy()
