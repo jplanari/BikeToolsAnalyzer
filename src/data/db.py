@@ -4,6 +4,27 @@ import hashlib
 
 DB_FILE = "bikethools.db"
 
+def migrate_db():
+    """
+    Adds new columns (cp, w_prime) to the users table if they don't exist.
+    Run this once safely; it catches errors if columns already exist.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN cp INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # Column likely exists already
+
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN w_prime REAL DEFAULT 20000")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit()
+    conn.close()
+
 def init_db():
     """Initializes the database with users, rides, and power_records tables."""
     conn = sqlite3.connect(DB_FILE)
@@ -16,7 +37,10 @@ def init_db():
             name TEXT UNIQUE NOT NULL,
             ftp INTEGER DEFAULT 200,
             lthr INTEGER DEFAULT 170,
-            weight REAL DEFAULT 70.0
+            weight REAL DEFAULT 70.0,
+            height REAL DEFAULT 175.0,
+            cp INTEGER DEFAULT 0,
+            w_prime REAL DEFAULT 20000
         )
     ''')
 
@@ -41,8 +65,7 @@ def init_db():
         )
     ''')
 
-    # NEW: Power Records Table
-    # Stores specific duration bests (e.g., 5s, 60s, 1200s) for each ride
+    # Power Records Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS power_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +73,7 @@ def init_db():
             ride_id INTEGER,
             duration_sec INTEGER,
             watts REAL,
+            date_time TEXT,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
         )
@@ -57,27 +81,48 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    # Run migration to ensure existing databases get the new columns
+    migrate_db()
 
-# --- USER FUNCTIONS ---
-# (Keep save_user, get_all_users, get_user_data, delete_user as they are)
-def save_user(name, ftp, lthr, weight):
+def save_user(name, ftp, lthr, weight, height):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
-        c.execute('''
-            INSERT INTO users (name, ftp, lthr, weight) 
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-            ftp=excluded.ftp,
-            lthr=excluded.lthr,
-            weight=excluded.weight
-        ''', (name, ftp, lthr, weight))
+        c.execute("INSERT INTO users (name, ftp, lthr, weight, height) VALUES (?, ?, ?, ?, ?)", 
+                  (name, ftp, lthr, weight, height))
         conn.commit()
-        return True, "User saved successfully."
+        return True, "User saved successfully!"
+    except sqlite3.IntegrityError:
+        return False, "User already exists."
     except Exception as e:
-        return False, str(e)
+        return False, f"Database Error: {e}"
     finally:
         conn.close()
+
+def update_user_physics(user_name, cp, w_prime, update_ftp=False):
+    """
+    Updates the user's physiological metrics.
+    Optionally updates FTP to match CP.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    if update_ftp:
+        c.execute('''
+            UPDATE users 
+            SET cp = ?, w_prime = ?, ftp = ? 
+            WHERE name = ?
+        ''', (cp, w_prime, cp, user_name))
+    else:
+        c.execute('''
+            UPDATE users 
+            SET cp = ?, w_prime = ? 
+            WHERE name = ?
+        ''', (cp, w_prime, user_name))
+        
+    conn.commit()
+    conn.close()
 
 def get_all_users():
     conn = sqlite3.connect(DB_FILE)
@@ -105,54 +150,53 @@ def delete_user(name):
     conn.commit()
     conn.close()
 
-# --- RIDE FUNCTIONS ---
-
-# UPDATED: Now accepts `power_curve_dict`
-def save_ride(user_name, filename, file_bytes, stats, power_curve_dict=None):
+def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     user = get_user_data(user_name)
     if not user:
         return False, "User not found."
-   
-    file_hash = hashlib.md5(file_bytes).hexdigest()
+
+    file_hash = hashlib.md5(file_content).hexdigest()
     
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
     try:
-        # 1. Insert Ride
+        # 1. Insert Ride Metadata
         c.execute('''
             INSERT INTO rides (
                 user_id, filename, file_hash, file_content, date_time, 
                 distance_km, elevation_m, avg_speed_kph, 
-                norm_power, avg_power, avg_hr, tss, if_factor
+                norm_power, avg_power, tss, if_factor, avg_hr
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            user['id'], filename, file_hash, file_bytes, str(stats['date_time']),
-            stats['dist_km'], stats['ele_m'], stats['speed'],
-            stats['np'], stats['avg_p'], stats['avg_hr'], stats.get('tss',0), stats.get('if_factor', stats.get('if',0.0))
+            user['id'], filename, file_hash, file_content, metadata.get('date'),
+            metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
+            metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
+            metadata.get('if', 0), metadata.get('avg_hr', 0)
         ))
         
         ride_id = c.lastrowid
-
-        # 2. Insert Power Records (if power data existed)
+        
+        # 2. Insert Power Records (Curve)
         if power_curve_dict:
-            records_data = []
+            records = []
             for duration, watts in power_curve_dict.items():
-                # We filter out NaNs or 0s to keep DB clean
-                if pd.notna(watts) and watts > 0:
-                    records_data.append((user['id'], ride_id, int(duration), float(watts)))
+                records.append((user['id'], ride_id, duration, watts, metadata.get('date')))
             
-            if records_data:
-                c.executemany('''
-                    INSERT INTO power_records (user_id, ride_id, duration_sec, watts)
-                    VALUES (?, ?, ?, ?)
-                ''', records_data)
-
+            c.executemany('''
+                INSERT INTO power_records (user_id, ride_id, duration_sec, watts, date_time)
+                VALUES (?, ?, ?, ?, ?)
+            ''', records)
+            
         conn.commit()
-        return True, "Ride saved to history!"
+        return True, "Ride saved successfully!"
+        
     except sqlite3.IntegrityError:
         return False, "Ride already exists (duplicate file)."
+        
     except Exception as e:
-        return False, str(e)
+        return False, f"Database Error: {e}"
+        
     finally:
         conn.close()
 
@@ -160,12 +204,13 @@ def get_user_rides(user_name):
     user = get_user_data(user_name)
     if not user:
         return []
-        
+    
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('''
-        SELECT * FROM rides 
+        SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss 
+        FROM rides 
         WHERE user_id = ? 
         ORDER BY date_time DESC
     ''', (user['id'],))
@@ -176,14 +221,13 @@ def get_user_rides(user_name):
 def get_ride_file(ride_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id,))
+    c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id, ())) # Fixed tuple
     row = c.fetchone()
     conn.close()
     if row:
         return row[0], row[1]
     return None, None
 
-# NEW FUNCTION: Get User's All-Time Best Power Curve
 def get_user_best_power(user_name):
     user = get_user_data(user_name)
     if not user:
@@ -208,21 +252,27 @@ def get_user_best_power(user_name):
     return {row[0]: row[1] for row in rows}
 
 def get_user_tss_history(user_name):
+    """
+    Fetches date and TSS for all rides, mimicking get_user_rides logic.
+    Does NOT filter by TSS value in SQL to ensure we get raw data first.
+    """
     user = get_user_data(user_name)
     if not user:
         return []
-
+    
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
+    
+    # Just select the columns we need
     c.execute('''
-        SELECT date_time, tss
-        FROM rides
-        WHERE user_id = ?
+        SELECT date_time, tss 
+        FROM rides 
+        WHERE user_id = ? 
         ORDER BY date_time ASC
     ''', (user['id'],))
-
+    
     rows = c.fetchall()
     conn.close()
-
+    
+    # Return raw list of dicts
     return [{'date': row[0], 'tss': row[1]} for row in rows]

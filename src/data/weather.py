@@ -22,7 +22,7 @@ def fetch_ride_weather(df):
             "longitude": lon,
             "start_date": start_str,
             "end_date": end_str,
-            "hourly": ["temperature_2m", "surface_pressure", "wind_speed_10m", "wind_direction_10m"],
+            "hourly": ["temperature_2m", "surface_pressure", "wind_speed_10m", "wind_direction_10m", "relative_humidity_2m"],
             "windspeed_unit": "ms",
             }
     try:
@@ -39,7 +39,8 @@ def fetch_ride_weather(df):
             'wind_speed': hourly['wind_speed_10m'],
             'wind_deg': hourly['wind_direction_10m'],
             'temp_c': hourly['temperature_2m'],
-            'pressure': hourly['surface_pressure']
+            'pressure': hourly['surface_pressure'],
+            'relative_humidity': hourly['relative_humidity_2m'],
         })
 
         weather_df = weather_df.set_index('time')
@@ -56,6 +57,7 @@ def fetch_ride_weather(df):
         df['wind_deg'] = weather_interp['wind_deg'].values
         df['temp_c'] = weather_interp['temp_c'].values
         df['pressure'] = weather_interp['pressure'].values
+        df['relative_humidity'] = weather_interp['relative_humidity'].values / 100.0  # Convert to fraction
 
         return df
 

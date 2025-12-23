@@ -6,6 +6,8 @@ import os
 import hashlib
 from streamlit_folium import st_folium
 
+import plotly.graph_objects as go
+
 # Imports from your existing modules
 from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
 from src.data.fit import parse_fit, get_fit_laps
@@ -29,9 +31,10 @@ from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
+from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 
 @st.cache_data(show_spinner=False)
-def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp):
+def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_prime_cap_j=20000):
     """
     Bundles all heavy math into one cached function.
     Returns: (df_enriched, climbs_list, power_components_df)
@@ -52,7 +55,7 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp):
     
     # 3. W' Balance (if FTP exists)
     if ftp and 'power' in df.columns:
-        df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp)
+        df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp, w_prime_cap_j=w_prime_cap_j)
         breakthrough = df['w_prime_balance'].min()
         if breakthrough < 0:
             st.success(f"🚀 **Fitness Breakthrough Detected!**")
@@ -85,6 +88,7 @@ def render_sidebar():
     user_ftp = 200
     user_weight = 70.0
     user_lthr = 170
+    user_height = 175
 
     st.sidebar.header("Navigation")
     
@@ -108,6 +112,7 @@ def render_sidebar():
                     user_ftp = u_data['ftp']
                     user_lthr = u_data['lthr']
                     user_weight = u_data['weight']
+                    user_height = u_data['height']
 
 
             if st.button("Delete User", type="primary"):
@@ -122,9 +127,10 @@ def render_sidebar():
             new_ftp = st.number_input("FTP (Watts)", value=200)
             new_lthr = st.number_input("LTHR (bpm)", value=170)
             new_weight = st.number_input("Weight (kg)", value=70.0)
+            new_height = st.number_input("Height (cm)", value=175)
             submitted = st.form_submit_button("Save User")
             if submitted and new_name:
-                success, msg = save_user(new_name, new_ftp, new_lthr, new_weight)
+                success, msg = save_user(new_name, new_ftp, new_lthr, new_weight, new_height)
                 if success:
                     st.success(msg)
                     st.rerun()
@@ -188,7 +194,8 @@ def render_sidebar():
 
         'ftp': user_ftp,
         'lthr': user_lthr,
-        'weight': user_weight
+        'weight': user_weight,
+        'height': user_height
     }
 
     # RETURN 'current_file' (which works for both logic paths)
@@ -268,7 +275,8 @@ def process_and_display_analysis(file_obj, user_name, settings):
                 crr=0.005, 
                 drivetrain_loss=0.03, 
                 rider_mass=settings['weight'], 
-                ftp=current_ftp
+                ftp=current_ftp,
+                w_prime_cap_j=settings.get('w_prime', 20000.0)
             )
 
         ride_if = IF(norm_power, current_ftp)
@@ -321,6 +329,11 @@ def process_and_display_analysis(file_obj, user_name, settings):
         if not laps_df.empty:
             with st.expander("⏱️ Laps / Intervals"):
                 st.dataframe(laps_df)
+    
+    # --- NEW: THERMAL SECTION ---
+    # Only show if we have power data, as the model depends on it
+    if 'power' in df.columns:
+        _render_thermal_analysis(df, settings['weight'], settings['height'])    
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
@@ -491,6 +504,141 @@ def _render_climb_details(df, climbs, settings):
     else:
         st.info("No significant climbs detected on this route.")
 
+def _render_thermal_analysis(df, user_weight, user_height):
+    """
+    Renders the Thermal Analysis interface with Distance x Elevation plot.
+    """
+    st.subheader("🔥 Thermal Analysis")
+    
+    # Unique ID for session state
+    start_time_str = str(df['time'].iloc[0]) if 'time' in df.columns else "0"
+    current_ride_id = f"{len(df)}_{start_time_str}"
+
+    with st.expander("⚙️ Configure Thermal Model", expanded=False):
+        # Clothing Selector
+        default_kit = ["Summer Jersey", "None (Shorts only)"]
+        selected_clothing = st.multiselect(
+            "Select Clothing Layers Worn:",
+            options=list(CLOTHING_CATALOG.keys()),
+            default=[k for k in default_kit if k in CLOTHING_CATALOG],
+            key="thermal_clothing_multiselect"
+        )
+        
+        total_clo = sum([CLOTHING_CATALOG[item] for item in selected_clothing])
+        st.caption(f"Total Insulation: **{total_clo:.2f} Clo**")
+        
+        # Trigger Button
+        if st.button("Run Thermal Simulation"):
+            with st.spinner("Simulating thermodynamics..."):
+                thermal_df = calculate_thermal_profile(
+                    df, 
+                    rider_weight_kg=user_weight, 
+                    rider_height_cm=user_height, 
+                    clothing_items=selected_clothing
+                )
+                
+                # Save to session state
+                st.session_state['thermal_results'] = {
+                    'id': current_ride_id,
+                    'df': thermal_df
+                }
+
+    # Plotting Logic
+    if 'thermal_results' in st.session_state:
+        stored_result = st.session_state['thermal_results']
+        
+        if stored_result['id'] == current_ride_id:
+            thermal_df = stored_result['df']
+            
+            # --- PREPARE DATA ---
+            # X-Axis: Distance in km
+            if 'dist_m' in df.columns:
+                x_data = df['dist_m'] / 1000.0
+                x_label = "Distance (km)"
+            else:
+                x_data = thermal_df.index
+                x_label = "Index"
+
+            # Y-Axis 2: Elevation (Handle naming variations)
+            if 'ele' in thermal_df.columns:
+                ele_data = thermal_df['ele']
+            elif 'elevation' in thermal_df.columns:
+                ele_data = thermal_df['elevation']
+            elif 'altitude' in thermal_df.columns:
+                ele_data = thermal_df['altitude']
+            else:
+                ele_data = [0] * len(thermal_df)
+
+            # --- PLOT ---
+            fig = go.Figure()
+            
+            # 1. Elevation Profile (Background Area) 
+
+            fig.add_trace(go.Scatter(
+                x=x_data,
+                y=ele_data,
+                name="Elevation (m)",
+                line=dict(width=1, color='gray'),
+                fill='tozeroy',
+                fillcolor='rgba(128, 128, 128, 0.2)', # Transparent gray
+                yaxis='y2',
+                hoverinfo='y'
+            ))
+
+            # 2. Optimal & Heat Stress Zones (Background Bands)
+            # We add these first so the line draws ON TOP
+            fig.add_hrect(y0=36, y1=37, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Optimal")
+            fig.add_hrect(y0=38.5, y1=42.0, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Heat Stress")
+
+            # 3. Core Temperature (Main Line)
+            fig.add_trace(go.Scatter(
+                x=x_data, 
+                y=thermal_df['core_temp'],
+                name="Core Temp (°C)",
+                line=dict(color='firebrick', width=3),
+                yaxis='y1'
+            ))
+            
+            # Layout
+            fig.update_layout(
+                title="Body Core Temperature",
+                xaxis=dict(title=x_label),
+                # Left Axis: Temperature
+                yaxis=dict(
+                    title="Core Temperature (°C)", 
+                    range=[35.5, 40.0],
+                    showgrid=True
+                ),
+                # Right Axis: Elevation
+                yaxis2=dict(
+                    title="Elevation (m)", 
+                    overlaying='y', 
+                    side='right', 
+                    showgrid=False
+                ),
+                hovermode="x unified",
+                template="plotly_white",
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # --- METRICS ---
+            max_core = thermal_df['core_temp'].max()
+            avg_loss = thermal_df['heat_lost_W'].mean()
+            avg_core = thermal_df['core_temp'].mean()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Avg Core Temp", f"{avg_core:.1f}°C", delta=f"{avg_core-36.5:.1f}°C")
+            m2.metric("Peak Core Temp", f"{max_core:.1f}°C", delta=f"{max_core-36.5:.1f}°C")
+            m3.metric("Avg Heat Loss", f"{int(avg_loss)} W")
+            
+            if max_core > 38.5:
+                m4.error("⚠️ High Heat Strain")
+            elif max_core < 36.2:
+                m4.warning("❄️ Cooling Detected")
+            else:
+                m4.success("✅ Thermally Balanced")
 
 def render_history(user_name):
     """Renders the history table purely for viewing stats."""
@@ -631,7 +779,41 @@ def render_user_corner(user_name):
                 st.caption("💡 Insight: You have a high anaerobic capacity. You are likely a **Puncheur** or **Sprinter**.")
             elif cp_results['w_prime'] < 12000:
                 st.caption("💡 Insight: Your engine is more diesel. You are likely a **Time Trialist** or **Climber** (or you need to do more intervals!).")
+            
+            st.markdown("---")
+            st.caption("👇 **Action:** Update your profile automatically with these calculated values.")
+            
+            # Layout for buttons
+            b_col1, b_col2 = st.columns([1, 2])
+            
+            with b_col1:
+                # OPTION 1: Update Physics Only
+                if st.button("💾 Save CP & W'"):
+                    # Import the function inside to avoid circular imports if necessary
+                    from src.data.db import update_user_physics
+                    
+                    update_user_physics(
+                        user_name, 
+                        cp=cp_results['cp'], 
+                        w_prime=cp_results['w_prime']
+                    )
+                    st.success(f"Updated {user_name}: CP={cp_results['cp']:.0f}W, W'={cp_results['w_prime']/1000:.1f}kJ")
+                    st.rerun() # Refresh page to show new settings
 
+            with b_col2:
+                # OPTION 2: Update FTP too
+                # CP is effectively your "Aerobic Ceiling". Using it as FTP is scientifically sound for TSS.
+                if st.button("💾 Save CP & W' AND set FTP = CP"):
+                    from src.data.db import update_user_physics
+                    
+                    update_user_physics(
+                        user_name, 
+                        cp=cp_results['cp'], 
+                        w_prime=cp_results['w_prime'],
+                        update_ftp=True
+                    )
+                    st.success(f"Full Update! FTP is now {cp_results['cp']:.0f}W.")
+                    st.rerun()
         else:
             st.info("Not enough data to model Critical Power. Upload maximal efforts between 3 and 20 minutes.")            
 
