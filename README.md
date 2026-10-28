@@ -100,10 +100,15 @@ BikeToolsAnalyzer/
     │   ├── aerodyn.py
     │   └── thermal.py
     └── viz/                # UI & Visualization
-        ├── dashboard.py
+        ├── dashboard.py        # entry points used by app.py (re-exports the pages)
+        ├── sidebar.py          # navigation, user profile, import, Strava connection
+        ├── ride_analysis.py    # Analyze Upload page
+        ├── user_corner.py      # User Corner: profile, history, Deeper Analytics
+        ├── training_page.py    # Training page (load, power profile, durability, intensity, planning)
+        ├── formatting.py       # shared display helpers
+        ├── sections.py         # tab-like sections that render only the selected one
         ├── maps.py
         ├── plots.py
-        ├── training_page.py
         └── training_plots.py
 ```
 ## The Physics Model

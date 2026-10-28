@@ -177,7 +177,7 @@ def sync_new_rides(cfg, user_name, ftp, progress=None, usage=None, lthr=None, no
     late; the overlap costs one listing request because already-imported rides are skipped
     without being downloaded again. With nothing imported yet it looks back SYNC_FALLBACK_DAYS.
     """
-    now = pd.Timestamp(now) if now is not None else pd.Timestamp.utcnow().tz_localize(None)
+    now = pd.Timestamp(now) if now is not None else pd.Timestamp.now('UTC').tz_localize(None)
     last = db.latest_strava_ride_date(user_name)
     since = (last - pd.Timedelta(days=SYNC_MARGIN_DAYS)) if last is not None \
         else now - pd.Timedelta(days=SYNC_FALLBACK_DAYS)
