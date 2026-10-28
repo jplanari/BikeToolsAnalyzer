@@ -117,6 +117,16 @@ def migrate_db():
                  ON rides(user_id, date_time, tss, metrics_version)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_power_records_ride ON power_records(ride_id)")
 
+    # Original ride files live in their own table, compressed, so ride rows stay small.
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ride_files (
+            ride_id INTEGER PRIMARY KEY,
+            codec TEXT NOT NULL,         -- 'zlib' or 'raw'
+            content BLOB NOT NULL,
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
+
     c.execute('''
         CREATE TABLE IF NOT EXISTS strava_auth (
             user_id INTEGER PRIMARY KEY,
@@ -198,6 +208,7 @@ def init_db():
     
     # Run migration to ensure existing databases get the new columns
     migrate_db()
+    _move_ride_files()
 
 def save_user(name, ftp, lthr, weight, height=175.0):
     conn = _connect()
@@ -363,6 +374,58 @@ def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filen
         **_metrics_fields(metrics),
     }
 
+def _pack(content):
+    """(codec, blob) for storage: zlib when it helps, the raw bytes otherwise."""
+    import zlib
+    packed = zlib.compress(content, 6)
+    return ("zlib", packed) if len(packed) < len(content) else ("raw", content)
+
+def _unpack(codec, blob):
+    import zlib
+    return zlib.decompress(blob) if codec == "zlib" else bytes(blob)
+
+def _move_ride_files(batch=25):
+    """
+    One-time migration: rides saved before ride_files existed keep their original file in
+    rides.file_content. Compress them into ride_files and empty that column (the column
+    stays; NULL costs nothing and old code reading it just finds nothing to recompute).
+    Resumable and idempotent: a backup is taken first, then it works in small batches.
+    """
+    conn = _connect()
+    try:
+        pending = conn.execute("SELECT 1 FROM rides WHERE file_content IS NOT NULL LIMIT 1").fetchone()
+        if not pending:
+            return 0
+        conn.close()
+        backup_db("before-file-migration")
+        conn = _connect()
+        moved = 0
+        while True:
+            rows = conn.execute("SELECT id, file_content FROM rides WHERE file_content IS NOT NULL LIMIT ?",
+                                (batch,)).fetchall()
+            if not rows:
+                break
+            for ride_id, content in rows:
+                codec, blob = _pack(bytes(content))
+                conn.execute("INSERT OR REPLACE INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)",
+                             (ride_id, codec, blob))
+                conn.execute("UPDATE rides SET file_content = NULL WHERE id = ?", (ride_id,))
+            conn.commit()
+            moved += len(rows)
+        conn.close()
+        try:                                   # give the freed space back to the disk
+            vac = sqlite3.connect(DB_FILE)
+            vac.execute("VACUUM")
+            vac.close()
+        except sqlite3.Error:
+            pass
+        return moved
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+
 def _opt_float(x):
     return None if x is None or pd.isna(x) else float(x)
 
@@ -428,10 +491,10 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     
     try:
         # 1. Insert Ride Metadata
-        cols = ['user_id', 'filename', 'file_hash', 'file_content', 'date_time',
+        cols = ['user_id', 'filename', 'file_hash', 'date_time',
                 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
                 'tss', 'if_factor', 'avg_hr', 'strava_activity_id'] + _METRIC_COLUMNS
-        vals = [user['id'], filename, file_hash, file_content, metadata.get('date'),
+        vals = [user['id'], filename, file_hash, metadata.get('date'),
                 metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
                 metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
                 metadata.get('if', 0), metadata.get('avg_hr', 0),
@@ -439,6 +502,8 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
                 metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
         c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
         ride_id = c.lastrowid
+        codec, blob = _pack(file_content)
+        c.execute("INSERT INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)", (ride_id, codec, blob))
 
         # 2. Power records (curve) and time in zones
         _insert_children(c, user['id'], ride_id, metadata, power_curve_dict)
@@ -475,14 +540,18 @@ def get_user_rides(user_name):
     return [dict(row) for row in rows]
 
 def get_ride_file(ride_id):
+    """(filename, original file bytes) of a stored ride, or (None, None)."""
     conn = _connect()
-    c = conn.cursor()
-    c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id,))
-    row = c.fetchone()
+    row = conn.execute("""SELECT r.filename, f.codec, f.content, r.file_content
+                          FROM rides r LEFT JOIN ride_files f ON f.ride_id = r.id
+                          WHERE r.id = ?""", (ride_id,)).fetchone()
     conn.close()
-    if row:
-        return row[0], row[1]
-    return None, None
+    if not row:
+        return None, None
+    filename, codec, blob, legacy = row
+    if blob is not None:
+        return filename, _unpack(codec, blob)
+    return filename, (bytes(legacy) if legacy is not None else None)
 
 def get_user_best_power(user_name):
     user = get_user_data(user_name)
@@ -537,7 +606,7 @@ def get_user_tss_history(user_name):
 # --- Recompute history ------------------------------------------------------
 # Rides whose stored metrics are older than METRICS_VERSION (or that were
 # saved without a date by the pre-Phase-0 bug) are rebuilt from the original
-# file kept in rides.file_content. See src/data/history.py.
+# file kept in ride_files (get_ride_file). See src/data/history.py.
 
 _NEEDS_UPDATE_SQL = "(metrics_version IS NULL OR metrics_version < ? OR date_time IS NULL OR date_time = '')"
 
@@ -560,7 +629,7 @@ def get_rides_for_recompute(user_name, all_rides=False):
     conn.row_factory = sqlite3.Row
     where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
     params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
-    rows = conn.execute(f"""SELECT id, filename, file_content, date_time, norm_power, if_factor,
+    rows = conn.execute(f"""SELECT id, filename, date_time, norm_power, if_factor,
                                    ftp_at_ride, lthr_at_ride
                             FROM rides WHERE {where} ORDER BY date_time""", params).fetchall()
     conn.close()

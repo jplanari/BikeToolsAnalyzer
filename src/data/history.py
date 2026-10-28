@@ -39,7 +39,10 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
             progress(i, len(rows))
         name = row['filename'] or f"ride {row['id']}"
         try:
-            df, dist_m, ele_m = prepare_ride(row['filename'] or "", row['file_content'])
+            _, content = db.get_ride_file(row['id'])    # one file in memory at a time
+            if content is None:
+                raise ValueError("original file not stored")
+            df, dist_m, ele_m = prepare_ride(row['filename'] or "", content)
             ftp = ftp_used_for_ride(row, current_ftp)
             lthr = row.get('lthr_at_ride') or current_lthr
             summ = summarize_ride(df, ftp, lthr)
