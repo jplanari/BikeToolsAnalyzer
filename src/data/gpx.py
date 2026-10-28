@@ -200,8 +200,8 @@ def calculate_bearing(df):
 
     lat1 = np.radians(df['lat'])
     lon1 = np.radians(df['lon'])
-    lat2 = np.radians(df['lat'].shift(-1).fillna(method='ffill'))
-    lon2 = np.radians(df['lon'].shift(-1).fillna(method='ffill'))
+    lat2 = np.radians(df['lat'].shift(-1).ffill())
+    lon2 = np.radians(df['lon'].shift(-1).ffill())
 
     d_lon = lon2 - lon1
     

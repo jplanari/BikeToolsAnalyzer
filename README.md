@@ -50,31 +50,38 @@ streamlit run app.py
 
 * Sidebar: Create a user profile (set your Weight and FTP for accurate physics/metrics).
 
-* Analyze Upload: Upload a .gpx file. The app will automatically parse it, fetch weather data, and generate the dashboard.
+* Analyze Upload: Upload a .gpx/.fit file, or pick a ride from Strava (see *Connecting Strava*). The app will automatically parse it, fetch weather data, and generate the dashboard.
 
 * Ride History: View a log of previously analyzed rides stored in the local database.
 
 ## Project Structure
 ```
-bike-tools-analyzer/
+BikeToolsAnalyzer/
 ├── app.py                  # Entry point
 ├── requirements.txt
+├── .streamlit/
+│   └── secrets.toml.example  # Strava API credentials template
 └── src/
     ├── analysis/           # Algorithms & Detection
-    │   └── climbs.py
+    │   ├── climbs.py
+    │   ├── hr.py
+    │   ├── power.py
+    │   └── training_load.py  # PMC (CTL/ATL/TSB)
     ├── data/               # IO, Database, & Parsing
     │   ├── db.py
-    │   ├── gpx.py          
+    │   ├── fit.py
+    │   ├── gpx.py
+    │   ├── pipeline.py       # Shared parse → 1 Hz → metrics pipeline
+    │   ├── strava.py         # Strava API client (OAuth, streams)
+    │   ├── strava_import.py  # Single-ride and history import
     │   └── weather.py
-    │   └── strava.py
     ├── physics/            # Core Science Logic
     │   ├── aerodyn.py
-    │   ├── hr.py
-    │   └── power.py
+    │   └── thermal.py
     └── viz/                # UI & Visualization
-        ├── dashboard.py    
-        ├── maps.py         
-        └── plots.py        
+        ├── dashboard.py
+        ├── maps.py
+        └── plots.py
 ```
 ## The Physics Model
 The application uses a forward-integration physics model to solve for Aerodynamic Drag ($F_{aero}$):
@@ -88,15 +95,32 @@ Where:
 - $P_{roll} = C_{rr} \cdot Mass \cdot g \cdot v$ (Default $C_{rr} = 0.004$).
 - $P_{grav} = m \cdot g \cdot v \cdot \sin(\text{slope})$.Note: CdA estimation requires power meter data and is most accurate during steady-state riding.
 
-## How to Obtain Strava Session Cookies
+## Connecting Strava
 
-To retrieve your Strava session cookies to upload GPX files directly from your Strava account, follow these steps:
-1. Log in to your Strava account using a web browser (preferably Chrome or Firefox).
-2. Open the Developer Tools (F12 or right-click and select "Inspect").:
-3. Navigate to the "Application" tab (in Chrome) or "Storage" tab (in Firefox).
-4. Under "Cookies," find and select the Strava domain (https://www.strava.com).
-5. Look for the cookie named "strava_session" and copy its value.
-6. Paste this value into the Strava Session Cookie field in the BikeTools Analyzer app when prompted.
+Rides can be imported straight from Strava through the official API (OAuth). Each rider profile connects its own Strava account.
+
+**One-time setup**
+1. Go to <https://www.strava.com/settings/api> and create an API application.
+2. Set **Authorization Callback Domain** to `localhost`.
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (it is git-ignored) and fill in your app's **Client ID** and **Client Secret**:
+   ```toml
+   [strava]
+   client_id = "12345"
+   client_secret = "your-client-secret"
+   redirect_uri = "http://localhost:8501/"
+   ```
+4. Restart the app.
+
+**Usage** (sidebar → Data Import → *Strava*)
+- **Connect Strava**: approve access in the tab that opens. The app asks for `activity:read_all` so private ("Only You") rides can be imported too. Tokens are stored per profile in the local database and refreshed automatically.
+- **Recent rides → Analyze ride**: downloads the ride and opens the full analysis (it is saved to your history like an upload).
+- **Import ride history**: imports every ride since a date into the history (PMC, power records). Rides already imported, and rides that start within 2 minutes of a file you uploaded yourself, are skipped, so TSS is never counted twice. Strava allows 100 read requests per 15 minutes and 1,000 per day; a large import pauses before the limit, and running it again later resumes where it stopped.
+- **Disconnect Strava** revokes the app's access and deletes the stored tokens.
+
+Notes:
+- The API does not provide the original GPX/FIT file, so imported rides are rebuilt from Strava's data streams (time, GPS, altitude, heart rate, power, cadence, temperature) and stored as `strava_<id>.json`.
+- TSS for imported rides is computed with the profile's **current** FTP.
+- Strava's API terms only allow showing an athlete's data to that athlete, so keep this as a personal tool rather than a shared dashboard.
 
 ## Requirements
 Python 3.8 + 
