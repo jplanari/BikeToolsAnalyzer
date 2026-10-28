@@ -37,6 +37,7 @@ from src.data.cached import (get_user_data, get_user_rides, get_user_best_power,
                              get_power_records)
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
+from src.viz.sections import section_picker
 from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 from src.data import strava as sv
@@ -846,11 +847,11 @@ def _render_deeper_analytics(user_name, user_data):
         return (f"None of the {cov['rides'] - cov['needs_update']} up-to-date rides in this period "
                 f"has both power and {what} while pedalling.")
 
-    tab_hr, tab_cad, tab_rec = st.tabs(["❤️ Power ↔ Heart rate", "🦵 Power ↔ Cadence",
-                                        "🔁 Recovery & Efficiency"])
+    sections = ["❤️ Power ↔ Heart rate", "🦵 Power ↔ Cadence", "🔁 Recovery & Efficiency"]
+    section = section_picker(sections, key="da_section")
 
     # ---- Power vs HR ----
-    with tab_hr:
+    if section == sections[0]:
         if hr_a.empty:
             st.info(_empty_reason("heart rate"))
         else:
@@ -896,7 +897,7 @@ def _render_deeper_analytics(user_name, user_data):
                                            f"Weekly heart rate at {ref_p} W"), use_container_width=True)
 
     # ---- Power vs cadence ----
-    with tab_cad:
+    if section == sections[1]:
         if cad_a.empty:
             st.info(_empty_reason("cadence"))
         else:
@@ -954,7 +955,7 @@ def _render_deeper_analytics(user_name, user_data):
                                 use_container_width=True)
 
     # ---- Recovery & efficiency ----
-    with tab_rec:
+    if section == sections[2]:
         in_a = (stats['date'] >= a0) & (stats['date'] < a1 + pd.Timedelta(days=1)) if not stats.empty else None
         hrr = stats.dropna(subset=['hrr60_bpm']) if not stats.empty else stats
         endu = co.endurance_rides(stats)

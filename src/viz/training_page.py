@@ -12,6 +12,7 @@ from src.analysis import durability as du
 from src.analysis import intensity as it
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
+from src.viz.sections import section_picker, remembered
 
 PERIODS = {'6 weeks': 42, '3 months': 91, '6 months': 182, '1 year': 365, 'All': None}
 
@@ -122,15 +123,15 @@ def render_training_page(user_name):
 
     today = pd.Timestamp.today().normalize()
     mode = _theme()
-    t_load, t_power, t_dur, t_int = st.tabs(["📈 Load", "⚡ Power profile", "🔋 Durability",
-                                             "🎯 Intensity"])
-    with t_load:
+    sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
+    section = section_picker(sections, key="training_section")
+    if section == sections[0]:
         _render_load(user_name, today, mode)
-    with t_power:
+    elif section == sections[1]:
         _render_power(user_name, user, today, mode)
-    with t_dur:
+    elif section == sections[2]:
         _render_durability(user_name, today, mode)
-    with t_int:
+    else:
         _render_intensity(user_name, today, mode)
 
 
@@ -198,7 +199,7 @@ def _render_load(user_name, today, mode):
                 f"**{pmc['TSB'].iloc[-1]:+.0f}** ({form_status(pmc['TSB'].iloc[-1])}), "
                 f"fitness {pmc['CTL'].iloc[-1]:.0f}.")
 
-    label = st.radio("Show", list(PERIODS), index=1, horizontal=True, key="load_period")
+    label = remembered(st.radio, "load_period", "3 months", "Show", list(PERIODS), horizontal=True)
     start = _period_start(label, today)
     view = pmc if start is None else pmc.loc[start:]
     _chart(tp.plot_training_load(view, today, mode))
@@ -211,10 +212,10 @@ def _render_load(user_name, today, mode):
 
     st.subheader("Volume")
     v1, v2 = st.columns([1, 3])
-    freq = v1.radio("Group by", ["Week", "Month"], horizontal=True, key="vol_freq")
+    freq = remembered(v1.radio, "vol_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
     metrics = {'Hours': 'hours', 'Distance (km)': 'km', 'TSS': 'tss', 'Work (kJ)': 'kj',
                'Elevation (m)': 'elevation_m', 'Rides': 'rides'}
-    m_label = v2.radio("Measure", list(metrics), horizontal=True, key="vol_metric")
+    m_label = remembered(v2.radio, "vol_metric", "Hours", "Measure", list(metrics), horizontal=True)
     stats = get_ride_stats(user_name, start, today)
     vol = tl.volume(stats, 'W' if freq == "Week" else 'M')
     if vol.empty:
@@ -293,7 +294,7 @@ def _render_durability(user_name, today, mode):
     st.caption("How much of your fresh best power you can still produce after 1, 2 and 3 MJ of work "
                "(about 1, 2 and 3 hours at ~280 W). High retention = good durability, which decides "
                "the end of long races and gran fondos.")
-    label = st.radio("Period", list(PERIODS), index=2, horizontal=True, key="dur_period")
+    label = remembered(st.radio, "dur_period", "6 months", "Period", list(PERIODS), horizontal=True)
     start = _period_start(label, today)
     table = du.durability_table(get_power_records(user_name, start, today),
                                 get_kj_records(user_name, start, today), start, today)
@@ -317,9 +318,9 @@ def _render_durability(user_name, today, mode):
 
 def _render_intensity(user_name, today, mode):
     c1, c2, c3 = st.columns(3)
-    kind = c1.radio("Based on", ["Power", "Heart rate"], horizontal=True, key="tid_kind")
-    freq = c2.radio("Group by", ["Week", "Month"], horizontal=True, key="tid_freq")
-    label = c3.selectbox("Period", list(PERIODS), index=1, key="tid_period")
+    kind = remembered(c1.radio, "tid_kind", "Power", "Based on", ["Power", "Heart rate"], horizontal=True)
+    freq = remembered(c2.radio, "tid_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
+    label = remembered(c3.selectbox, "tid_period", "3 months", "Period", list(PERIODS))
     start = _period_start(label, today)
     rows = get_zone_rows(user_name, 'power' if kind == "Power" else 'hr', start, today)
     if rows.empty:
