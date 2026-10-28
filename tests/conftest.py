@@ -1,5 +1,26 @@
 # tests/conftest.py
+import importlib.util
+import sys
+import types
+from unittest.mock import MagicMock
+
 import pytest
+
+# The data modules import UI/parsing libraries at module level. CI installs
+# them from requirements.txt; when one is missing locally, stub it so the
+# headless code paths can still be tested. Real libraries always win.
+def _stub_if_missing(name, module):
+    root = name.split(".")[0]
+    if root in sys.modules and not isinstance(sys.modules[root], MagicMock):
+        return
+    if root in sys.modules or importlib.util.find_spec(root) is None:
+        sys.modules[name] = module
+
+_st = types.ModuleType("streamlit")
+_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
+_stub_if_missing("streamlit", _st)
+for _name in ("gpxpy", "fitparse", "geographiclib", "geographiclib.geodesic"):
+    _stub_if_missing(_name, MagicMock())
 import pandas as pd
 import numpy as np
 
