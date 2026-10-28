@@ -1,8 +1,11 @@
 """Training page: load, power profile, durability and intensity distribution."""
+import json
+
 import pandas as pd
 import streamlit as st
 
-from src.data.db import replace_planned_sessions
+from src.data.db import (replace_planned_sessions, add_structured_session as db_add_session,
+                         delete_planned_session)
 from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
                              get_kj_records, get_zone_rows, get_planned_sessions,
                              count_rides_needing_update, compute_pmc, cp_history)
@@ -10,6 +13,7 @@ from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
 from src.analysis import durability as du
 from src.analysis import intensity as it
+from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
 from src.viz.sections import section_picker, remembered
@@ -126,7 +130,7 @@ def render_training_page(user_name):
     sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
-        _render_load(user_name, today, mode)
+        _render_load(user_name, user['ftp'], today, mode)
     elif section == sections[1]:
         _render_power(user_name, user, today, mode)
     elif section == sections[2]:
@@ -137,33 +141,100 @@ def render_training_page(user_name):
 
 # --- Load ----------------------------------------------------------------------
 
-def _plan_editor(user_name, today):
-    saved = get_planned_sessions(user_name, after=today)
-    if saved.empty:
-        saved = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
+def _plan_editor(user_name, ftp, today):
+    """
+    Planned sessions: quick TSS entries, sessions built from intervals, and the builder.
+    Returns the plan as [{'date', 'tss'}, ...] (quick edits included before they are saved).
+    """
+    quick = get_planned_sessions(user_name, after=today, structured=False)[['date', 'tss', 'note']]
+    if quick.empty:
+        quick = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
                               'tss': pd.Series(dtype=float), 'note': pd.Series(dtype=str)})
-    with st.expander(f"🗓️ Planned sessions ({len(saved)})", expanded=False):
-        st.caption("Add the TSS you plan to ride on future days; the chart forecasts fitness, fatigue "
-                   "and form from them. Rest days need no row. Edits preview immediately; **Save plan** "
-                   "keeps them.")
+    built = get_planned_sessions(user_name, after=today, structured=True)
+    with st.expander(f"🗓️ Planned sessions ({len(quick) + len(built)})", expanded=False):
+        st.caption("Plan the coming days and the chart forecasts fitness, fatigue and form from them. "
+                   "Rest days need no entry. Build a session from intervals, or just enter its TSS.")
+        _session_builder(user_name, ftp, today)
+        _built_sessions(user_name, built)
+
+        st.markdown("**Quick entry: just the TSS**")
         edited = st.data_editor(
-            saved, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
+            quick, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
             column_config={
                 'date': st.column_config.DateColumn("Date", min_value=(today + pd.Timedelta(days=1)).date(),
                                                     format="ddd DD MMM YYYY", required=True),
                 'tss': st.column_config.NumberColumn("TSS", min_value=0, max_value=500, step=5, required=True),
                 'note': st.column_config.TextColumn("Note (optional)"),
             })
+        st.caption("Edits preview immediately; **Save plan** keeps them.")
         if st.button("Save plan", key=f"save_plan_{user_name}"):
             n = replace_planned_sessions(user_name, edited, today)
             st.toast(f"✅ Saved {n} planned sessions")
-    return edited
+
+    plan = [] if edited is None or edited.empty else edited[['date', 'tss']].to_dict('records')
+    plan += built[['date', 'tss']].to_dict('records')
+    return plan
 
 
-def _render_load(user_name, today, mode):
+def _session_builder(user_name, ftp, today):
+    st.markdown("**Build a session from intervals**")
+    c1, c2 = st.columns([1, 2])
+    day = c1.date_input("Date", value=(today + pd.Timedelta(days=1)).date(),
+                        min_value=(today + pd.Timedelta(days=1)).date(), key=f"build_date_{user_name}")
+    title = c2.text_input("Name (optional)", key=f"build_name_{user_name}",
+                          placeholder="e.g. Threshold 4×8")
+    st.caption("Each row is a block: it repeats *Reps* times, *Work* min at *Work W*, with *Rest* min at "
+               "*Rest W* between the repeats. A warm-up is one rep with no rest.")
+    blocks = st.data_editor(
+        pd.DataFrame(wo.default_blocks(ftp), columns=wo.BLOCK_COLUMNS), num_rows="dynamic",
+        hide_index=True, use_container_width=True, key=f"build_blocks_{user_name}",
+        column_config={
+            'name': st.column_config.TextColumn("Block"),
+            'reps': st.column_config.NumberColumn("Reps", min_value=1, max_value=50, step=1),
+            'work_min': st.column_config.NumberColumn("Work (min)", min_value=0, max_value=600, step=0.5),
+            'work_w': st.column_config.NumberColumn("Work (W)", min_value=0, max_value=2000, step=5),
+            'rest_min': st.column_config.NumberColumn("Rest (min)", min_value=0, max_value=600, step=0.5),
+            'rest_w': st.column_config.NumberColumn("Rest (W)", min_value=0, max_value=2000, step=5),
+        })
+    s = wo.session_stats(blocks, ftp)
+    m = st.columns(5)
+    m[0].metric("Duration", f"{s['duration_s'] // 3600}:{s['duration_s'] % 3600 // 60:02d} h")
+    m[1].metric("Average", f"{s['avg_power']:.0f} W")
+    m[2].metric("Normalized", f"{s['np']:.0f} W")
+    m[3].metric("IF", f"{s['if']:.2f}")
+    m[4].metric("TSS", f"{s['tss']:.0f}")
+    if not ftp:
+        st.warning("Set an FTP in your profile to score the session.")
+    if st.button("Add to plan", key=f"add_session_{user_name}"):
+        clean = wo.clean_blocks(blocks)
+        if not clean:
+            st.warning("Add at least one block with some work time.")
+        else:
+            db_add_session(user_name, day, clean, s['tss'], title.strip() or wo.describe(clean))
+            st.rerun()
+
+
+def _built_sessions(user_name, built):
+    if built.empty:
+        return
+    st.markdown("**Built sessions**")
+    for _, r in built.iterrows():
+        c = st.columns([2, 6, 1, 1])
+        c[0].write(f"{r['date']:%a %d %b}")
+        try:
+            detail = wo.describe(json.loads(r['blocks']))
+        except (TypeError, ValueError):
+            detail = ""
+        c[1].write(f"**{r['note']}**  \n{detail}" if r['note'] and r['note'] != detail else detail)
+        c[2].write(f"{r['tss']:.0f} TSS")
+        if c[3].button("✖", key=f"del_plan_{int(r['id'])}", help="Remove this session"):
+            delete_planned_session(user_name, int(r['id']))
+            st.rerun()
+
+
+def _render_load(user_name, ftp, today, mode):
     history = get_user_tss_history(user_name)
-    plan = _plan_editor(user_name, today)
-    planned = [] if plan is None or plan.empty else plan[['date', 'tss']].to_dict('records')
+    planned = _plan_editor(user_name, ftp, today)
     pmc = compute_pmc(history, today=today, planned=planned)
     if pmc.empty:
         st.info("No rides with TSS yet. Upload a ride or import your Strava history.")

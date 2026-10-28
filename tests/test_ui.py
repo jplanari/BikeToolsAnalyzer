@@ -144,3 +144,20 @@ def test_pages_see_data_saved_after_the_first_run(seeded_db):
     at.run()
     _no_errors(at)
     assert "1 rides were saved by an older version" in _texts(at.warning)
+
+
+def test_build_a_session_from_intervals_and_remove_it(seeded_db):
+    at = _go(_app(), "Training")
+    _no_errors(at)
+    assert {"Duration", "Normalized", "IF", "TSS"} <= {m.label for m in at.metric}   # builder preview
+
+    at.button(key="add_session_Rider").click().run()                                  # default blocks
+    _no_errors(at)
+    today = pd.Timestamp.today().normalize()
+    built = db.get_planned_sessions("Rider", after=today, structured=True)
+    assert len(built) == 1 and 50 < built["tss"].iloc[0] < 100
+    assert "With the planned sessions" in _texts(at.info)                             # forecast uses it
+
+    at.button(key=f"del_plan_{int(built['id'].iloc[0])}").click().run()
+    _no_errors(at)
+    assert db.get_planned_sessions("Rider", after=today, structured=True).empty
