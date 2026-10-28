@@ -16,6 +16,7 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 - **Power profile:** best power curves for the last 42 / 90 days, the season and all time; 2- and 3-parameter critical power (CP, W′, Pmax); CP and FTP history; W/kg and ×FTP profile; records with the date they were set.
 - **Durability:** how much of your fresh power you keep after 1, 2 and 3 MJ of work.
 - **Intensity:** weekly/monthly easy / moderate / hard distribution (power or HR) and the polarization index.
+- **PDF report:** the "📄 PDF report" box at the top builds a 6-page A4 report (summary and load chart, volume and ramp, power profile and CP, durability and records, intensity, recent rides and planned sessions) for the period you pick.
 
 🔬 Deeper Analytics (User Corner)
 
@@ -104,6 +105,7 @@ BikeToolsAnalyzer/
         ├── sidebar.py          # navigation, user profile, import, Strava connection
         ├── ride_analysis.py    # Analyze Upload page
         ├── user_corner.py      # User Corner: profile, history, Deeper Analytics
+        ├── report_pdf.py       # PDF training report (matplotlib)
         ├── training_page.py    # Training page (load, power profile, durability, intensity, planning)
         ├── formatting.py       # shared display helpers
         ├── sections.py         # tab-like sections that render only the selected one

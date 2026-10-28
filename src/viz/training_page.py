@@ -17,9 +17,8 @@ from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
 from src.viz.sections import section_picker, remembered
-
-PERIODS = {'6 weeks': 42, '3 months': 91, '6 months': 182, '1 year': 365, 'All': None}
-
+from src.analysis.labels import (PERIODS, period_start, dur_label, ramp_status, acwr_status, form_status,
+                                 monotony_status, tid_label)
 
 def _theme():
     try:
@@ -32,80 +31,7 @@ def _chart(fig):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _period_start(label, today):
-    days = PERIODS[label]
-    return None if days is None else today - pd.Timedelta(days=days - 1)
-
-
-def _dur_label(seconds):
-    seconds = int(seconds)
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}h{m:02d}m" if m else f"{h}h"
-    if m:
-        return f"{m}m{s:02d}s" if s else f"{m}m"
-    return f"{s}s"
-
-
-# --- Status labels (rules of thumb; shown in each metric's help) ---------------
-
-def ramp_status(v):
-    if v is None or pd.isna(v):
-        return None
-    if v > 8:
-        return "⚠️ Aggressive"
-    if v >= 3:
-        return "↗ Building"
-    if v > -3:
-        return "→ Maintaining"
-    return "↘ Losing fitness"
-
-
-def acwr_status(v):
-    if v is None or pd.isna(v):
-        return None
-    if v < 0.8:
-        return "↘ Low load"
-    if v <= 1.3:
-        return "✅ In range"
-    if v <= 1.5:
-        return "⚠️ High"
-    return "⛔ Spike"
-
-
-def form_status(v):
-    if v is None or pd.isna(v):
-        return None
-    if v > 25:
-        return "Very fresh"
-    if v > 5:
-        return "✅ Fresh"
-    if v >= -10:
-        return "Neutral"
-    if v >= -30:
-        return "Productive fatigue"
-    return "⚠️ Very fatigued"
-
-
-def monotony_status(v):
-    if v is None or pd.isna(v):
-        return None
-    return "⚠️ High" if v > 2.0 else "✅ Varied"
-
-
-def tid_label(low, mid, high, pi):
-    if pi is not None and pi > 2.0:
-        return "Polarized"
-    if low >= mid >= high:
-        return "Pyramidal"
-    if mid > low and mid > high:
-        return "Threshold-focused"
-    return "Non-polarized"
-
-
-def _metric(col, label, value, status, help_text):
-    col.metric(label, value, delta=status, delta_color="off", help=help_text)
+_period_start, _dur_label = period_start, dur_label
 
 
 # --- Page --------------------------------------------------------------------
@@ -128,6 +54,7 @@ def render_training_page(user_name):
     today = pd.Timestamp.today().normalize()
     mode = _theme()
     _threshold_hint(user_name, user, today)
+    _report_expander(user_name, today)
     sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
@@ -138,6 +65,25 @@ def render_training_page(user_name):
         _render_durability(user_name, today, mode)
     else:
         _render_intensity(user_name, today, mode)
+
+
+def _report_expander(user_name, today):
+    """Builds the PDF only on click (matplotlib is slow-ish) and keeps it for the download button."""
+    with st.expander("📄 PDF report"):
+        label = st.selectbox("Period", list(PERIODS), index=1, key="report_period")
+        key = (user_name, label, today)
+        if st.button("Create report", key="report_make"):
+            from src.data.report_data import collect_report_data
+            from src.viz.report_pdf import build_report_pdf
+            with st.spinner("Building the report…"):
+                pdf = build_report_pdf(collect_report_data(user_name, PERIODS[label], today))
+            st.session_state["report_pdf"] = (key, pdf)
+        ready = st.session_state.get("report_pdf")
+        if ready and ready[0] == key:
+            st.download_button("⬇️ Download PDF", ready[1], mime="application/pdf",
+                               file_name=f"training-report-{user_name}-{today:%Y-%m-%d}.pdf", key="report_dl")
+        elif ready:
+            st.caption("Period or user changed: create the report again.")
 
 
 def _threshold_hint(user_name, user, today):
