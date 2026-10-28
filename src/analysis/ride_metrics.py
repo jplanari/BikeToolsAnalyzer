@@ -104,3 +104,96 @@ def training_stress(norm_power, duration_s, ftp, hr_series, lthr, moving=None):
         # IF stays a power concept (stored if_factor = NP / FTP), so 0 here
         return hrt, 0.0, 'hr'
     return 0.0, 0.0, None
+
+
+# --- Joint distributions (for cross-ride correlation analytics) --------------
+# Stored per ride as sparse 2D histograms {(x_bin, y_bin): seconds}. Bins are
+# identified by their lower edge. Histograms of different rides simply add,
+# so any period can be analysed without re-reading the ride files.
+
+POWER_BIN_W = 10
+HR_BIN_BPM = 5
+CAD_BIN_RPM = 5
+# HR lags changes in power by tens of seconds: pairing raw 1 s samples blurs
+# the relationship, so both channels are smoothed before pairing.
+PAIR_SMOOTH_S = 30
+
+
+def _hist2d(x, y, x_bin, y_bin):
+    xb = (np.floor(x / x_bin) * x_bin).astype(int)
+    yb = (np.floor(y / y_bin) * y_bin).astype(int)
+    counts = pd.Series(1, index=pd.MultiIndex.from_arrays([xb, yb])).groupby(level=[0, 1]).sum()
+    return {(int(a), int(b)): int(n) for (a, b), n in counts.items()}
+
+
+def joint_histograms(df, moving=None):
+    """
+    {'p_hr': {(power_bin, hr_bin): s}, 'p_cad': {(power_bin, cadence_bin): s}}
+    - p_hr: 30 s smoothed power and HR, moving and pedalling (raw power > 0,
+      smoothed power >= 10 W)
+    - p_cad: raw 1 s samples while pedalling (power > 0 and cadence > 0)
+    """
+    out = {}
+    n = len(df)
+    mov = np.ones(n, dtype=bool) if moving is None else _clean(moving).astype(bool)
+    has = lambda c: c in df.columns and df[c].notna().any()
+
+    if has('power') and has('hr'):
+        ps = df['power'].rolling(PAIR_SMOOTH_S, min_periods=PAIR_SMOOTH_S // 2).mean().to_numpy()
+        hs = df['hr'].rolling(PAIR_SMOOTH_S, min_periods=PAIR_SMOOTH_S // 2).mean().to_numpy()
+        raw = _clean(df['power'])
+        # Pedalling seconds only: coasting (raw 0 W, HR still elevated) and the
+        # fade-out of the 30 s average would skew the low-power end.
+        m = (mov & ~np.isnan(ps) & ~np.isnan(hs) & (hs > 0)
+             & (np.nan_to_num(raw) > 0) & (ps >= POWER_BIN_W))
+        if m.any():
+            out['p_hr'] = _hist2d(ps[m], hs[m], POWER_BIN_W, HR_BIN_BPM)
+
+    if has('power') and has('cadence'):
+        p, c = _clean(df['power']), _clean(df['cadence'])
+        m = mov & ~np.isnan(p) & ~np.isnan(c) & (p > 0) & (c > 0)
+        if m.any():
+            out['p_cad'] = _hist2d(p[m], c[m], POWER_BIN_W, CAD_BIN_RPM)
+    return out
+
+
+# --- Heart-rate recovery -----------------------------------------------------
+
+def hr_recovery(power_series, hr_series, ftp, effort_s=60, recovery_s=60,
+                effort_frac=1.05, easy_frac=0.5):
+    """
+    HR recovery after hard efforts: for each effort (60 s averaging >= 105 %
+    FTP) followed by an easy minute (< 50 % FTP), HRR60 = HR at the end of
+    the effort - HR 60 s later. Higher = faster recovery; a falling trend can
+    signal fatigue. Returns (median_hrr_bpm, n_efforts) or (None, 0).
+    """
+    p, hr = _clean(power_series), _clean(hr_series)
+    if not ftp or len(p) == 0 or len(p) != len(hr):
+        return None, 0
+    p_s = pd.Series(np.nan_to_num(p))
+    hard = p_s.rolling(effort_s, min_periods=effort_s).mean().to_numpy()
+    nxt = p_s[::-1].rolling(recovery_s, min_periods=recovery_s).mean()[::-1].shift(-1).to_numpy()
+
+    n = len(p)
+    ok = np.zeros(n, dtype=bool)
+    ok[:n - recovery_s] = ((hard[:n - recovery_s] >= effort_frac * ftp)
+                           & (nxt[:n - recovery_s] < easy_frac * ftp))
+
+    drops, t = [], 0
+    while t < n - recovery_s:
+        if not ok[t]:
+            t += 1
+            continue
+        # The condition starts holding a few seconds before the effort ends;
+        # the true end is where (last minute - next minute) power peaks.
+        run_end = t
+        while run_end + 1 < n - recovery_s and ok[run_end + 1]:
+            run_end += 1
+        gap = hard[t:run_end + 1] - nxt[t:run_end + 1]
+        end = t + int(np.argmax(gap))
+        if not np.isnan(hr[end]) and not np.isnan(hr[end + recovery_s]):
+            drops.append(hr[end] - hr[end + recovery_s])
+        t = max(run_end + 1, end + recovery_s)  # efforts must not overlap
+    if not drops:
+        return None, 0
+    return float(np.median(drops)), len(drops)

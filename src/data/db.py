@@ -35,7 +35,8 @@ def migrate_db():
     for col, typ in [("duration_s", "INTEGER"), ("moving_s", "INTEGER"), ("kj", "REAL"),
                      ("ftp_at_ride", "INTEGER"), ("lthr_at_ride", "INTEGER"),
                      ("vi", "REAL"), ("ef", "REAL"), ("decoupling_pct", "REAL"),
-                     ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0")]:
+                     ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0"),
+                     ("hrr60_bpm", "REAL"), ("hrr_efforts", "INTEGER")]:
         try:
             c.execute(f"ALTER TABLE rides ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
@@ -50,6 +51,23 @@ def migrate_db():
             FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
         )
     ''')
+
+    # Joint distributions per ride (sparse 2D histograms, seconds per cell)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ride_hist (
+            ride_id INTEGER NOT NULL,
+            pair TEXT NOT NULL,          -- 'p_hr' (power x HR) or 'p_cad' (power x cadence)
+            x INTEGER NOT NULL,          -- lower edge of the power bin (W)
+            y INTEGER NOT NULL,          -- lower edge of the HR (bpm) / cadence (rpm) bin
+            seconds INTEGER NOT NULL,
+            PRIMARY KEY (ride_id, pair, x, y),
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN crank_mm REAL DEFAULT 172.5")
+    except sqlite3.OperationalError:
+        pass
 
     # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
@@ -215,7 +233,7 @@ def _iso_timestamp(ts):
     return ts.isoformat()
 
 # Bump when the per-ride calculations change; older rides get offered a recompute
-METRICS_VERSION = 1
+METRICS_VERSION = 2  # 2: joint power/HR/cadence histograms, HR recovery
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -267,11 +285,14 @@ def _metrics_fields(metrics):
         'decoupling_pct': _opt_float(metrics.get('decoupling_pct')),
         'tss_source': metrics.get('tss_source'),
         'zones': metrics.get('zones') or {},
+        'hist': metrics.get('hist') or {},
+        'hrr60_bpm': _opt_float(metrics.get('hrr60')),
+        'hrr_efforts': _opt_int(metrics.get('hrr_efforts')),
         'metrics_version': METRICS_VERSION,
     }
 
 _METRIC_COLUMNS = ['duration_s', 'moving_s', 'kj', 'ftp_at_ride', 'lthr_at_ride', 'vi', 'ef',
-                   'decoupling_pct', 'tss_source', 'metrics_version']
+                   'decoupling_pct', 'tss_source', 'hrr60_bpm', 'hrr_efforts', 'metrics_version']
 
 def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     """Power records and zone times for one ride (caller deletes old ones)."""
@@ -285,6 +306,10 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     c.executemany("INSERT INTO ride_zones (ride_id, kind, zone, seconds) VALUES (?, ?, ?, ?)",
                   [(ride_id, kind, str(z), int(sec))
                    for kind, zz in zones.items() for z, sec in zz.items()])
+    hist = metadata.get('hist') or {}
+    c.executemany("INSERT INTO ride_hist (ride_id, pair, x, y, seconds) VALUES (?, ?, ?, ?, ?)",
+                  [(ride_id, pair, int(x), int(y), int(sec))
+                   for pair, cells in hist.items() for (x, y), sec in cells.items()])
 
 def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     user = get_user_data(user_name)
@@ -450,6 +475,7 @@ def update_ride_metrics(ride_id, metadata, power_curve_dict):
     c.execute(f"UPDATE rides SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?", vals + [ride_id])
     c.execute("DELETE FROM power_records WHERE ride_id = ?", (ride_id,))
     c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
+    c.execute("DELETE FROM ride_hist WHERE ride_id = ?", (ride_id,))
     _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
     conn.commit()
     conn.close()
@@ -569,3 +595,63 @@ def get_ride_start_times(user_name):
         if pd.notna(ts):
             out.append(ts.tz_convert(None))
     return out
+
+
+# --- Deeper analytics queries ------------------------------------------------
+
+def _parse_dates(series):
+    """Stored ISO strings (with or without offset) -> naive UTC datetimes."""
+    parsed = [pd.to_datetime(d, errors='coerce', utc=True) for d in series]
+    return pd.Series(pd.DatetimeIndex(parsed, dtype='datetime64[ns, UTC]').tz_convert(None),
+                     index=series.index)
+
+def _date_filter(start, end):
+    sql, params = "", []
+    if start is not None:
+        sql += " AND r.date_time >= ?"
+        params.append(pd.Timestamp(start).strftime("%Y-%m-%d"))
+    if end is not None:
+        sql += " AND r.date_time < ?"
+        params.append((pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+    return sql, params
+
+def get_hist(user_name, pair, start=None, end=None):
+    """
+    Per-ride histogram cells for a period: DataFrame(ride_id, date, x, y, seconds).
+    start/end are inclusive dates (None = open-ended).
+    """
+    cols = ['ride_id', 'date', 'x', 'y', 'seconds']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"""SELECT h.ride_id, r.date_time AS date, h.x, h.y, h.seconds
+                               FROM ride_hist h JOIN rides r ON r.id = h.ride_id
+                               WHERE r.user_id = ? AND h.pair = ?{where}""",
+                           conn, params=[user['id'], pair, *params])
+    conn.close()
+    df['date'] = _parse_dates(df['date'])
+    return df
+
+def get_ride_stats(user_name, start=None, end=None):
+    """Per-ride stored metrics for trend charts (one row per dated ride)."""
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame()
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
+                                      r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
+                                      r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source
+                               FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
+                               ORDER BY r.date_time""", conn, params=[user['id'], *params])
+    conn.close()
+    df['date'] = _parse_dates(df['date'])
+    return df
+
+def update_user_crank(user_name, crank_mm):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("UPDATE users SET crank_mm = ? WHERE name = ?", (float(crank_mm), user_name))
+    conn.commit()
+    conn.close()

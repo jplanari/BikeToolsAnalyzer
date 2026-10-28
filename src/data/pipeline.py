@@ -68,6 +68,7 @@ def summarize_ride(df, ftp, lthr=None):
     norm_power = 0 if pd.isna(norm_power) else norm_power
 
     tss, if_val, tss_source = rm.training_stress(norm_power, duration_s, ftp, hr, lthr, is_moving)
+    hrr60, hrr_n = rm.hr_recovery(df['power'], hr, ftp) if has_power and has_hr else (None, 0)
 
     return {
         'duration_s': duration_s,
@@ -87,6 +88,9 @@ def summarize_ride(df, ftp, lthr=None):
         'decoupling_pct': (rm.aerobic_decoupling(df['power'], hr, is_moving)
                            if has_power and has_hr else None),
         'zones': rm.zone_seconds(df, ftp, lthr),
+        'hist': rm.joint_histograms(df, is_moving),
+        'hrr60': hrr60,
+        'hrr_efforts': hrr_n,
         'ftp': ftp,
         'lthr': lthr,
     }
@@ -95,7 +99,7 @@ def summarize_ride(df, ftp, lthr=None):
 def metrics_for_storage(summary):
     """The per-ride columns that build_ride_metadata() adds to the metadata."""
     keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
-            'decoupling_pct', 'zones']
+            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts']
     out = {k: summary.get(k) for k in keys}
     out['ftp_at_ride'] = summary.get('ftp') or None
     out['lthr_at_ride'] = summary.get('lthr') or None

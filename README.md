@@ -10,6 +10,14 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 - Power Curve: Generates a Mean Maximal Power (MMP) curve to analyze best efforts across durations.
 - Heart Rate: Automatic LTHR estimation (Friel method) and Time-in-Zone distributions.
 
+🔬 Deeper Analytics (User Corner)
+
+- Pick a period and compare it with the previous one of the same length.
+- Power ↔ Heart rate: time heatmap, HR at each power, correlation and slope, weekly HR at 65 % FTP (falling = fitter).
+- Power ↔ Cadence: heatmap, cadence by power zone, Coggan quadrant analysis around your own median cadence (set your crank length there), weekly median cadence.
+- Recovery & efficiency: heart-rate recovery 60 s after hard efforts, efficiency factor and aerobic decoupling on steady endurance rides.
+- Computed from compact per-ride histograms stored at save time; older rides get them via **Update ride history**.
+
 💨 Aerodynamic Analysis (Beta)
 
 - CdA Estimation: Estimates your Coefficient of Drag * Area (CdA) by solving the equation of motion.
