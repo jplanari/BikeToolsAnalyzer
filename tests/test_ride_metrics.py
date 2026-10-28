@@ -63,6 +63,17 @@ def test_decoupling_detects_hr_drift():
     assert rm.aerobic_decoupling(p, hr) == pytest.approx((1 - 140 / 147) * 100)
 
 
+def test_decoupling_ignores_coasting():
+    # Steady 200 W / 140 bpm when pedalling; the 2nd half coasts 20 % of the time
+    # (HR 125) vs 5 % in the 1st. Counting the zeros would fake ~14 % drift.
+    def half(coast):
+        n = 3600
+        k = int(n * coast)
+        return [0] * k + [200] * (n - k), [125] * k + [140] * (n - k)
+    (p1, h1), (p2, h2) = half(0.05), half(0.20)
+    assert rm.aerobic_decoupling(s(p1 + p2), s(h1 + h2)) == pytest.approx(0.0)
+
+
 def test_decoupling_needs_20_minutes():
     assert rm.aerobic_decoupling(s([200] * 1000), s([140] * 1000)) is None
 

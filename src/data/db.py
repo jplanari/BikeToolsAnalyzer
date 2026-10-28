@@ -261,7 +261,8 @@ def _iso_timestamp(ts):
 # 2: joint power/HR/cadence histograms, HR recovery
 # 3: gap-aware resampling (smart recording), enhanced FIT channels, moving fallback
 # 4: power after 1/2/3 MJ of work (durability); zone times on moving time only
-METRICS_VERSION = 4
+# 5: decoupling ignores coasting (0 W) seconds
+METRICS_VERSION = 5
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
