@@ -85,7 +85,7 @@ def init_db():
     # Run migration to ensure existing databases get the new columns
     migrate_db()
 
-def save_user(name, ftp, lthr, weight, height):
+def save_user(name, ftp, lthr, weight, height=175.0):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
@@ -149,6 +149,37 @@ def delete_user(name):
     c.execute("DELETE FROM users WHERE name = ?", (name,))
     conn.commit()
     conn.close()
+
+def _iso_timestamp(ts):
+    """Ride start time as an ISO-8601 string (UTC when timezone-aware)."""
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC")
+    return ts.isoformat()
+
+def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val):
+    """
+    Builds the metadata dict that save_ride() expects. Keeping both in this
+    module guarantees the keys match (they did not before: date, distance
+    and elevation were silently stored as NULL / 0).
+    """
+    def safe_mean(col):
+        if col not in df.columns or df[col].empty:
+            return 0
+        m = df[col].mean()
+        return int(m) if pd.notna(m) else 0
+
+    return {
+        'date': _iso_timestamp(df['time'].iloc[0]),
+        'dist': dist_m / 1000,
+        'ele': ele_m,
+        'speed': speed_kph,
+        'np': int(np_val) if pd.notna(np_val) else 0,
+        'avg_p': safe_mean('power'),
+        'tss': int(tss) if pd.notna(tss) else 0,
+        'if': if_val,
+        'avg_hr': safe_mean('hr'),
+    }
 
 def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     user = get_user_data(user_name)
@@ -221,7 +252,7 @@ def get_user_rides(user_name):
 def get_ride_file(ride_id):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id, ())) # Fixed tuple
+    c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -276,3 +307,87 @@ def get_user_tss_history(user_name):
     
     # Return raw list of dicts
     return [{'date': row[0], 'tss': row[1]} for row in rows]
+
+
+# --- History repair --------------------------------------------------------
+# Rides saved before the metadata-key fix have date_time = NULL and
+# distance_km / elevation_m = 0. The original file is stored in
+# rides.file_content, so these fields can be rebuilt.
+
+# Keyed on the missing date only: an indoor ride legitimately has 0 km.
+_MISSING_META_SQL = "(date_time IS NULL OR date_time = '')"
+
+def count_rides_missing_metadata(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return 0
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_MISSING_META_SQL}", (user['id'],))
+    n = c.fetchone()[0]
+    conn.close()
+    return n
+
+def _ride_metadata_from_file(filename, file_bytes):
+    """
+    Re-parses a stored ride with the same pipeline the dashboard uses and
+    returns (iso_start_time, distance_km, elevation_m). Distance/elevation
+    are None when the file has no GPS track (e.g. indoor rides).
+    """
+    # Imported lazily: the parsers depend on streamlit.
+    from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds
+    from src.data.fit import parse_fit
+
+    if filename.lower().endswith(".fit"):
+        df = parse_fit(file_bytes)
+    else:
+        df = parse_gpx(file_bytes)
+    if df is None or df.empty or 'time' not in df.columns:
+        raise ValueError("no timestamped samples")
+
+    date_iso = _iso_timestamp(df['time'].dropna().iloc[0])
+
+    dist_km, ele_m = None, None
+    if {'lat', 'lon', 'ele'}.issubset(df.columns) and df['lat'].notna().any():
+        df, _, _ = compute_distance_and_ascent(df)
+        df = resample_to_seconds(df)
+        df, total_dist, total_ascent = compute_distance_and_ascent(df)
+        dist_km, ele_m = total_dist / 1000.0, float(total_ascent)
+    return date_iso, dist_km, ele_m
+
+def repair_ride_metadata(user_name):
+    """
+    Fills in date_time (and distance/elevation when missing) for rides that
+    were saved without them, and copies the date to their power records.
+    Returns (n_repaired, [filenames that could not be parsed]).
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return 0, []
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(f"""SELECT id, filename, file_content, date_time, distance_km, elevation_m
+                  FROM rides WHERE user_id = ? AND {_MISSING_META_SQL}""", (user['id'],))
+    rows = c.fetchall()
+
+    repaired, failed = 0, []
+    for ride_id, filename, blob, old_date, old_dist, old_ele in rows:
+        try:
+            date_iso, dist_km, ele_m = _ride_metadata_from_file(filename or "", blob)
+        except Exception:
+            failed.append(filename or f"ride {ride_id}")
+            continue
+
+        new_date = old_date or date_iso
+        new_dist = dist_km if (not old_dist and dist_km is not None) else old_dist
+        new_ele = ele_m if (not old_ele and ele_m is not None) else old_ele
+        c.execute("UPDATE rides SET date_time = ?, distance_km = ?, elevation_m = ? WHERE id = ?",
+                  (new_date, new_dist, new_ele, ride_id))
+        c.execute("UPDATE power_records SET date_time = ? WHERE ride_id = ? AND date_time IS NULL",
+                  (new_date, ride_id))
+        repaired += 1
+
+    conn.commit()
+    conn.close()
+    return repaired, failed

@@ -1,3 +1,6 @@
 *.db
 strava_cookie
 *.gpx
+__pycache__/
+*.pyc
+.pytest_cache/
