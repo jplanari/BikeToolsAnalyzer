@@ -4,7 +4,7 @@ Per-ride quality and load metrics (pure functions, 1 Hz input).
 - VI (variability index) = NP / average power
 - EF (efficiency factor)  = NP / average heart rate (moving samples)
 - Aerobic decoupling (Pa:HR) = drift of power/HR between the first and
-  second half of the moving time, in percent (positive = HR drifted up)
+  second half of the pedalling time, in percent (positive = HR drifted up)
 - hrTSS: TSS estimate from heart rate for rides without power
 """
 import numpy as np
@@ -44,13 +44,15 @@ def efficiency_factor(norm_power, hr_series, moving=None):
 def aerobic_decoupling(power_series, hr_series, moving=None):
     """
     Pa:HR decoupling in percent: (ratio_1st_half - ratio_2nd_half) / ratio_1st_half,
-    where ratio = mean power / mean HR over each half of the moving samples
-    that have both power and HR. None if under 20 minutes of usable data.
+    where ratio = mean power / mean HR over each half of the pedalling samples
+    (power > 0, moving) that have both power and HR. Coasting seconds (0 W)
+    are excluded: they would bias the halves if descents fall unevenly.
+    None if under 20 minutes of usable data.
     """
     p, hr = _clean(power_series), _clean(hr_series)
     if len(p) == 0 or len(p) != len(hr):
         return None
-    mask = ~np.isnan(p) & ~np.isnan(hr) & (hr > 0)
+    mask = ~np.isnan(p) & (p > 0) & ~np.isnan(hr) & (hr > 0)
     if moving is not None:
         mask &= _clean(moving).astype(bool)
     p, hr = p[mask], hr[mask]
