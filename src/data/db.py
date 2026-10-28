@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import threading
+import warnings
 import pandas as pd
 import hashlib
 import re
@@ -7,7 +10,10 @@ import time
 
 from src.analysis.dates import parse_utc
 
-DB_FILE = "bikethools.db"
+# BIKETOOLS_DB lets you keep the database somewhere else, e.g. outside a OneDrive/Dropbox folder:
+# those sync tools (and Windows drives mounted in WSL) lock files unpredictably, which SQLite hates.
+DB_FILE = os.environ.get("BIKETOOLS_DB", "bikethools.db")
+BUSY_TIMEOUT_S = 60          # wait this long for another connection's lock instead of failing at once
 
 
 def _connect():
@@ -16,7 +22,7 @@ def _connect():
     ON DELETE CASCADE) when asked to, per connection; without this, deleting a user
     left their rides, records and histograms behind.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -279,7 +285,7 @@ def backup_db(reason="manual", keep=None):
     dest = os.path.join(folder, f"{stem}-{time.strftime('%Y%m%d-%H%M%S')}-{reason}.db")
     try:
         os.makedirs(folder, exist_ok=True)
-        src, dst = sqlite3.connect(DB_FILE), sqlite3.connect(dest)
+        src, dst = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S), sqlite3.connect(dest)
         try:
             src.backup(dst)
         finally:
@@ -398,7 +404,23 @@ def _unpack(codec, blob):
     import zlib
     return zlib.decompress(blob) if codec == "zlib" else bytes(blob)
 
-def _move_ride_files(batch=25):
+_migration_lock = threading.Lock()
+
+def _move_ride_files(batch=10):
+    """
+    Runs the file migration, one thread at a time (Streamlit may run the script for several
+    browser sessions at once, and init_db() runs on every one). If the database is locked by
+    another process or a slow sync, the migration is postponed to the next run instead of
+    stopping the app from loading.
+    """
+    with _migration_lock:
+        try:
+            return _do_move_ride_files(batch)
+        except sqlite3.OperationalError as e:
+            warnings.warn(f"Ride-file migration postponed ({e}); it will be retried on the next run.")
+            return 0
+
+def _do_move_ride_files(batch):
     """
     One-time migration: rides saved before ride_files existed keep their original file in
     rides.file_content. Compress them into ride_files and empty that column (the column
@@ -428,7 +450,7 @@ def _move_ride_files(batch=25):
             moved += len(rows)
         conn.close()
         try:                                   # give the freed space back to the disk
-            vac = sqlite3.connect(DB_FILE)
+            vac = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
             vac.execute("VACUUM")
             vac.close()
         except sqlite3.Error:

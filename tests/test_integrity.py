@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 import pytest
@@ -123,3 +124,60 @@ def test_unmigrated_row_still_readable(temp_db):
     conn.commit()
     rid = conn.execute("SELECT id FROM rides").fetchone()[0]
     assert db.get_ride_file(rid) == ("x.gpx", b"legacy")
+
+
+# --- Locked databases ----------------------------------------------------------------
+
+def _legacy_db(tmp_path, monkeypatch, n=40):
+    path = tmp_path / "locked.db"
+    monkeypatch.setattr(db, "DB_FILE", str(path))
+    db.init_db()
+    db.save_user("Rider", 250, 170, 70.0)
+    conn = sqlite3.connect(path)
+    uid = conn.execute("SELECT id FROM users").fetchone()[0]
+    for i in range(n):
+        conn.execute("INSERT INTO rides (user_id, filename, file_hash, file_content, date_time) "
+                     "VALUES (?, ?, ?, ?, '2026-10-01T07:00:00')", (uid, f"r{i}.json", f"h{i}", b'{"w": 1}' * 300))
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_concurrent_app_starts_migrate_once_without_errors(tmp_path, monkeypatch):
+    import threading
+    path = _legacy_db(tmp_path, monkeypatch)
+    errors = []
+
+    def start():
+        try:
+            db.init_db()
+        except Exception as e:                        # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=start) for _ in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert errors == []
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT COUNT(*) FROM ride_files").fetchone()[0] == 40
+    assert conn.execute("SELECT COUNT(*) FROM rides WHERE file_content IS NOT NULL").fetchone()[0] == 0
+
+
+def test_locked_database_postpones_the_migration_instead_of_crashing(tmp_path, monkeypatch):
+    path = _legacy_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(db, "BUSY_TIMEOUT_S", 0.2)
+    other = sqlite3.connect(path, isolation_level=None)
+    other.execute("BEGIN EXCLUSIVE")                  # another process holds the file
+    with pytest.warns(UserWarning, match="postponed"):
+        assert db._move_ride_files() == 0
+    other.execute("ROLLBACK")
+    other.close()
+    assert db._move_ride_files() == 40                # next run picks up where it was
+
+
+def test_database_location_can_be_set_with_an_environment_variable(tmp_path):
+    import subprocess, sys
+    out = subprocess.run([sys.executable, "-c", "import src.data.db as d; print(d.DB_FILE)"],
+                         env={**os.environ, "BIKETOOLS_DB": str(tmp_path / "elsewhere.db")},
+                         capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
+    assert out.stdout.strip() == str(tmp_path / "elsewhere.db"), out.stderr
