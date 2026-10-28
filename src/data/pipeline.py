@@ -10,7 +10,8 @@ from src.data.gpx import (parse_gpx, compute_distance_and_ascent, resample_to_se
                           compute_speed, compute_grade)
 from src.data.fit import parse_fit
 from src.data.strava import streams_to_dataframe
-from src.analysis.power import NP, IF, TSS, power_curve, calculate_ride_kJ
+from src.analysis.power import NP, power_curve, calculate_ride_kJ
+from src.analysis import ride_metrics as rm
 
 MOVING_THRESHOLD_MS = 2.0
 
@@ -49,10 +50,11 @@ def prepare_ride(filename, file_bytes):
     return df, total_dist, total_ascent
 
 
-def summarize_ride(df, ftp):
+def summarize_ride(df, ftp, lthr=None):
     """Summary metrics shown on the ride page and saved to the database."""
     has_power = 'power' in df.columns and df['power'].notna().any()
     has_hr = 'hr' in df.columns and df['hr'].notna().any()
+    hr = df['hr'] if has_hr else None
 
     speed = df['speed'] if 'speed' in df.columns else pd.Series(np.nan, index=df.index)
     is_moving = speed >= MOVING_THRESHOLD_MS
@@ -65,6 +67,8 @@ def summarize_ride(df, ftp):
     norm_power = NP(df['power']) if has_power else 0
     norm_power = 0 if pd.isna(norm_power) else norm_power
 
+    tss, if_val, tss_source = rm.training_stress(norm_power, duration_s, ftp, hr, lthr, is_moving)
+
     return {
         'duration_s': duration_s,
         'moving_time_s': moving_time_s,
@@ -73,8 +77,26 @@ def summarize_ride(df, ftp):
         'avg_power': avg_power,
         'avg_hr': avg_hr,
         'norm_power': norm_power,
-        'if': IF(norm_power, ftp),
-        'tss': TSS(norm_power, duration_s, ftp),
+        'if': if_val,
+        'tss': tss,
+        'tss_source': tss_source,
         'kj': calculate_ride_kJ(df['power']) if has_power else 0,
         'power_curve': power_curve(df['power']) if has_power else {},
+        'vi': rm.variability_index(df['power']) if has_power else None,
+        'ef': rm.efficiency_factor(norm_power, hr, is_moving) if has_power and has_hr else None,
+        'decoupling_pct': (rm.aerobic_decoupling(df['power'], hr, is_moving)
+                           if has_power and has_hr else None),
+        'zones': rm.zone_seconds(df, ftp, lthr),
+        'ftp': ftp,
+        'lthr': lthr,
     }
+
+
+def metrics_for_storage(summary):
+    """The per-ride columns that build_ride_metadata() adds to the metadata."""
+    keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
+            'decoupling_pct', 'zones']
+    out = {k: summary.get(k) for k in keys}
+    out['ftp_at_ride'] = summary.get('ftp') or None
+    out['lthr_at_ride'] = summary.get('lthr') or None
+    return out

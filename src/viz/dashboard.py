@@ -11,7 +11,8 @@ import plotly.graph_objects as go
 # Imports from your existing modules
 from src.data.gpx import calculate_bearing
 from src.data.fit import get_fit_laps
-from src.data.pipeline import prepare_ride, summarize_ride, ride_kind
+from src.data.history import recompute_history
+from src.data.pipeline import prepare_ride, summarize_ride, ride_kind, metrics_for_storage
 from src.viz.plots import (
         plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, 
         plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
@@ -27,7 +28,7 @@ from src.analysis.training_load import compute_pmc
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
         save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
-        count_rides_missing_metadata, repair_ride_metadata, build_ride_metadata,
+        count_rides_needing_update, build_ride_metadata,
         get_strava_auth, save_strava_auth, delete_strava_auth, create_oauth_state, consume_oauth_state
     )
 from src.analysis.climbs import detect_climbs, get_climb_segments
@@ -80,6 +81,17 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_p
 def show_centered(fig):
     c1, c2, c3 = st.columns([1, 3, 1])
     with c2: st.plotly_chart(fig, use_container_width=True)
+
+def duration_label(seconds):
+    """Compact label for power-curve durations: 5s, 1m30s, 7m, 1h30m."""
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    if m:
+        return f"{m}m{s:02d}s" if s else f"{m}m"
+    return f"{s}s"
 
 def format_duration(seconds):
     if not seconds: return "00:00:00"
@@ -158,7 +170,7 @@ def render_sidebar():
             current_file = uploaded_file
 
     elif import_method == "Strava":
-        current_file = _render_strava_sidebar(selected_user_name, user_ftp)
+        current_file = _render_strava_sidebar(selected_user_name, user_ftp, user_lthr)
 
     # Settings
     st.sidebar.markdown("---")
@@ -244,7 +256,7 @@ def _activity_label(a):
     km = (a.get("distance") or 0) / 1000
     return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
 
-def _render_strava_sidebar(user_name, user_ftp):
+def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
     """Returns a file-like ride to analyse, or None."""
     cfg = _strava_config()
     if cfg is None:
@@ -299,7 +311,8 @@ def _render_strava_sidebar(user_name, user_ftp):
                     frac = done / total if total else 1.0
                     bar.progress(frac, text=f"{done}/{total} {name}"[:60])
 
-                res = import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage)
+                res = import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage,
+                                     lthr=user_lthr)
                 bar.empty()
                 st.success(f"Imported {res.imported} of {res.found} rides.")
                 skipped = []
@@ -348,7 +361,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
             return
 
         current_ftp = settings['ftp']
-        summary = summarize_ride(df, current_ftp)
+        summary = summarize_ride(df, current_ftp, settings.get('lthr'))
         duration_s = summary['duration_s']
         avg_speed = summary['avg_speed_kph']
         avg_power = summary['avg_power']
@@ -373,7 +386,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
         # Auto-Save
         if user_name:
-             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, avg_speed, norm_power, ride_tss, ride_if, current_curve)
+             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary)
 
     # Detect Climbs
     detected_climbs = []
@@ -401,8 +414,24 @@ def process_and_display_analysis(file_obj, user_name, settings):
     c6, c7, c8, c9 = st.columns(4)
     c6.metric("Norm Power", f"{int(norm_power)} W" if norm_power else "N/A")
     c7.metric("Intensity Factor", f"{ride_if:.2f}" if norm_power else "N/A")
-    c8.metric("TSS", f"{int(ride_tss)}" if norm_power else "N/A")
+    if summary['tss_source'] == 'hr':
+        c8.metric("TSS (HR)", f"{round(ride_tss)}",
+                  help="No power data: estimated from heart rate vs your LTHR (hrTSS). "
+                       "Less precise than power-based TSS.")
+    else:
+        c8.metric("TSS", f"{round(ride_tss)}" if summary['tss_source'] else "N/A")
     c9.metric("Work", f"{int(ride_kj)} kJ" if norm_power else "N/A")
+
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("Moving Time", format_duration(summary['moving_time_s']))
+    q2.metric("Variability Index", f"{summary['vi']:.2f}" if summary['vi'] else "N/A",
+              help="NP / average power. ~1.00-1.05 = steady (TT, endurance); >1.15 = very variable (crits, group rides).")
+    q3.metric("Efficiency Factor", f"{summary['ef']:.2f}" if summary['ef'] else "N/A",
+              help="NP / average heart rate. Compare across similar endurance rides: rising EF = improving aerobic fitness.")
+    dec = summary['decoupling_pct']
+    q4.metric("Aerobic Decoupling", f"{dec:.1f} %" if dec is not None else "N/A",
+              help="Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
+                   "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals.")
     
     st.markdown("---")
 
@@ -421,9 +450,12 @@ def process_and_display_analysis(file_obj, user_name, settings):
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
 
-def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val, power_curve_dict):
+def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
     """Helper to handle database saving logic."""
-    stats = build_ride_metadata(df, dist, ele, speed, np_val, tss, if_val, filename=filename)
+    stats = build_ride_metadata(df, dist, ele, summary['avg_speed_kph'], summary['norm_power'],
+                                summary['tss'], summary['if'], filename=filename,
+                                metrics=metrics_for_storage(summary))
+    power_curve_dict = summary['power_curve']
 
     if 'saved_hashes' not in st.session_state:
         st.session_state['saved_hashes'] = set()
@@ -722,28 +754,46 @@ def render_history(user_name):
     hist_df = pd.DataFrame(history)
     st.info("Here is a log of your past rides.")
 
+    cols = ['date_time', 'filename', 'distance_km', 'elevation_m', 'moving_s', 'norm_power',
+            'tss', 'tss_source', 'vi', 'ef', 'decoupling_pct']
+    view = hist_df[[c for c in cols if c in hist_df.columns]].copy()
+    if 'moving_s' in view.columns:
+        view['moving_s'] = view['moving_s'].map(lambda x: format_duration(x) if pd.notna(x) else "")
     st.dataframe(
-        hist_df[['date_time', 'filename', 'distance_km', 'elevation_m', 'norm_power','tss']],
+        view.rename(columns={'date_time': 'Date', 'filename': 'File', 'distance_km': 'km',
+                             'elevation_m': 'Elev (m)', 'moving_s': 'Moving', 'norm_power': 'NP',
+                             'tss': 'TSS', 'tss_source': 'TSS from', 'vi': 'VI', 'ef': 'EF',
+                             'decoupling_pct': 'Decoupling %'}),
         hide_index=True,
+        column_config={"km": st.column_config.NumberColumn(format="%.1f"),
+                       "VI": st.column_config.NumberColumn(format="%.2f"),
+                       "EF": st.column_config.NumberColumn(format="%.2f"),
+                       "Decoupling %": st.column_config.NumberColumn(format="%.1f")},
     )
 
-def _render_history_repair(user_name):
-    """Rebuilds date/distance/elevation of stored rides from their saved files."""
-    n_broken = count_rides_missing_metadata(user_name)
-    if n_broken == 0:
+def _render_history_update(user_name, user_data):
+    """Offers to rebuild outdated rides from their stored files."""
+    n = count_rides_needing_update(user_name)
+    if n == 0:
         return
-    with st.expander(f"🛠️ Repair ride history ({n_broken} rides with missing date/distance)"):
-        st.caption("Older versions of the app saved rides without their date, distance and "
-                   "elevation, so they were left out of the PMC. This re-reads the stored "
-                   "files and fills those fields in. TSS and power records are not changed.")
-        if st.button("Repair ride history"):
-            with st.spinner("Re-reading stored rides..."):
-                fixed, failed = repair_ride_metadata(user_name)
+    with st.expander(f"🛠️ Update ride history ({n} rides need updating)"):
+        st.caption("These rides were saved by an older version of the app, so they are missing "
+                   "newer metrics (moving time, VI, EF, decoupling, zone times, the full power "
+                   "curve) or their date. This re-reads the stored files and recomputes them. "
+                   "Each ride keeps the FTP it was originally scored with; rides without power "
+                   "get an HR-based TSS using your LTHR.")
+        if st.button("Update ride history"):
+            bar = st.progress(0.0, text="Recomputing rides...")
+            updated, failed = recompute_history(
+                user_name, user_data['ftp'], user_data['lthr'],
+                progress=lambda done, total: bar.progress(done / total if total else 1.0,
+                                                          text=f"{done}/{total} rides"))
+            bar.empty()
             if failed:
-                st.warning(f"Repaired {fixed} rides; {len(failed)} could not be read: "
-                           + ", ".join(failed[:10]))
+                st.warning(f"Updated {updated} rides; {len(failed)} could not be read:\n\n"
+                           + "\n".join(f"- {f}" for f in failed[:10]))
             else:
-                st.toast(f"✅ Repaired {fixed} rides.")
+                st.toast(f"✅ Updated {updated} rides.")
                 st.rerun()
 
 def render_user_corner(user_name):
@@ -777,7 +827,7 @@ def render_user_corner(user_name):
         st.info("No TSS history data available. Upload a ride to see your chart!")
     elif pmc_df.empty:
         st.warning("Found rides, but none with a valid date and TSS. "
-                   "Use **Repair ride history** below to rebuild them from the stored files.")
+                   "Use **Update ride history** below to rebuild them from the stored files.")
     else:
         st.plotly_chart(plot_pmc(pmc_df), use_container_width=True)
 
@@ -792,7 +842,7 @@ def render_user_corner(user_name):
         with st.expander("View Raw PMC Data"):
             st.dataframe(pmc_df)
 
-    _render_history_repair(user_name)
+    _render_history_update(user_name, user_data)
 
     st.markdown("---")
 
@@ -878,14 +928,8 @@ def render_user_corner(user_name):
         st.subheader("🏆 Best Power Records")
         data = []
         for duration, watts in sorted(best_power.items()):
-            dur_label = f"{duration}s"
-            if duration >= 60:
-                dur_label = f"{int(duration/60)}m"
-            if duration >= 3600:
-                dur_label = f"{int(duration/3600)}h"
-            
             data.append({
-                "Duration": dur_label, 
+                "Duration": duration_label(duration), 
                 "Watts": int(watts), 
                 "W/kg": round(watts / user_data['weight'], 2)
             })
