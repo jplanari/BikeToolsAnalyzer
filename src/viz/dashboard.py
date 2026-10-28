@@ -42,7 +42,7 @@ from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_comp
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
 from src.data import strava as sv
 from src.data.strava_import import (get_valid_auth, list_recent_rides, fetch_ride_file,
-                                    import_history)
+                                    import_history, sync_new_rides)
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 
 @st.cache_data(show_spinner=False)
@@ -261,6 +261,21 @@ def _activity_label(a):
     km = (a.get("distance") or 0) / 1000
     return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
 
+def _show_import_result(res):
+    """Summary of an ImportResult in the sidebar."""
+    st.sidebar.success(f"Imported {res.imported} of {res.found} rides.")
+    skipped = []
+    if res.already_imported: skipped.append(f"{res.already_imported} already imported")
+    if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
+    if res.no_data: skipped.append(f"{res.no_data} without recorded data")
+    if skipped:
+        st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")
+    if res.failed:
+        st.sidebar.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
+    if res.stopped_reason:
+        st.sidebar.info(f"{res.stopped_reason} ({res.remaining} left)")
+
+
 def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
     """Returns a file-like ride to analyse, or None."""
     cfg = _strava_config()
@@ -305,6 +320,21 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
         else:
             st.sidebar.info("No recent rides found on Strava.")
 
+        if st.sidebar.button("⟳ Sync new rides", help="Imports rides added to Strava since the last one "
+                             "you imported (a few days of overlap catch late uploads)."):
+            bar = st.sidebar.progress(0.0, text="Checking Strava...")
+
+            def _sync_progress(done, total, name):
+                bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
+
+            res, since_dt = sync_new_rides(cfg, user_name, user_ftp, progress=_sync_progress, usage=usage,
+                                           lthr=user_lthr)
+            bar.empty()
+            if res.imported == 0 and not res.failed and not res.stopped_reason:
+                st.sidebar.success(f"Up to date (checked since {since_dt:%d %b %Y}).")
+            else:
+                _show_import_result(res)
+
         with st.sidebar.expander("📥 Import ride history"):
             st.caption("Imports every ride since the chosen date into your history "
                        "(PMC, power records). Rides already saved are skipped.")
@@ -319,17 +349,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
                 res = import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage,
                                      lthr=user_lthr)
                 bar.empty()
-                st.success(f"Imported {res.imported} of {res.found} rides.")
-                skipped = []
-                if res.already_imported: skipped.append(f"{res.already_imported} already imported")
-                if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
-                if res.no_data: skipped.append(f"{res.no_data} without recorded data")
-                if skipped:
-                    st.caption("Skipped: " + ", ".join(skipped) + ".")
-                if res.failed:
-                    st.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
-                if res.stopped_reason:
-                    st.info(f"{res.stopped_reason} ({res.remaining} left)")
+                _show_import_result(res)
 
     except sv.StravaAuthError as e:
         st.sidebar.error(f"{e}")

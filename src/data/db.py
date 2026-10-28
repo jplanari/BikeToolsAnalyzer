@@ -769,6 +769,20 @@ def get_imported_strava_ids(user_name):
     conn.close()
     return {r[0] for r in rows}
 
+def latest_strava_ride_date(user_name):
+    """Start (naive UTC) of the newest ride imported from Strava, or None."""
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND strava_activity_id IS NOT NULL "
+                       "AND date_time IS NOT NULL", (user['id'],)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    ts = pd.to_datetime(row[0], errors='coerce', utc=True)
+    return None if pd.isna(ts) else ts.tz_convert(None)
+
 def get_ride_start_times(user_name):
     """Start times (UTC, naive) of all dated rides, for cross-source dedup."""
     user = get_user_data(user_name)
