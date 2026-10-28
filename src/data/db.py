@@ -290,7 +290,7 @@ def data_stamp():
     stay valid between interactions and refresh themselves after any save or update.
     """
     import os
-    stamp = []
+    stamp = [DB_FILE]
     for path in (DB_FILE, DB_FILE + "-wal"):
         try:
             st = os.stat(path)
