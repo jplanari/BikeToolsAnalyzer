@@ -44,10 +44,27 @@ def prepare_ride(filename, file_bytes):
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
     df = resample_to_seconds(df)
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
-    if kind != "fit":  # FIT files carry a native speed channel
+    # FIT files usually carry a native speed channel; otherwise derive it
+    if kind != "fit" or 'speed' not in df.columns or df['speed'].isna().all():
         df = compute_speed(df)
     df = compute_grade(df)
     return df, total_dist, total_ascent
+
+
+def moving_mask(df):
+    """
+    Seconds spent riding. Uses speed when the ride has a usable speed
+    channel; otherwise (indoor without a speed sensor, no GPS) any second
+    with pedalling (power or cadence > 0) counts as moving.
+    """
+    speed = df['speed'] if 'speed' in df.columns else pd.Series(np.nan, index=df.index)
+    if speed.notna().any() and (speed > 0).any():
+        return (speed >= MOVING_THRESHOLD_MS).fillna(False)
+    pedalling = pd.Series(False, index=df.index)
+    for col in ('power', 'cadence'):
+        if col in df.columns:
+            pedalling |= df[col].fillna(0) > 0
+    return pedalling
 
 
 def summarize_ride(df, ftp, lthr=None):
@@ -57,7 +74,7 @@ def summarize_ride(df, ftp, lthr=None):
     hr = df['hr'] if has_hr else None
 
     speed = df['speed'] if 'speed' in df.columns else pd.Series(np.nan, index=df.index)
-    is_moving = speed >= MOVING_THRESHOLD_MS
+    is_moving = moving_mask(df)
     moving_time_s = int(is_moving.sum())
     duration_s = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
 

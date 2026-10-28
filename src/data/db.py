@@ -233,7 +233,9 @@ def _iso_timestamp(ts):
     return ts.isoformat()
 
 # Bump when the per-ride calculations change; older rides get offered a recompute
-METRICS_VERSION = 2  # 2: joint power/HR/cadence histograms, HR recovery
+# 2: joint power/HR/cadence histograms, HR recovery
+# 3: gap-aware resampling (smart recording), enhanced FIT channels, moving fallback
+METRICS_VERSION = 3
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -655,3 +657,23 @@ def update_user_crank(user_name, crank_mm):
     conn.execute("UPDATE users SET crank_mm = ? WHERE name = ?", (float(crank_mm), user_name))
     conn.commit()
     conn.close()
+
+def period_coverage(user_name, start=None, end=None):
+    """Why analytics may be empty: rides in the period and what they contain."""
+    out = {'rides': 0, 'needs_update': 0, 'p_hr': 0, 'p_cad': 0}
+    user = get_user_data(user_name)
+    if not user:
+        return out
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    out['rides'], out['needs_update'] = conn.execute(
+        f"""SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.metrics_version IS NULL
+                                               OR r.metrics_version < ? THEN 1 ELSE 0 END), 0)
+            FROM rides r WHERE r.user_id = ?{where}""",
+        [METRICS_VERSION, user['id'], *params]).fetchone()
+    for pair in ('p_hr', 'p_cad'):
+        out[pair] = conn.execute(
+            f"""SELECT COUNT(DISTINCT h.ride_id) FROM ride_hist h JOIN rides r ON r.id = h.ride_id
+                WHERE r.user_id = ? AND h.pair = ?{where}""", [user['id'], pair, *params]).fetchone()[0]
+    conn.close()
+    return out

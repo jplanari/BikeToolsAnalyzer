@@ -30,7 +30,7 @@ from src.analysis import correlations as co
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
         save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
-        count_rides_needing_update, build_ride_metadata, get_hist, get_ride_stats, update_user_crank,
+        count_rides_needing_update, build_ride_metadata, get_hist, get_ride_stats, update_user_crank, period_coverage,
         get_strava_auth, save_strava_auth, delete_strava_auth, create_oauth_state, consume_oauth_state
     )
 from src.analysis.climbs import detect_climbs, get_climb_segments
@@ -828,10 +828,18 @@ def _render_deeper_analytics(user_name, user_data):
     cad_b = get_hist(user_name, 'p_cad', b0, b1) if compare else None
     stats = get_ride_stats(user_name, b0 if compare else a0, a1)
 
-    if hr_a.empty and cad_a.empty and stats.empty:
-        st.info("No analysable rides in this period. Rides need power plus heart rate and/or cadence. "
-                "If you have older rides, run **Update ride history** above to compute these analytics for them.")
-        return
+    cov = period_coverage(user_name, a0, a1)
+    if cov['needs_update']:
+        st.warning(f"{cov['needs_update']} of the {cov['rides']} rides in this period were saved by an older "
+                   "version and aren't included here yet. Run **Update ride history** above to add them.")
+
+    def _empty_reason(what):
+        if cov['rides'] == 0:
+            return "No rides in this period."
+        if cov['needs_update'] == cov['rides']:
+            return f"None of the {cov['rides']} rides in this period has been updated yet (see above)."
+        return (f"None of the {cov['rides'] - cov['needs_update']} up-to-date rides in this period "
+                f"has both power and {what} while pedalling.")
 
     tab_hr, tab_cad, tab_rec = st.tabs(["❤️ Power ↔ Heart rate", "🦵 Power ↔ Cadence",
                                         "🔁 Recovery & Efficiency"])
@@ -839,7 +847,7 @@ def _render_deeper_analytics(user_name, user_data):
     # ---- Power vs HR ----
     with tab_hr:
         if hr_a.empty:
-            st.info("No rides with both power and heart rate in this period.")
+            st.info(_empty_reason("heart rate"))
         else:
             fit_a = co.linear_fit(hr_a)
             fit_b = co.linear_fit(hr_b) if compare else None
@@ -885,7 +893,7 @@ def _render_deeper_analytics(user_name, user_data):
     # ---- Power vs cadence ----
     with tab_cad:
         if cad_a.empty:
-            st.info("No rides with both power and cadence in this period.")
+            st.info(_empty_reason("cadence"))
         else:
             crank_mm = float(user_data.get('crank_mm') or 172.5)
             new_crank = st.number_input("Crank length (mm)", min_value=150.0, max_value=200.0,
