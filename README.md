@@ -10,6 +10,13 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 - Power Curve: Generates a Mean Maximal Power (MMP) curve to analyze best efforts across durations.
 - Heart Rate: Automatic LTHR estimation (Friel method) and Time-in-Zone distributions.
 
+🏋️ Training page
+
+- **Load:** fitness / fatigue / form (PMC) with a **forecast from your planned sessions**, ramp rate, acute:chronic ratio and monotony with plain-language status, weekly or monthly volume (hours, km, TSS, kJ, elevation).
+- **Power profile:** best power curves for the last 42 / 90 days, the season and all time; 2- and 3-parameter critical power (CP, W′, Pmax); CP and FTP history; W/kg and ×FTP profile; records with the date they were set.
+- **Durability:** how much of your fresh power you keep after 1, 2 and 3 MJ of work.
+- **Intensity:** weekly/monthly easy / moderate / hard distribution (power or HR) and the polarization index.
+
 🔬 Deeper Analytics (User Corner)
 
 - Pick a period and compare it with the previous one of the same length.
@@ -73,14 +80,20 @@ BikeToolsAnalyzer/
     ├── analysis/           # Algorithms & Detection
     │   ├── climbs.py
     │   ├── hr.py
+    │   ├── correlations.py   # power vs HR / cadence analytics
+    │   ├── durability.py
+    │   ├── intensity.py      # intensity distribution, polarization index
     │   ├── power.py
-    │   └── training_load.py  # PMC (CTL/ATL/TSB)
+    │   ├── power_profile.py  # window curves, CP models, history
+    │   ├── ride_metrics.py   # per-ride VI, EF, decoupling, zones, histograms
+    │   └── training_load.py  # PMC, forecast, ramp, ACWR, monotony, volume
     ├── data/               # IO, Database, & Parsing
     │   ├── db.py
     │   ├── fit.py
     │   ├── gpx.py
     │   ├── pipeline.py       # Shared parse → 1 Hz → metrics pipeline
     │   ├── strava.py         # Strava API client (OAuth, streams)
+    │   ├── history.py        # Recompute stored rides
     │   ├── strava_import.py  # Single-ride and history import
     │   └── weather.py
     ├── physics/            # Core Science Logic
@@ -89,7 +102,9 @@ BikeToolsAnalyzer/
     └── viz/                # UI & Visualization
         ├── dashboard.py
         ├── maps.py
-        └── plots.py
+        ├── plots.py
+        ├── training_page.py
+        └── training_plots.py
 ```
 ## The Physics Model
 The application uses a forward-integration physics model to solve for Aerodynamic Drag ($F_{aero}$):

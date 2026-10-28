@@ -64,6 +64,18 @@ def migrate_db():
             FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
         )
     ''')
+    # Planned sessions (TSS) for the PMC forecast on the Training page
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS planned_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            date TEXT NOT NULL,          -- YYYY-MM-DD
+            tss REAL NOT NULL,
+            note TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+
     # Mean-maximal power of the part of each ride after `kj` of work (durability)
     c.execute('''
         CREATE TABLE IF NOT EXISTS power_records_kj (
@@ -750,3 +762,48 @@ def get_zone_rows(user_name, kind, start=None, end=None):
     conn.close()
     df['date'] = _parse_dates(df['date'])
     return df[cols]
+
+def get_planned_sessions(user_name, after=None):
+    """Planned sessions (date, tss, note), optionally only after a date."""
+    cols = ['date', 'tss', 'note']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    sql = "SELECT date, tss, note FROM planned_sessions WHERE user_id = ?"
+    params = [user['id']]
+    if after is not None:
+        sql += " AND date > ?"
+        params.append(pd.Timestamp(after).strftime("%Y-%m-%d"))
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(sql + " ORDER BY date", conn, params=params)
+    conn.close()
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    return df[cols]
+
+def replace_planned_sessions(user_name, sessions, after):
+    """
+    Replaces the user's planned sessions dated after `after` (e.g. today)
+    with `sessions` (rows with date, tss, note). Past plans are kept.
+    Rows without a date or with a negative/missing TSS are ignored.
+    Returns the number of sessions stored.
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return 0
+    cutoff = pd.Timestamp(after).normalize()
+    rows = []
+    for r in (sessions.to_dict('records') if hasattr(sessions, 'to_dict') else sessions):
+        d = pd.to_datetime(r.get('date'), errors='coerce')
+        t = pd.to_numeric(r.get('tss'), errors='coerce')
+        if pd.isna(d) or pd.isna(t) or t < 0 or d.normalize() <= cutoff:
+            continue
+        note = r.get('note')
+        rows.append((user['id'], d.strftime("%Y-%m-%d"), float(t),
+                     None if note is None or (isinstance(note, float) and pd.isna(note)) else str(note)))
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ?",
+                 (user['id'], cutoff.strftime("%Y-%m-%d")))
+    conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+    return len(rows)

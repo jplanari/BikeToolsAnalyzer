@@ -1,0 +1,350 @@
+"""Training page: load, power profile, durability and intensity distribution."""
+import pandas as pd
+import streamlit as st
+
+from src.data.db import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
+                         get_kj_records, get_zone_rows, get_planned_sessions,
+                         replace_planned_sessions, count_rides_needing_update)
+from src.analysis import training_load as tl
+from src.analysis import power_profile as pp
+from src.analysis import durability as du
+from src.analysis import intensity as it
+from src.analysis.power import estimate_critical_power
+from src.viz import training_plots as tp
+
+PERIODS = {'6 weeks': 42, '3 months': 91, '6 months': 182, '1 year': 365, 'All': None}
+
+
+def _theme():
+    try:
+        return st.context.theme.type or 'light'
+    except Exception:
+        return 'light'
+
+
+def _chart(fig):
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _period_start(label, today):
+    days = PERIODS[label]
+    return None if days is None else today - pd.Timedelta(days=days - 1)
+
+
+def _dur_label(seconds):
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    if m:
+        return f"{m}m{s:02d}s" if s else f"{m}m"
+    return f"{s}s"
+
+
+# --- Status labels (rules of thumb; shown in each metric's help) ---------------
+
+def ramp_status(v):
+    if v is None or pd.isna(v):
+        return None
+    if v > 8:
+        return "⚠️ Aggressive"
+    if v >= 3:
+        return "↗ Building"
+    if v > -3:
+        return "→ Maintaining"
+    return "↘ Losing fitness"
+
+
+def acwr_status(v):
+    if v is None or pd.isna(v):
+        return None
+    if v < 0.8:
+        return "↘ Low load"
+    if v <= 1.3:
+        return "✅ In range"
+    if v <= 1.5:
+        return "⚠️ High"
+    return "⛔ Spike"
+
+
+def form_status(v):
+    if v is None or pd.isna(v):
+        return None
+    if v > 25:
+        return "Very fresh"
+    if v > 5:
+        return "✅ Fresh"
+    if v >= -10:
+        return "Neutral"
+    if v >= -30:
+        return "Productive fatigue"
+    return "⚠️ Very fatigued"
+
+
+def monotony_status(v):
+    if v is None or pd.isna(v):
+        return None
+    return "⚠️ High" if v > 2.0 else "✅ Varied"
+
+
+def tid_label(low, mid, high, pi):
+    if pi is not None and pi > 2.0:
+        return "Polarized"
+    if low >= mid >= high:
+        return "Pyramidal"
+    if mid > low and mid > high:
+        return "Threshold-focused"
+    return "Non-polarized"
+
+
+def _metric(col, label, value, status, help_text):
+    col.metric(label, value, delta=status, delta_color="off", help=help_text)
+
+
+# --- Page --------------------------------------------------------------------
+
+def render_training_page(user_name):
+    st.header("🏋️ Training")
+    if not user_name:
+        st.warning("Please select a user in the sidebar.")
+        return
+    user = get_user_data(user_name)
+    if not user:
+        st.error("User data not found.")
+        return
+
+    n_old = count_rides_needing_update(user_name)
+    if n_old:
+        st.warning(f"{n_old} rides were saved by an older version and are missing data used here. "
+                   "Run **Update ride history** in the User Corner to include them.")
+
+    today = pd.Timestamp.today().normalize()
+    mode = _theme()
+    t_load, t_power, t_dur, t_int = st.tabs(["📈 Load", "⚡ Power profile", "🔋 Durability",
+                                             "🎯 Intensity"])
+    with t_load:
+        _render_load(user_name, today, mode)
+    with t_power:
+        _render_power(user_name, user, today, mode)
+    with t_dur:
+        _render_durability(user_name, today, mode)
+    with t_int:
+        _render_intensity(user_name, today, mode)
+
+
+# --- Load ----------------------------------------------------------------------
+
+def _plan_editor(user_name, today):
+    saved = get_planned_sessions(user_name, after=today)
+    if saved.empty:
+        saved = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
+                              'tss': pd.Series(dtype=float), 'note': pd.Series(dtype=str)})
+    with st.expander(f"🗓️ Planned sessions ({len(saved)})", expanded=False):
+        st.caption("Add the TSS you plan to ride on future days; the chart forecasts fitness, fatigue "
+                   "and form from them. Rest days need no row. Edits preview immediately; **Save plan** "
+                   "keeps them.")
+        edited = st.data_editor(
+            saved, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
+            column_config={
+                'date': st.column_config.DateColumn("Date", min_value=(today + pd.Timedelta(days=1)).date(),
+                                                    format="ddd DD MMM YYYY", required=True),
+                'tss': st.column_config.NumberColumn("TSS", min_value=0, max_value=500, step=5, required=True),
+                'note': st.column_config.TextColumn("Note (optional)"),
+            })
+        if st.button("Save plan", key=f"save_plan_{user_name}"):
+            n = replace_planned_sessions(user_name, edited, today)
+            st.toast(f"✅ Saved {n} planned sessions")
+    return edited
+
+
+def _render_load(user_name, today, mode):
+    history = get_user_tss_history(user_name)
+    plan = _plan_editor(user_name, today)
+    planned = [] if plan is None or plan.empty else plan[['date', 'tss']].to_dict('records')
+    pmc = tl.compute_pmc(history, today=today, planned=planned)
+    if pmc.empty:
+        st.info("No rides with TSS yet. Upload a ride or import your Strava history.")
+        return
+
+    now = pmc.loc[:today].iloc[-1]
+    ramp = tl.ramp_rate(pmc)
+    ratio = tl.acwr(pmc)
+    mono = tl.monotony_strain(pmc)
+    ramp_now = ramp.loc[:today].iloc[-1]
+    acwr_now = ratio.loc[:today].iloc[-1]
+    mono_now = mono['monotony'].loc[:today].iloc[-1]
+
+    c = st.columns(6)
+    _metric(c[0], "Fitness (CTL)", f"{now['CTL']:.0f}", None, "Chronic training load: 42-day weighted average TSS.")
+    _metric(c[1], "Fatigue (ATL)", f"{now['ATL']:.0f}", None, "Acute training load: 7-day weighted average TSS.")
+    _metric(c[2], "Form (TSB)", f"{now['TSB']:+.0f}", form_status(now['TSB']),
+            "Yesterday's fitness minus fatigue. Rough guide: −10 to −30 productive training, "
+            "+5 to +25 fresh / race-ready, below −30 high fatigue.")
+    _metric(c[3], "Ramp rate", f"{ramp_now:+.1f}/wk" if pd.notna(ramp_now) else "N/A", ramp_status(ramp_now),
+            "CTL change over the last 7 days. Rule of thumb: more than ~8 points/week is aggressive "
+            "and hard to sustain.")
+    _metric(c[4], "Acute:chronic", f"{acwr_now:.2f}" if pd.notna(acwr_now) else "N/A", acwr_status(acwr_now),
+            "ATL / CTL. ~0.8–1.3 is the commonly cited range; above ~1.5 is a sharp load spike. "
+            "Needs 4 weeks of history.")
+    _metric(c[5], "Monotony (7 d)", f"{mono_now:.2f}" if pd.notna(mono_now) else "N/A", monotony_status(mono_now),
+            "Foster's monotony: average daily load ÷ its day-to-day variation over the last week. "
+            "Above ~2 = little variation between hard and easy days.")
+
+    if pmc['planned'].any():
+        last = pmc.index[-1]
+        st.info(f"With the planned sessions, your form on **{last:%a %d %b}** would be "
+                f"**{pmc['TSB'].iloc[-1]:+.0f}** ({form_status(pmc['TSB'].iloc[-1])}), "
+                f"fitness {pmc['CTL'].iloc[-1]:.0f}.")
+
+    label = st.radio("Show", list(PERIODS), index=1, horizontal=True, key="load_period")
+    start = _period_start(label, today)
+    view = pmc if start is None else pmc.loc[start:]
+    _chart(tp.plot_training_load(view, today, mode))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        _chart(tp.plot_ramp_rate(ramp.loc[view.index[0]:today], mode))
+    with c2:
+        _chart(tp.plot_acwr(ratio.loc[view.index[0]:today], mode))
+
+    st.subheader("Volume")
+    v1, v2 = st.columns([1, 3])
+    freq = v1.radio("Group by", ["Week", "Month"], horizontal=True, key="vol_freq")
+    metrics = {'Hours': 'hours', 'Distance (km)': 'km', 'TSS': 'tss', 'Work (kJ)': 'kj',
+               'Elevation (m)': 'elevation_m', 'Rides': 'rides'}
+    m_label = v2.radio("Measure", list(metrics), horizontal=True, key="vol_metric")
+    stats = get_ride_stats(user_name, start, today)
+    vol = tl.volume(stats, 'W' if freq == "Week" else 'M')
+    if vol.empty:
+        st.info("No rides in this period.")
+    else:
+        _chart(tp.plot_volume(vol, metrics[m_label], m_label, mode))
+        with st.expander("Table"):
+            st.dataframe(vol.rename_axis(freq).round(1), use_container_width=True)
+
+
+# --- Power profile -------------------------------------------------------------
+
+def _render_power(user_name, user, today, mode):
+    recs = get_power_records(user_name)
+    if recs.empty:
+        st.info("No power data yet.")
+        return
+    weight, ftp = user['weight'], user['ftp']
+    curves = pp.window_curves(recs, today)
+    _chart(tp.plot_power_windows(curves, mode, weight))
+
+    recent = pp.as_dict(curves['Last 90 days'])
+    two = estimate_critical_power(recent) if recent else None
+    three = pp.fit_cp3(recent)
+    st.markdown("##### Critical power (from your last 90 days)")
+    c = st.columns(4)
+    c[0].metric("CP (2-parameter)", f"{two['cp']:.0f} W" if two else "N/A",
+                help="Fitted to your best 3–20 min efforts. The power you can sustain for a long time "
+                     "(close to FTP).")
+    c[1].metric("W′", f"{two['w_prime'] / 1000:.1f} kJ" if two else "N/A",
+                help="Work capacity above CP: how much you can spend on surges before you must ease off.")
+    c[2].metric("CP (3-parameter)", f"{three['cp']:.0f} W" if three else "N/A",
+                help="Morton's model, fitted to 1–30 min efforts. It also models the short end of the curve, "
+                     "so it usually matches real efforts better.")
+    c[3].metric("Pmax (model)", f"{three['pmax']:.0f} W" if three else "N/A",
+                help="The 3-parameter model's estimate of your maximal instantaneous power. "
+                     "Reliable only if you have recent all-out sprints.")
+    if not two and not three:
+        st.caption("Needs maximal efforts between 3 and 20 minutes in the last 90 days.")
+
+    hist = pp.cp_history(recs, today=today)
+    _chart(tp.plot_cp_history(hist, mode))
+
+    st.markdown("##### Power profile")
+    allt = pp.as_dict(curves['All time'])
+    prof = pp.power_profile(recent, weight, ftp).merge(
+        pp.power_profile(allt, weight, ftp)[['duration', 'w_per_kg']].rename(columns={'w_per_kg': 'all_time'}),
+        on='duration')
+    st.dataframe(prof.rename(columns={'duration': 'Duration', 'watts': 'Watts (90 d)',
+                                      'w_per_kg': 'W/kg (90 d)', 'x_ftp': '× FTP (90 d)',
+                                      'all_time': 'W/kg (all time)'}),
+                 hide_index=True, use_container_width=True,
+                 column_config={'Watts (90 d)': st.column_config.NumberColumn(format="%.0f"),
+                                'W/kg (90 d)': st.column_config.NumberColumn(format="%.2f"),
+                                '× FTP (90 d)': st.column_config.NumberColumn(format="%.2f"),
+                                'W/kg (all time)': st.column_config.NumberColumn(format="%.2f")})
+    st.caption("“× FTP” shows the shape of your curve: e.g. strong short efforts relative to FTP point to "
+               "punch/sprint, a flat curve to a diesel/time-trial profile.")
+
+    with st.expander("🏆 Records with dates"):
+        best = curves['All time'].copy()
+        r90 = curves['Last 90 days'].set_index('duration')['watts']
+        best['Duration'] = best['duration'].map(_dur_label)
+        best['W/kg'] = (best['watts'] / weight).round(2)
+        best['Set on'] = best['date'].dt.strftime('%d %b %Y')
+        best['Last 90 d'] = best['duration'].map(r90)
+        st.dataframe(best[['Duration', 'watts', 'W/kg', 'Set on', 'Last 90 d']].rename(columns={'watts': 'Watts'}),
+                     hide_index=True, use_container_width=True,
+                     column_config={'Watts': st.column_config.NumberColumn(format="%.0f"),
+                                    'Last 90 d': st.column_config.NumberColumn(format="%.0f")})
+
+
+# --- Durability ------------------------------------------------------------------
+
+def _render_durability(user_name, today, mode):
+    st.caption("How much of your fresh best power you can still produce after 1, 2 and 3 MJ of work "
+               "(about 1, 2 and 3 hours at ~280 W). High retention = good durability, which decides "
+               "the end of long races and gran fondos.")
+    label = st.radio("Period", list(PERIODS), index=2, horizontal=True, key="dur_period")
+    start = _period_start(label, today)
+    table = du.durability_table(get_power_records(user_name, start, today),
+                                get_kj_records(user_name, start, today), start, today)
+    if table.empty:
+        st.info("No rides in this period went beyond 1000 kJ (or they haven't been updated yet).")
+        return
+    _chart(tp.plot_durability(table, mode))
+    show = table.assign(**{'After': table['kj'].map(lambda k: f"{k / 1000:g} MJ"),
+                           'Duration': table['duration'].map(_dur_label)})
+    with st.expander("Table"):
+        st.dataframe(show[['After', 'Duration', 'fresh', 'fatigued', 'retention_pct']].rename(
+            columns={'fresh': 'Fresh best (W)', 'fatigued': 'Best after (W)', 'retention_pct': 'Kept (%)'}),
+            hide_index=True, use_container_width=True,
+            column_config={'Fresh best (W)': st.column_config.NumberColumn(format="%.0f"),
+                           'Best after (W)': st.column_config.NumberColumn(format="%.0f"),
+                           'Kept (%)': st.column_config.NumberColumn(format="%.0f")})
+    st.caption("A low value can also just mean you never went hard late in a long ride in this period.")
+
+
+# --- Intensity ---------------------------------------------------------------------
+
+def _render_intensity(user_name, today, mode):
+    c1, c2, c3 = st.columns(3)
+    kind = c1.radio("Based on", ["Power", "Heart rate"], horizontal=True, key="tid_kind")
+    freq = c2.radio("Group by", ["Week", "Month"], horizontal=True, key="tid_freq")
+    label = c3.selectbox("Period", list(PERIODS), index=1, key="tid_period")
+    start = _period_start(label, today)
+    rows = get_zone_rows(user_name, 'power' if kind == "Power" else 'hr', start, today)
+    if rows.empty:
+        st.info("No zone data in this period.")
+        return
+
+    tot = it.three_zone(rows)
+    pi = it.polarization_index(tot['low'], tot['mid'], tot['high'])
+    total = sum(tot.values())
+    m = st.columns(4)
+    m[0].metric("Easy (Z1–2)", f"{tot['low'] / total:.0%}")
+    m[1].metric("Moderate (Z3–4)", f"{tot['mid'] / total:.0%}")
+    m[2].metric("Hard (Z5+)", f"{tot['high'] / total:.0%}")
+    m[3].metric("Polarization index", f"{pi:.2f}" if pi is not None else "N/A",
+                delta=tid_label(tot['low'], tot['mid'], tot['high'], pi), delta_color="off",
+                help="log10(easy / moderate × hard × 100) on time shares (Treff et al. 2019). "
+                     "Above 2.0 = polarized (mostly easy, some hard, little in between). "
+                     "Not defined when there is more hard than easy time.")
+
+    dist = it.distribution(rows, 'W' if freq == "Week" else 'M')
+    _chart(tp.plot_intensity_distribution(dist, mode))
+    _chart(tp.plot_polarization(dist, mode))
+    with st.expander("Table"):
+        st.dataframe((dist.assign(low=dist['low'] * 100, mid=dist['mid'] * 100, high=dist['high'] * 100)
+                      .rename(columns={'hours': 'Hours', 'low': 'Easy %', 'mid': 'Moderate %',
+                                       'high': 'Hard %', 'pi': 'PI'}).rename_axis(freq).round(2)),
+                     use_container_width=True)
+    st.caption(("Power zones (Coggan, from your FTP)" if kind == "Power" else "Heart-rate zones (Friel, from your LTHR)")
+               + " grouped into three: Z1–2 easy, Z3–4 moderate, Z5+ hard. Moving time only.")

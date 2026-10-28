@@ -27,10 +27,11 @@ from src.analysis.power import (
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis.training_load import compute_pmc
 from src.analysis import correlations as co
+from src.analysis import power_profile as pp
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
         save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
-        count_rides_needing_update, build_ride_metadata, get_hist, get_ride_stats, update_user_crank, period_coverage,
+        count_rides_needing_update, build_ride_metadata, get_hist, get_ride_stats, update_user_crank, period_coverage, get_power_records,
         get_strava_auth, save_strava_auth, delete_strava_auth, create_oauth_state, consume_oauth_state
     )
 from src.analysis.climbs import detect_climbs, get_climb_segments
@@ -112,7 +113,7 @@ def render_sidebar():
 
     st.sidebar.header("Navigation")
     
-    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "User Corner"])
+    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "Training", "User Corner"])
 
     st.sidebar.markdown("---")
     st.sidebar.header("👤 User Profile")
@@ -544,11 +545,14 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
 
     if settings['show_curve'] and 'power' in df.columns:
         st.subheader("Power Curve")
-        best_curve = None
+        best_curve, recent_curve = None, None
         if user_name:
             best_curve = get_user_best_power(user_name)
+            today = pd.Timestamp.today().normalize()
+            recent_curve = pp.as_dict(pp.best_curve(
+                get_power_records(user_name, today - pd.Timedelta(days=89), today)))
 
-        show_centered(plot_power_curve(power_curve(df['power']), best_curve))
+        show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
 
     if settings['show_zones']:
         st.subheader("Zone Distribution")
