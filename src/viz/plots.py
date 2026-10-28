@@ -535,3 +535,116 @@ def plot_zone_distribution(zone_counts, title="Zone Distribution"):
     )
     
     return go.Figure(data=[fig], layout=layout)
+
+
+# --- Deeper analytics (User Corner) ------------------------------------------
+
+def plot_joint_heatmap(cells, y_bin, y_title, title, overlay=None):
+    """
+    Time (minutes) spent at each power × HR/cadence combination.
+    cells: DataFrame(x, y, seconds) summed over the period.
+    overlay: optional DataFrame(power, mean) drawn as a line (e.g. mean HR per power).
+    """
+    fig = go.Figure()
+    if cells is None or cells.empty:
+        return fig
+    pivot = cells.pivot_table(index='y', columns='x', values='seconds', aggfunc='sum', fill_value=0)
+    fig.add_trace(go.Heatmap(
+        x=pivot.columns + 5, y=pivot.index + y_bin / 2, z=pivot.to_numpy() / 60,
+        colorscale='Blues', colorbar=dict(title='min'),
+        hovertemplate="%{x:.0f} W · %{y:.0f}<br>%{z:.1f} min<extra></extra>",
+    ))
+    if overlay is not None and not overlay.empty:
+        fig.add_trace(go.Scatter(x=overlay['power'], y=overlay['mean'], mode='lines',
+                                 name='Average', line=dict(color='#d62728', width=2)))
+    fig.update_layout(title=title, xaxis_title="Power (W, 30 s avg)" if 'HR' in y_title else "Power (W)",
+                      yaxis_title=y_title, template="plotly_white", showlegend=False,
+                      margin=dict(t=50, b=40))
+    return fig
+
+
+def plot_y_by_power(curves, y_title, title):
+    """curves: {label: DataFrame(power, mean)} -> one line per period."""
+    fig = go.Figure()
+    colors = ['#1f77b4', '#aaaaaa']
+    for i, (label, c) in enumerate(curves.items()):
+        if c is None or c.empty:
+            continue
+        fig.add_trace(go.Scatter(x=c['power'], y=c['mean'], mode='lines+markers', name=label,
+                                 line=dict(color=colors[i % 2], width=3 if i == 0 else 2,
+                                           dash='solid' if i == 0 else 'dash')))
+    fig.update_layout(title=title, xaxis_title="Power (W)", yaxis_title=y_title,
+                      template="plotly_white", hovermode="x unified",
+                      legend=dict(orientation="h", y=1.12))
+    return fig
+
+
+def plot_trend(series_by_label, y_title, title, rolling=None):
+    """
+    series_by_label: {label: Series indexed by date}. Points per value plus an
+    optional rolling median line (window = `rolling` points).
+    """
+    fig = go.Figure()
+    for label, s in series_by_label.items():
+        if s is None or len(s) == 0:
+            continue
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode='markers' if rolling else 'lines+markers',
+                                 name=label, marker=dict(size=7, opacity=0.7 if rolling else 1)))
+        if rolling and len(s) >= rolling:
+            fig.add_trace(go.Scatter(x=s.index, y=s.rolling(rolling, min_periods=1).median(),
+                                     mode='lines', name=f"{label} (trend)", line=dict(width=3)))
+    fig.update_layout(title=title, yaxis_title=y_title, template="plotly_white",
+                      hovermode="x unified", legend=dict(orientation="h", y=1.12))
+    return fig
+
+
+def plot_quadrants(cells, ftp, ref_cadence, crank_m):
+    """
+    Coggan quadrant analysis: average effective pedal force vs circumferential
+    pedal velocity, bubble size = time. Lines at the reference cadence and at
+    the force that produces FTP at that cadence.
+    """
+    from src.analysis.correlations import pedal_force_velocity, QUADRANT_NAMES
+    fig = go.Figure()
+    if cells is None or cells.empty or not ftp or not ref_cadence:
+        return fig
+    aepf, cpv = pedal_force_velocity(cells['x'] + 5, cells['y'] + 2.5, crank_m)
+    minutes = cells['seconds'] / 60
+    fig.add_trace(go.Scatter(
+        x=cpv, y=aepf, mode='markers',
+        marker=dict(size=np.clip(np.sqrt(minutes) * 4, 3, 30), color=minutes,
+                    colorscale='Blues', opacity=0.7, line=dict(width=0)),
+        hovertemplate="CPV %{x:.2f} m/s · AEPF %{y:.0f} N<br>%{marker.color:.1f} min<extra></extra>",
+    ))
+    cpv_ref = ref_cadence * crank_m * 2 * np.pi / 60
+    aepf_ftp = ftp / cpv_ref
+    fig.add_vline(x=cpv_ref, line=dict(color='gray', dash='dash'))
+    fig.add_hline(y=aepf_ftp, line=dict(color='gray', dash='dash'))
+    # FTP isopower curve: AEPF = FTP / CPV
+    xs = np.linspace(max(float(np.nanmin(cpv)), 0.3), float(np.nanmax(cpv)), 50)
+    fig.add_trace(go.Scatter(x=xs, y=ftp / xs, mode='lines', line=dict(color='#d62728', width=1),
+                             hoverinfo='skip'))
+    ymax = float(np.nanpercentile(aepf, 99.5)) * 1.1
+    for q, (xa, ya) in {'QI': (0.98, 0.98), 'QII': (0.02, 0.98),
+                        'QIII': (0.02, 0.02), 'QIV': (0.98, 0.02)}.items():
+        fig.add_annotation(xref='paper', yref='paper', x=xa, y=ya, showarrow=False,
+                           xanchor='right' if xa > 0.5 else 'left',
+                           yanchor='top' if ya > 0.5 else 'bottom',
+                           text=f"<b>{q}</b> {QUADRANT_NAMES[q]}", font=dict(size=11, color='gray'))
+    fig.update_layout(title="Quadrant Analysis (pedal force vs pedal speed)",
+                      xaxis_title="Circumferential pedal velocity (m/s)",
+                      yaxis_title="Average effective pedal force (N)",
+                      yaxis_range=[0, ymax], template="plotly_white", showlegend=False)
+    return fig
+
+
+def plot_cadence_by_zone(table):
+    fig = go.Figure()
+    if table is None or table.empty:
+        return fig
+    fig.add_trace(go.Bar(x=table['zone'], y=table['cadence'],
+                         text=[f"{c:.0f} rpm<br>{s:.0%} of time" for c, s in zip(table['cadence'], table['share'])],
+                         textposition='auto', marker_color='#1f77b4'))
+    fig.update_layout(title="Average cadence by power zone", yaxis_title="rpm",
+                      template="plotly_white", yaxis_range=[0, max(110, table['cadence'].max() * 1.15)])
+    return fig
