@@ -2,6 +2,7 @@ import streamlit as st
 from src.data.db import init_db
 from src.viz.dashboard import (render_sidebar, process_and_display_analysis, render_history,
                                render_user_corner, handle_strava_callback)
+from src.viz.training_page import render_training_page
 
 # Initialize Database
 init_db()
@@ -27,6 +28,9 @@ if app_mode == "Analyze Upload":
         process_and_display_analysis(current_file, selected_user, settings)
     else:
         st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava**.")
+
+elif app_mode == "Training":
+    render_training_page(selected_user)
 
 elif app_mode == "User Corner":
     render_user_corner(selected_user)

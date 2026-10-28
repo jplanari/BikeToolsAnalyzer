@@ -62,7 +62,8 @@ def test_recompute_backfills_metrics_and_keeps_original_ftp(temp_db):
     assert 60 in curve and curve[60] == pytest.approx(200)    # placeholder record replaced
     assert 3600 in curve and 5400 not in curve
     zones = db.get_ride_zones([r['id']], 'power')
-    assert zones == {'Z1': 0, 'Z2': 0, 'Z3': 3600, 'Z4': 0, 'Z5': 0, 'Z6': 0, 'Z7': 0}
+    # zone time counts moving seconds only (= moving_s)
+    assert zones == {'Z1': 0, 'Z2': 0, 'Z3': 3599, 'Z4': 0, 'Z5': 0, 'Z6': 0, 'Z7': 0}
 
 
 def test_recompute_gives_hr_tss_to_rides_without_power(temp_db):
@@ -97,4 +98,4 @@ def test_new_rides_are_saved_up_to_date(temp_db):
     assert db.count_rides_needing_update("Rider") == 0
     r = _row(temp_db, "strava_3.json")
     assert (r['ftp_at_ride'], r['lthr_at_ride'], r['tss_source']) == (250, 170, 'power')
-    assert sum(db.get_ride_zones([r['id']], 'hr').values()) == 1800
+    assert sum(db.get_ride_zones([r['id']], 'hr').values()) == r['moving_s'] == 1799

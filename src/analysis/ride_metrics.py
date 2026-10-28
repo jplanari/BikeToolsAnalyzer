@@ -82,8 +82,14 @@ def hr_tss(hr_series, lthr, moving=None):
     return float(hours * (hr.mean() / lthr) ** 2 * 100)
 
 
-def zone_seconds(df, ftp, lthr):
-    """{'power': {zone: s}, 'hr': {zone: s}} for the channels the ride has."""
+def zone_seconds(df, ftp, lthr, moving=None):
+    """
+    {'power': {zone: s}, 'hr': {zone: s}} for the channels the ride has.
+    Only moving seconds count when `moving` is given, so stops (0 W, idle
+    HR) don't inflate the easy zones of the intensity distribution.
+    """
+    if moving is not None:
+        df = df[_clean(moving).astype(bool)]
     out = {}
     if ftp and 'power' in df.columns and df['power'].notna().any():
         out['power'] = {f"Z{z}": s for z, s in time_in_zones(df['power'], coggan_zones(ftp)).items()}

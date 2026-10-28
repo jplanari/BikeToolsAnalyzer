@@ -82,7 +82,7 @@ def plot_x_time(df, col, ylabel, color='blue', title=None):
     )
     return fig
 
-def plot_power_curve(power_curve_dict, best_curve_dict=None):
+def plot_power_curve(power_curve_dict, best_curve_dict=None, recent_curve_dict=None):
     fig = go.Figure()
     
     # 1. Current Ride Curve
@@ -112,9 +112,21 @@ def plot_power_curve(power_curve_dict, best_curve_dict=None):
             opacity=0.7
         ))
 
+    # 3. Best of the last 90 days (current form)
+    if recent_curve_dict:
+        r_durations = sorted(recent_curve_dict.keys())
+        fig.add_trace(go.Scatter(
+            x=r_durations,
+            y=[recent_curve_dict[d] for d in r_durations],
+            mode='lines',
+            name='Last 90 Days Best',
+            line=dict(color='#eb6834', width=2, dash='dot'),
+        ))
+
     # Log Scale for Time (Standard for Power Curves)
     fig.update_layout(
         title="Mean Maximal Power Curve",
+        legend=dict(orientation="h", y=1.12),
         xaxis_title="Duration (seconds)",
         yaxis_title="Watts",
         xaxis_type="log",

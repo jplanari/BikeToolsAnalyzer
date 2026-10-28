@@ -19,7 +19,8 @@ def _stub_if_missing(name, module):
 _st = types.ModuleType("streamlit")
 _st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
 _stub_if_missing("streamlit", _st)
-for _name in ("gpxpy", "fitparse", "geographiclib", "geographiclib.geodesic"):
+for _name in ("gpxpy", "fitparse", "geographiclib", "geographiclib.geodesic",
+              "plotly", "plotly.graph_objects", "plotly.express", "plotly.subplots"):
     _stub_if_missing(_name, MagicMock())
 import pandas as pd
 import numpy as np
