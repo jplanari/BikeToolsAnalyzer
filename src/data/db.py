@@ -29,6 +29,28 @@ def migrate_db():
         c.execute("ALTER TABLE rides ADD COLUMN strava_activity_id INTEGER")
     except sqlite3.OperationalError:
         pass
+    # Phase 1 per-ride metrics. metrics_version marks rides whose stored
+    # metrics predate the current calculation (0 = legacy) so they can be
+    # recomputed from their stored files.
+    for col, typ in [("duration_s", "INTEGER"), ("moving_s", "INTEGER"), ("kj", "REAL"),
+                     ("ftp_at_ride", "INTEGER"), ("lthr_at_ride", "INTEGER"),
+                     ("vi", "REAL"), ("ef", "REAL"), ("decoupling_pct", "REAL"),
+                     ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0")]:
+        try:
+            c.execute(f"ALTER TABLE rides ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ride_zones (
+            ride_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,          -- 'power' or 'hr'
+            zone TEXT NOT NULL,
+            seconds INTEGER NOT NULL,
+            PRIMARY KEY (ride_id, kind, zone),
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
+
     # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
                  ON rides(user_id, strava_activity_id)""")
@@ -192,11 +214,18 @@ def _iso_timestamp(ts):
         ts = ts.tz_convert("UTC")
     return ts.isoformat()
 
-def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None):
+# Bump when the per-ride calculations change; older rides get offered a recompute
+METRICS_VERSION = 1
+
+def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
+                        metrics=None):
     """
     Builds the metadata dict that save_ride() expects. Keeping both in this
     module guarantees the keys match (they did not before: date, distance
     and elevation were silently stored as NULL / 0).
+
+    metrics: optional dict from pipeline.metrics_for_storage(summary). Rides
+    saved without it are marked as needing a recompute.
     """
     def safe_mean(col):
         if col not in df.columns or df[col].empty:
@@ -211,11 +240,51 @@ def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filen
         'speed': speed_kph,
         'np': int(np_val) if pd.notna(np_val) else 0,
         'avg_p': safe_mean('power'),
-        'tss': int(tss) if pd.notna(tss) else 0,
+        'tss': int(round(tss)) if pd.notna(tss) else 0,
         'if': if_val,
         'avg_hr': safe_mean('hr'),
         'strava_activity_id': strava_id_from_filename(filename),
+        **_metrics_fields(metrics),
     }
+
+def _opt_float(x):
+    return None if x is None or pd.isna(x) else float(x)
+
+def _opt_int(x):
+    return None if x is None or pd.isna(x) else int(round(x))
+
+def _metrics_fields(metrics):
+    if not metrics:
+        return {'metrics_version': 0}
+    return {
+        'duration_s': _opt_int(metrics.get('duration_s')),
+        'moving_s': _opt_int(metrics.get('moving_time_s')),
+        'kj': _opt_float(metrics.get('kj')),
+        'ftp_at_ride': _opt_int(metrics.get('ftp_at_ride')),
+        'lthr_at_ride': _opt_int(metrics.get('lthr_at_ride')),
+        'vi': _opt_float(metrics.get('vi')),
+        'ef': _opt_float(metrics.get('ef')),
+        'decoupling_pct': _opt_float(metrics.get('decoupling_pct')),
+        'tss_source': metrics.get('tss_source'),
+        'zones': metrics.get('zones') or {},
+        'metrics_version': METRICS_VERSION,
+    }
+
+_METRIC_COLUMNS = ['duration_s', 'moving_s', 'kj', 'ftp_at_ride', 'lthr_at_ride', 'vi', 'ef',
+                   'decoupling_pct', 'tss_source', 'metrics_version']
+
+def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
+    """Power records and zone times for one ride (caller deletes old ones)."""
+    if power_curve_dict:
+        c.executemany('''
+            INSERT INTO power_records (user_id, ride_id, duration_sec, watts, date_time)
+            VALUES (?, ?, ?, ?, ?)
+        ''', [(user_id, ride_id, int(d), float(w), metadata.get('date'))
+              for d, w in power_curve_dict.items() if w is not None and pd.notna(w)])
+    zones = metadata.get('zones') or {}
+    c.executemany("INSERT INTO ride_zones (ride_id, kind, zone, seconds) VALUES (?, ?, ?, ?)",
+                  [(ride_id, kind, str(z), int(sec))
+                   for kind, zz in zones.items() for z, sec in zz.items()])
 
 def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     user = get_user_data(user_name)
@@ -229,32 +298,20 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     
     try:
         # 1. Insert Ride Metadata
-        c.execute('''
-            INSERT INTO rides (
-                user_id, filename, file_hash, file_content, date_time, 
-                distance_km, elevation_m, avg_speed_kph, 
-                norm_power, avg_power, tss, if_factor, avg_hr, strava_activity_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user['id'], filename, file_hash, file_content, metadata.get('date'),
-            metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
-            metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
-            metadata.get('if', 0), metadata.get('avg_hr', 0),
-            metadata.get('strava_activity_id')
-        ))
-        
+        cols = ['user_id', 'filename', 'file_hash', 'file_content', 'date_time',
+                'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
+                'tss', 'if_factor', 'avg_hr', 'strava_activity_id'] + _METRIC_COLUMNS
+        vals = [user['id'], filename, file_hash, file_content, metadata.get('date'),
+                metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
+                metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
+                metadata.get('if', 0), metadata.get('avg_hr', 0),
+                metadata.get('strava_activity_id')] + [
+                metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
+        c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
         ride_id = c.lastrowid
-        
-        # 2. Insert Power Records (Curve)
-        if power_curve_dict:
-            records = []
-            for duration, watts in power_curve_dict.items():
-                records.append((user['id'], ride_id, duration, watts, metadata.get('date')))
-            
-            c.executemany('''
-                INSERT INTO power_records (user_id, ride_id, duration_sec, watts, date_time)
-                VALUES (?, ?, ?, ?, ?)
-            ''', records)
+
+        # 2. Power records (curve) and time in zones
+        _insert_children(c, user['id'], ride_id, metadata, power_curve_dict)
             
         conn.commit()
         return True, "Ride saved successfully!"
@@ -277,7 +334,8 @@ def get_user_rides(user_name):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('''
-        SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss 
+        SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss,
+               moving_s, tss_source, vi, ef, decoupling_pct, kj, metrics_version
         FROM rides 
         WHERE user_id = ? 
         ORDER BY date_time DESC
@@ -346,75 +404,67 @@ def get_user_tss_history(user_name):
     return [{'date': row[0], 'tss': row[1]} for row in rows]
 
 
-# --- History repair --------------------------------------------------------
-# Rides saved before the metadata-key fix have date_time = NULL and
-# distance_km / elevation_m = 0. The original file is stored in
-# rides.file_content, so these fields can be rebuilt.
+# --- Recompute history ------------------------------------------------------
+# Rides whose stored metrics are older than METRICS_VERSION (or that were
+# saved without a date by the pre-Phase-0 bug) are rebuilt from the original
+# file kept in rides.file_content. See src/data/history.py.
 
-# Keyed on the missing date only: an indoor ride legitimately has 0 km.
-_MISSING_META_SQL = "(date_time IS NULL OR date_time = '')"
+_NEEDS_UPDATE_SQL = "(metrics_version IS NULL OR metrics_version < ? OR date_time IS NULL OR date_time = '')"
 
-def count_rides_missing_metadata(user_name):
+def count_rides_needing_update(user_name):
     user = get_user_data(user_name)
     if not user:
         return 0
     conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_MISSING_META_SQL}", (user['id'],))
-    n = c.fetchone()[0]
+    n = conn.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_NEEDS_UPDATE_SQL}",
+                     (user['id'], METRICS_VERSION)).fetchone()[0]
     conn.close()
     return n
 
-def _ride_metadata_from_file(filename, file_bytes):
-    """
-    Re-parses a stored ride with the same pipeline the dashboard uses and
-    returns (iso_start_time, distance_km, elevation_m). Distance/elevation
-    are None when the file has no GPS track (e.g. indoor rides).
-    """
-    from src.data.pipeline import prepare_ride  # lazy: parsers import streamlit
-
-    df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
-    date_iso = _iso_timestamp(df['time'].dropna().iloc[0])
-    if 'lat' not in df.columns or df['lat'].isna().all():
-        return date_iso, None, None
-    return date_iso, total_dist / 1000.0, float(total_ascent)
-
-def repair_ride_metadata(user_name):
-    """
-    Fills in date_time (and distance/elevation when missing) for rides that
-    were saved without them, and copies the date to their power records.
-    Returns (n_repaired, [filenames that could not be parsed]).
-    """
+def get_rides_for_recompute(user_name, all_rides=False):
+    """Rows needed to rebuild a ride's metrics (all rides, or only outdated ones)."""
     user = get_user_data(user_name)
     if not user:
-        return 0, []
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
+    params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
+    rows = conn.execute(f"""SELECT id, filename, file_content, date_time, norm_power, if_factor,
+                                   ftp_at_ride, lthr_at_ride
+                            FROM rides WHERE {where} ORDER BY date_time""", params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
+def update_ride_metrics(ride_id, metadata, power_curve_dict):
+    """Overwrites a ride's computed fields, power records and zone times."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute(f"""SELECT id, filename, file_content, date_time, distance_km, elevation_m
-                  FROM rides WHERE user_id = ? AND {_MISSING_META_SQL}""", (user['id'],))
-    rows = c.fetchall()
-
-    repaired, failed = 0, []
-    for ride_id, filename, blob, old_date, old_dist, old_ele in rows:
-        try:
-            date_iso, dist_km, ele_m = _ride_metadata_from_file(filename or "", blob)
-        except Exception:
-            failed.append(filename or f"ride {ride_id}")
-            continue
-
-        new_date = old_date or date_iso
-        new_dist = dist_km if (not old_dist and dist_km is not None) else old_dist
-        new_ele = ele_m if (not old_ele and ele_m is not None) else old_ele
-        c.execute("UPDATE rides SET date_time = ?, distance_km = ?, elevation_m = ? WHERE id = ?",
-                  (new_date, new_dist, new_ele, ride_id))
-        c.execute("UPDATE power_records SET date_time = ? WHERE ride_id = ? AND date_time IS NULL",
-                  (new_date, ride_id))
-        repaired += 1
-
+    user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
+    cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
+            'avg_power', 'tss', 'if_factor', 'avg_hr'] + _METRIC_COLUMNS
+    vals = [metadata.get('date'), metadata.get('dist', 0), metadata.get('ele', 0),
+            metadata.get('speed', 0), metadata.get('np', 0), metadata.get('avg_p', 0),
+            metadata.get('tss', 0), metadata.get('if', 0), metadata.get('avg_hr', 0)] + [
+            metadata.get(k) for k in _METRIC_COLUMNS]
+    c.execute(f"UPDATE rides SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?", vals + [ride_id])
+    c.execute("DELETE FROM power_records WHERE ride_id = ?", (ride_id,))
+    c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
+    _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
     conn.commit()
     conn.close()
-    return repaired, failed
+
+def get_ride_zones(ride_ids, kind):
+    """{zone: total seconds} summed over the given rides."""
+    if not ride_ids:
+        return {}
+    conn = sqlite3.connect(DB_FILE)
+    q = ",".join("?" * len(ride_ids))
+    rows = conn.execute(f"""SELECT zone, SUM(seconds) FROM ride_zones
+                            WHERE kind = ? AND ride_id IN ({q}) GROUP BY zone ORDER BY zone""",
+                        (kind, *ride_ids)).fetchall()
+    conn.close()
+    return {z: s for z, s in rows}
 
 
 # --- Strava authorization --------------------------------------------------

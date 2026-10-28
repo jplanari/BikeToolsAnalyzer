@@ -121,8 +121,8 @@ def plot_power_curve(power_curve_dict, best_curve_dict=None):
         hovermode="x unified",
         template="plotly_white",
         xaxis=dict(
-            tickvals=[5, 60, 300, 1200, 3600],
-            ticktext=["5s", "1m", "5m", "20m", "1h"]
+            tickvals=[1, 5, 15, 60, 300, 1200, 3600, 18000],
+            ticktext=["1s", "5s", "15s", "1m", "5m", "20m", "1h", "5h"]
         )
     )
     return fig

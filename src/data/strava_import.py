@@ -88,7 +88,7 @@ def list_cycling_since(auth, since, usage=None):
     return sorted(acts, key=lambda a: a.get("start_date") or "")
 
 
-def import_history(cfg, user_name, since, ftp, progress=None, usage=None):
+def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=None):
     """
     Imports every cycling activity since `since`. Idempotent: rides already
     imported are skipped, so if it stops at the rate limit, running it again
@@ -96,7 +96,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None):
 
     progress: optional callback(done, total, activity_name).
     """
-    from src.data.pipeline import prepare_ride, summarize_ride  # parsers import streamlit
+    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # parsers import streamlit
 
     usage = usage or sv.RateUsage()
     res = ImportResult()
@@ -132,10 +132,11 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None):
             # fetch_ride_file refreshes the token if needed (long imports can outlive one)
             filename, payload = fetch_ride_file(cfg, user_name, act, usage=usage)
             df, dist_m, ele_m = prepare_ride(filename, payload)
-            summ = summarize_ride(df, ftp)
+            summ = summarize_ride(df, ftp, lthr)
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'],
                                           summ['norm_power'], summ['tss'], summ['if'],
-                                          filename=filename)
+                                          filename=filename,
+                                          metrics=metrics_for_storage(summ))
             ok, msg = db.save_ride(user_name, filename, payload, meta, summ['power_curve'])
         except sv.StravaRateLimitError as e:
             res.stopped_reason = str(e)

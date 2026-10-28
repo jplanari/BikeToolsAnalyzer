@@ -237,8 +237,8 @@ def test_import_history(connected, fake_strava):
     assert r["date_time"] == "2026-09-01T07:00:00"
     assert r["distance_km"] == pytest.approx(14.4, rel=0.02)   # 1800 s at 8 m/s
     # ~30 min at 200 W with FTP 250: IF 0.8 -> TSS = 0.5 h * 0.64 * 100 = 32
-    # (duration is last-first sample = 1799 s and TSS is stored as int)
-    assert r["tss"] == int(1799 * 200 * 0.8 / (250 * 3600) * 100)
+    # (duration is last-first sample = 1799 s; TSS is stored rounded)
+    assert r["tss"] == round(1799 * 200 * 0.8 / (250 * 3600) * 100) == 32
     assert r["norm_power"] == 200
     assert db.get_user_best_power("Rider")[300] == pytest.approx(200.0)
 

@@ -38,26 +38,32 @@ def TSS(norm_power, duration_seconds, ftp):
     if_val = IF(norm_power, ftp)
     return (duration_seconds * norm_power * if_val) / (ftp * 3600) * 100
 
+# Roughly log-spaced from 1 s to 5 h: dense enough for CP fitting and a
+# smooth curve, cheap enough to store per ride.
+MMP_DURATIONS = [1, 2, 3, 5, 8, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300,
+                 420, 600, 900, 1200, 1500, 1800, 2700, 3600, 5400, 7200,
+                 10800, 14400, 18000]
+
 def power_curve(power_series, duration_s=None):
     """
-    Compute the max-average power for a list of durations.
+    Mean maximal power for each duration (seconds, assumes 1 Hz samples).
+    Durations longer than the ride are omitted. O(n) per duration via a
+    cumulative sum (the previous convolution was O(n*d)).
     """
     if duration_s is None:
-        duration_s = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200]
-    
-    p = power_series.dropna().to_numpy()
+        duration_s = MMP_DURATIONS
+
+    p = pd.Series(power_series).dropna().to_numpy(dtype=float)
     n = len(p)
     out = {}
-    
+    if n == 0:
+        return out
+
+    cs = np.concatenate(([0.0], np.cumsum(p)))
     for d in duration_s:
-        if d <= 0 or n == 0 or d > n:
-            out[d] = np.nan
+        if d <= 0 or d > n:
             continue
-        
-        window = np.ones(d) / d
-        means = np.convolve(p, window, mode='valid')
-        out[d] = float(np.nanmax(means))
-        
+        out[d] = float(np.max((cs[d:] - cs[:-d]) / d))
     return out
 
 def coggan_zones(ftp):
