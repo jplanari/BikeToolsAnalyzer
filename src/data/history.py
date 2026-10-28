@@ -31,13 +31,18 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
     from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # imports streamlit
 
     rows = db.get_rides_for_recompute(user_name, all_rides=all_rides)
+    if rows:
+        db.backup_db("before-recompute")        # recompute overwrites every ride's metrics
     updated, failed = 0, []
     for i, row in enumerate(rows):
         if progress:
             progress(i, len(rows))
         name = row['filename'] or f"ride {row['id']}"
         try:
-            df, dist_m, ele_m = prepare_ride(row['filename'] or "", row['file_content'])
+            _, content = db.get_ride_file(row['id'])    # one file in memory at a time
+            if content is None:
+                raise ValueError("original file not stored")
+            df, dist_m, ele_m = prepare_ride(row['filename'] or "", content)
             ftp = ftp_used_for_ride(row, current_ftp)
             lthr = row.get('lthr_at_ride') or current_lthr
             summ = summarize_ride(df, ftp, lthr)

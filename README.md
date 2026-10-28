@@ -40,7 +40,7 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 🗺️ Visualization & History
 
 - Interactive Maps: Folium-based route maps with highlighted climb segments.
-- Local Database: Uses SQLite (bikethools.db) to store ride history and user profiles locally.
+- Local Database: Uses SQLite (bikethools.db) to store ride history and user profiles locally. Original ride files are kept compressed in their own table, and the database is copied to `backups/` (newest 3 kept) before "Update ride history" and before the one-time file migration.
 - User Profiles: Manage multiple rider profiles with specific FTP, Weight, and LTHR settings.
 
 ## Installation
