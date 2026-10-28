@@ -231,6 +231,13 @@ def save_user(name, ftp, lthr, weight, height=175.0):
     finally:
         conn.close()
 
+def update_user_ftp(user_name, ftp):
+    """Sets the FTP only. Rides already saved keep the FTP they were scored with."""
+    conn = _connect()
+    conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
+    conn.commit()
+    conn.close()
+
 def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     """
     Updates the user's physiological metrics.

@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from src.data.db import (replace_planned_sessions, add_structured_session as db_add_session,
-                         delete_planned_session)
+                         delete_planned_session, update_user_ftp)
 from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
                              get_kj_records, get_zone_rows, get_planned_sessions,
                              count_rides_needing_update, compute_pmc, cp_history)
@@ -127,6 +127,7 @@ def render_training_page(user_name):
 
     today = pd.Timestamp.today().normalize()
     mode = _theme()
+    _threshold_hint(user_name, user, today)
     sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
@@ -137,6 +138,36 @@ def render_training_page(user_name):
         _render_durability(user_name, today, mode)
     else:
         _render_intensity(user_name, today, mode)
+
+
+def _threshold_hint(user_name, user, today):
+    """Suggests a new FTP when recent riding supports it; nothing changes until you accept."""
+    s = pp.suggest_threshold(get_power_records(user_name), user['ftp'], today)
+    if not s:
+        return
+    dismissed = f"ftp_hint_dismissed_{user_name}_{s['ftp']}"
+    if st.session_state.get(dismissed):
+        return
+    when = f"{s['best_20min_date']:%d %b}"
+    cp = f" Critical power from the same efforts: {s['cp']:.0f} W." if s['cp'] else ""
+    if s['direction'] == 'up':
+        st.success(f"📈 **Your FTP may be higher.** Your best 20 minutes in the last {s['window_days']} days "
+                   f"was **{s['best_20min_w']:.0f} W** ({when}), which suggests an FTP of about "
+                   f"**{s['ftp']} W** (95 %), {s['change_w']:+d} W vs your current {user['ftp']} W.{cp}")
+        b1, b2, _ = st.columns([1, 1, 4])
+        if b1.button(f"Set FTP to {s['ftp']} W", key=f"accept_ftp_{user_name}",
+                     help="Changes your profile FTP for new rides, zones and planning. Rides already saved "
+                          "keep the FTP they were scored with."):
+            update_user_ftp(user_name, s['ftp'])
+            st.rerun()
+        if b2.button("Not now", key=f"dismiss_ftp_{user_name}"):
+            st.session_state[dismissed] = True
+            st.rerun()
+    else:
+        st.info(f"ℹ️ Your best 20 minutes in the last {s['window_days']} days was {s['best_20min_w']:.0f} W "
+                f"({when}), about {s['ftp']} W as an FTP, below your current {user['ftp']} W. That only means "
+                f"no recent effort backs it up. If you haven't done a maximal 20-minute test lately, "
+                f"your FTP may well be unchanged.{cp}")
 
 
 # --- Load ----------------------------------------------------------------------

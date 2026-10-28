@@ -161,3 +161,16 @@ def test_build_a_session_from_intervals_and_remove_it(seeded_db):
     at.button(key=f"del_plan_{int(built['id'].iloc[0])}").click().run()
     _no_errors(at)
     assert db.get_planned_sessions("Rider", after=today, structured=True).empty
+
+
+def test_ftp_suggestion_can_be_accepted_with_one_click(seeded_db):
+    # a hard 40-minute ride: 95 % of its best 20 min is well above the 250 W profile FTP
+    _save_ride(99, pd.Timestamp.today().normalize() - pd.Timedelta(days=2), 330)
+    at = _go(_app(), "Training")
+    _no_errors(at)
+    assert "Your FTP may be higher" in _texts(at.success)
+    assert db.get_user_data("Rider")["ftp"] == 250                   # nothing changed yet
+    at.button(key="accept_ftp_Rider").click().run()
+    _no_errors(at)
+    assert abs(db.get_user_data("Rider")["ftp"] - 313.5) <= 1         # 95 % of 330 W
+    assert "Your FTP may be higher" not in _texts(at.success)
