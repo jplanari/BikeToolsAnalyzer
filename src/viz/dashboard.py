@@ -9,8 +9,9 @@ from streamlit_folium import st_folium
 import plotly.graph_objects as go
 
 # Imports from your existing modules
-from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds, calculate_bearing, compute_speed, compute_grade
-from src.data.fit import parse_fit, get_fit_laps
+from src.data.gpx import calculate_bearing
+from src.data.fit import get_fit_laps
+from src.data.pipeline import prepare_ride, summarize_ride, ride_kind
 from src.viz.plots import (
         plot_elevation, plot_x_time, plot_power_curve, plot_zone_distribution, 
         plot_climbs, plot_detailed_climb, plot_power_budget, plot_w_prime_balance,
@@ -26,13 +27,16 @@ from src.analysis.training_load import compute_pmc
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
         save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
-        count_rides_missing_metadata, repair_ride_metadata, build_ride_metadata
+        count_rides_missing_metadata, repair_ride_metadata, build_ride_metadata,
+        get_strava_auth, save_strava_auth, delete_strava_auth, create_oauth_state, consume_oauth_state
     )
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
 from src.data.weather import fetch_ride_weather  # Ensure this is imported
-from src.data.strava import fetch_gpx_from_strava  # Ensure this is imported
+from src.data import strava as sv
+from src.data.strava_import import (get_valid_auth, list_recent_rides, fetch_ride_file,
+                                    import_history)
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 
 @st.cache_data(show_spinner=False)
@@ -107,7 +111,7 @@ def render_sidebar():
     with tab_select:
         users = get_all_users()
         if users:
-            selected_user_name = st.selectbox("Current User", users)
+            selected_user_name = st.selectbox("Current User", users, key="current_user")
             if selected_user_name:
                 u_data = get_user_data(selected_user_name)
                 if u_data:
@@ -145,7 +149,7 @@ def render_sidebar():
     # 1. Initialize current_file to None by default
     current_file = None
     
-    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava URL"])
+    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava"])
 
     if import_method == "Upload Ride":
         uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
@@ -153,34 +157,8 @@ def render_sidebar():
         if uploaded_file is not None:
             current_file = uploaded_file
 
-    elif import_method == "Strava URL":
-        st.sidebar.info("Requires your '_strava4_session' cookie from your browser.")
-        
-        strava_url = st.sidebar.text_input("Strava Activity URL")
-        strava_cookie = st.sidebar.text_input("Strava Session Cookie", type="password")
-        
-        if st.sidebar.button("Fetch from Strava"):
-            if strava_url and strava_cookie:
-                with st.spinner("Downloading GPX from Strava..."):
-                    file_obj, error = fetch_gpx_from_strava(strava_url, strava_cookie)
-                    
-                    if file_obj:
-                        st.sidebar.success("Download successful!")
-                        # Extract ID from URL for the filename
-                        activity_id = strava_url.split('/activities/')[-1].split('/')[0]
-                        file_obj.name = f"strava_{activity_id}.gpx"
-                        
-                        # Save to session state so it persists after rerun
-                        st.session_state['temp_strava_file'] = file_obj
-                        current_file = file_obj
-                    else:
-                        st.sidebar.error(error)
-            else:
-                st.sidebar.warning("URL and Cookie are required.")
-        
-        # Restore from session state if available (so the file stays loaded)
-        if current_file is None and 'temp_strava_file' in st.session_state:
-            current_file = st.session_state['temp_strava_file']
+    elif import_method == "Strava":
+        current_file = _render_strava_sidebar(selected_user_name, user_ftp)
 
     # Settings
     st.sidebar.markdown("---")
@@ -203,6 +181,154 @@ def render_sidebar():
     # RETURN 'current_file' (which works for both logic paths)
     return app_mode, selected_user_name, current_file, settings
 
+# --- Strava (official API) ---------------------------------------------------
+
+def _strava_config():
+    """App credentials from .streamlit/secrets.toml ([strava] section), or None."""
+    try:
+        sec = st.secrets["strava"]
+        return sv.StravaConfig(
+            client_id=str(sec["client_id"]),
+            client_secret=str(sec["client_secret"]),
+            redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
+        )
+    except Exception:
+        return None
+
+def _strava_usage():
+    if 'strava_usage' not in st.session_state:
+        st.session_state['strava_usage'] = sv.RateUsage()
+    return st.session_state['strava_usage']
+
+def handle_strava_callback():
+    """
+    Completes the OAuth round trip when Strava redirects back to the app
+    (?code=...&scope=...&state=...). Call before rendering the sidebar.
+    """
+    params = st.query_params
+    if "state" not in params or not ("code" in params or "error" in params):
+        return
+
+    state, code = params.get("state"), params.get("code")
+    error, scope = params.get("error"), params.get("scope")
+    st.query_params.clear()  # the code is single-use; never process it twice
+
+    user_name = consume_oauth_state(state)
+    if not user_name:
+        st.error("Strava connection failed: the request expired or did not come from this app. Please try again.")
+        return
+    st.session_state["current_user"] = user_name
+
+    if error:
+        st.warning("Strava access was not granted.")
+        return
+    if not sv.granted_scope_ok(scope):
+        st.warning("Strava was connected without permission to read activities. "
+                   "Please reconnect and keep the activity access box ticked.")
+        return
+
+    cfg = _strava_config()
+    if cfg is None:
+        st.error("Strava is not configured (see README).")
+        return
+    try:
+        auth = sv.exchange_code(cfg, code)
+    except sv.StravaError as e:
+        st.error(f"Strava connection failed: {e}")
+        return
+    save_strava_auth(user_name, auth)
+    st.toast(f"✅ Strava connected for {user_name}")
+
+def _activity_label(a):
+    when = (a.get("start_date_local") or a.get("start_date") or "")[:10]
+    km = (a.get("distance") or 0) / 1000
+    return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
+
+def _render_strava_sidebar(user_name, user_ftp):
+    """Returns a file-like ride to analyse, or None."""
+    cfg = _strava_config()
+    if cfg is None:
+        st.sidebar.warning("Strava isn't set up yet. Add your API app's `client_id` and "
+                           "`client_secret` to `.streamlit/secrets.toml` (see README).")
+        return None
+    if not user_name:
+        st.sidebar.info("Select or create a user profile first.")
+        return None
+
+    auth = get_strava_auth(user_name)
+    if not auth:
+        key = f"oauth_state_{user_name}"
+        if key not in st.session_state:
+            st.session_state[key] = create_oauth_state(user_name)
+        st.sidebar.link_button("🔗 Connect Strava", sv.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption("Strava opens in a new tab; you'll continue there after approving.")
+        return None
+
+    who = auth.get("athlete_name") or "your account"
+    st.sidebar.caption(f"Connected to Strava as **{who}**")
+    usage = _strava_usage()
+    current_file = None
+
+    try:
+        # Recent rides (cached per session to spare the rate limit)
+        cache_key = f"strava_recent_{user_name}"
+        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list"):
+            with st.spinner("Loading your Strava rides..."):
+                st.session_state[cache_key] = list_recent_rides(cfg, user_name, usage=usage)
+        recent = st.session_state[cache_key]
+
+        if recent:
+            choice = st.sidebar.selectbox("Recent rides", recent, format_func=_activity_label)
+            if st.sidebar.button("Analyze ride"):
+                with st.spinner("Downloading ride from Strava..."):
+                    name, payload = fetch_ride_file(cfg, user_name, choice, usage=usage)
+                file_obj = io.BytesIO(payload)
+                file_obj.name = name
+                st.session_state[f'strava_file_{user_name}'] = file_obj
+        else:
+            st.sidebar.info("No recent rides found on Strava.")
+
+        with st.sidebar.expander("📥 Import ride history"):
+            st.caption("Imports every ride since the chosen date into your history "
+                       "(PMC, power records). Rides already saved are skipped.")
+            since = st.date_input("Since", value=pd.Timestamp.today().date() - pd.Timedelta(days=90))
+            if st.button("Import history"):
+                bar = st.progress(0.0, text="Listing activities...")
+
+                def _progress(done, total, name):
+                    frac = done / total if total else 1.0
+                    bar.progress(frac, text=f"{done}/{total} {name}"[:60])
+
+                res = import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage)
+                bar.empty()
+                st.success(f"Imported {res.imported} of {res.found} rides.")
+                skipped = []
+                if res.already_imported: skipped.append(f"{res.already_imported} already imported")
+                if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
+                if res.no_data: skipped.append(f"{res.no_data} without recorded data")
+                if skipped:
+                    st.caption("Skipped: " + ", ".join(skipped) + ".")
+                if res.failed:
+                    st.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
+                if res.stopped_reason:
+                    st.info(f"{res.stopped_reason} ({res.remaining} left)")
+
+    except sv.StravaAuthError as e:
+        st.sidebar.error(f"{e}")
+    except sv.StravaError as e:
+        st.sidebar.error(f"Strava: {e}")
+
+    if st.sidebar.button("Disconnect Strava"):
+        sv.revoke(cfg, auth["refresh_token"])
+        delete_strava_auth(user_name)
+        for k in [f"strava_recent_{user_name}", f"strava_file_{user_name}"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    # Keyed per profile so a ride is never auto-saved to the wrong rider
+    current_file = st.session_state.get(f'strava_file_{user_name}', current_file)
+    return current_file
+
 def process_and_display_analysis(file_obj, user_name, settings):
     """Main logic to parse GPX, calculate stats, and render plots."""
     
@@ -211,83 +337,38 @@ def process_and_display_analysis(file_obj, user_name, settings):
     
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
-            if filename.endswith(".fit"):
-                df = parse_fit(file_bytes)
-                df, total_dist, total_ascent = compute_distance_and_ascent(df)
-                df = resample_to_seconds(df)
-                df, total_dist, total_ascent = compute_distance_and_ascent(df)
-                df = compute_grade(df)
-            # 2. Physics Prep
-                df['bearing'] = calculate_bearing(df)
+            df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
+            laps_df = get_fit_laps(file_bytes) if ride_kind(filename) == "fit" else None
 
-            # 3. AUTOMATIC WEATHER FETCH
-            # We attempt to fetch it immediately. If it fails, df remains unchanged.
-                df = fetch_ride_weather(df)
-
-                moving_thresh = 2.0 #m/s
-                is_moving = df['speed'] >= moving_thresh
-
-                moving_time_sec = is_moving.sum()
-                elapsed_time_sec = len(df) #Assuming 1Hz resampled
-                laps_df = get_fit_laps(file_bytes)
-
-            else:
-                # 1. Standard Parsing
-                df = parse_gpx(file_bytes)
-                df, total_dist, total_ascent = compute_distance_and_ascent(df)
-                df = resample_to_seconds(df)
-                df, total_dist, total_ascent = compute_distance_and_ascent(df)
-                df = compute_speed(df)
-                df = compute_grade(df)
-    
-            # 2. Physics Prep
-                df['bearing'] = calculate_bearing(df)
-
-            # 3. AUTOMATIC WEATHER FETCH
-            # We attempt to fetch it immediately. If it fails, df remains unchanged.
-                df = fetch_ride_weather(df)
-
-                moving_thresh = 2.0 #m/s
-                is_moving = df['speed'] >= moving_thresh
-
-                moving_time_sec = is_moving.sum()
-                elapsed_time_sec = len(df) #Assuming 1Hz resampled
-
+            # Physics prep + automatic weather fetch (df unchanged if it fails)
+            df['bearing'] = calculate_bearing(df)
+            df = fetch_ride_weather(df)
         except Exception as e:
-            st.error(f"Error parsing GPX: {e}")
-            if os.path.exists("temp.gpx"): os.remove("temp.gpx")
+            st.error(f"Error parsing ride file: {e}")
             return
 
-        # Basic Stats
-        duration_s = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
-        if moving_time_sec > 0:
-            avg_speed = df.loc[is_moving, 'speed'].mean() * 3.6
-        else:
-            avg_speed = 0
-
-        avg_power = df.loc[is_moving, 'power'].mean() if 'power' in df.columns and moving_time_sec > 0 else 0
-        avg_hr = df.loc[is_moving, 'hr'].mean() if 'hr' in df.columns and moving_time_sec > 0 else 0
-        norm_power = NP(df['power']) if 'power' in df.columns else 0
         current_ftp = settings['ftp']
-    
+        summary = summarize_ride(df, current_ftp)
+        duration_s = summary['duration_s']
+        avg_speed = summary['avg_speed_kph']
+        avg_power = summary['avg_power']
+        norm_power = summary['norm_power']
+
         with st.spinner("Running analysis engine..."):
             df, climbs, p_comps = run_heavy_analysis(
-                df, 
-                bike_mass=8.0, 
-                crr=0.005, 
-                drivetrain_loss=0.03, 
-                rider_mass=settings['weight'], 
+                df,
+                bike_mass=8.0,
+                crr=0.005,
+                drivetrain_loss=0.03,
+                rider_mass=settings['weight'],
                 ftp=current_ftp,
                 w_prime_cap_j=settings.get('w_prime', 20000.0)
             )
 
-        ride_if = IF(norm_power, current_ftp)
-        ride_tss = TSS(norm_power, duration_s, current_ftp)
-        ride_kj = calculate_ride_kJ(df['power']) if 'power' in df.columns else 0
-
-        current_curve = {}
-        if 'power' in df.columns:
-            current_curve = power_curve(df['power'])
+        ride_if = summary['if']
+        ride_tss = summary['tss']
+        ride_kj = summary['kj']
+        current_curve = summary['power_curve']
         settings['w_prime_cap'] = 20000.0
 
         # Auto-Save
@@ -325,7 +406,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
     
     st.markdown("---")
 
-    if filename.endswith(".fit"):
+    if laps_df is not None:
         # Extract laps and show summary
         st.subheader("Laps Summary")
         if not laps_df.empty:
@@ -339,12 +420,10 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
-    
-    if os.path.exists("temp.gpx"): os.remove("temp.gpx")
 
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val, power_curve_dict):
     """Helper to handle database saving logic."""
-    stats = build_ride_metadata(df, dist, ele, speed, np_val, tss, if_val)
+    stats = build_ride_metadata(df, dist, ele, speed, np_val, tss, if_val, filename=filename)
 
     if 'saved_hashes' not in st.session_state:
         st.session_state['saved_hashes'] = set()

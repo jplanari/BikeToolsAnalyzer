@@ -1,6 +1,9 @@
 import sqlite3
 import pandas as pd
 import hashlib
+import re
+import secrets
+import time
 
 DB_FILE = "bikethools.db"
 
@@ -21,6 +24,33 @@ def migrate_db():
         c.execute("ALTER TABLE users ADD COLUMN w_prime REAL DEFAULT 20000")
     except sqlite3.OperationalError:
         pass
+
+    try:
+        c.execute("ALTER TABLE rides ADD COLUMN strava_activity_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
+                 ON rides(user_id, strava_activity_id)""")
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS strava_auth (
+            user_id INTEGER PRIMARY KEY,
+            athlete_id INTEGER,
+            athlete_name TEXT,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS oauth_states (
+            state TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+    ''')
 
     conn.commit()
     conn.close()
@@ -150,6 +180,11 @@ def delete_user(name):
     conn.commit()
     conn.close()
 
+def strava_id_from_filename(filename):
+    """'strava_123.json' -> 123 (rides imported through the Strava API)."""
+    m = re.fullmatch(r"strava_(\d+)\.json", (filename or "").lower())
+    return int(m.group(1)) if m else None
+
 def _iso_timestamp(ts):
     """Ride start time as an ISO-8601 string (UTC when timezone-aware)."""
     ts = pd.Timestamp(ts)
@@ -157,7 +192,7 @@ def _iso_timestamp(ts):
         ts = ts.tz_convert("UTC")
     return ts.isoformat()
 
-def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val):
+def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None):
     """
     Builds the metadata dict that save_ride() expects. Keeping both in this
     module guarantees the keys match (they did not before: date, distance
@@ -179,6 +214,7 @@ def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val):
         'tss': int(tss) if pd.notna(tss) else 0,
         'if': if_val,
         'avg_hr': safe_mean('hr'),
+        'strava_activity_id': strava_id_from_filename(filename),
     }
 
 def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
@@ -197,13 +233,14 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
             INSERT INTO rides (
                 user_id, filename, file_hash, file_content, date_time, 
                 distance_km, elevation_m, avg_speed_kph, 
-                norm_power, avg_power, tss, if_factor, avg_hr
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                norm_power, avg_power, tss, if_factor, avg_hr, strava_activity_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             user['id'], filename, file_hash, file_content, metadata.get('date'),
             metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
             metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
-            metadata.get('if', 0), metadata.get('avg_hr', 0)
+            metadata.get('if', 0), metadata.get('avg_hr', 0),
+            metadata.get('strava_activity_id')
         ))
         
         ride_id = c.lastrowid
@@ -334,26 +371,13 @@ def _ride_metadata_from_file(filename, file_bytes):
     returns (iso_start_time, distance_km, elevation_m). Distance/elevation
     are None when the file has no GPS track (e.g. indoor rides).
     """
-    # Imported lazily: the parsers depend on streamlit.
-    from src.data.gpx import parse_gpx, compute_distance_and_ascent, resample_to_seconds
-    from src.data.fit import parse_fit
+    from src.data.pipeline import prepare_ride  # lazy: parsers import streamlit
 
-    if filename.lower().endswith(".fit"):
-        df = parse_fit(file_bytes)
-    else:
-        df = parse_gpx(file_bytes)
-    if df is None or df.empty or 'time' not in df.columns:
-        raise ValueError("no timestamped samples")
-
+    df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
     date_iso = _iso_timestamp(df['time'].dropna().iloc[0])
-
-    dist_km, ele_m = None, None
-    if {'lat', 'lon', 'ele'}.issubset(df.columns) and df['lat'].notna().any():
-        df, _, _ = compute_distance_and_ascent(df)
-        df = resample_to_seconds(df)
-        df, total_dist, total_ascent = compute_distance_and_ascent(df)
-        dist_km, ele_m = total_dist / 1000.0, float(total_ascent)
-    return date_iso, dist_km, ele_m
+    if 'lat' not in df.columns or df['lat'].isna().all():
+        return date_iso, None, None
+    return date_iso, total_dist / 1000.0, float(total_ascent)
 
 def repair_ride_metadata(user_name):
     """
@@ -391,3 +415,107 @@ def repair_ride_metadata(user_name):
     conn.commit()
     conn.close()
     return repaired, failed
+
+
+# --- Strava authorization --------------------------------------------------
+# Tokens are stored per rider profile in the local database (plain text, like
+# the rest of the local data). Strava may rotate the refresh token on every
+# refresh, so save_strava_auth() must be called whenever it changes.
+
+def save_strava_auth(user_name, auth):
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('''
+        INSERT INTO strava_auth (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            athlete_id = COALESCE(excluded.athlete_id, strava_auth.athlete_id),
+            athlete_name = COALESCE(excluded.athlete_name, strava_auth.athlete_name),
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            expires_at = excluded.expires_at
+    ''', (user['id'], auth.get('athlete_id'), auth.get('athlete_name'),
+          auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_strava_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_strava_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM strava_auth WHERE user_id = ?", (user['id'],))
+    conn.commit()
+    conn.close()
+
+OAUTH_STATE_TTL_S = 15 * 60
+
+def create_oauth_state(user_name):
+    """
+    One-time CSRF token for the OAuth round trip. Stored in the DB rather
+    than st.session_state because Strava redirects back into a new session.
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    state = secrets.token_urlsafe(24)
+    now = int(time.time())
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (now - OAUTH_STATE_TTL_S,))
+    conn.execute("INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)",
+                 (state, user['id'], now))
+    conn.commit()
+    conn.close()
+    return state
+
+def consume_oauth_state(state):
+    """Returns the user name the state was issued for (once), else None."""
+    now = int(time.time())
+    conn = sqlite3.connect(DB_FILE)
+    row = conn.execute('''SELECT u.name, s.created_at FROM oauth_states s
+                          JOIN users u ON u.id = s.user_id WHERE s.state = ?''', (state,)).fetchone()
+    conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+    conn.commit()
+    conn.close()
+    if not row or now - row[1] > OAUTH_STATE_TTL_S:
+        return None
+    return row[0]
+
+def get_imported_strava_ids(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return set()
+    conn = sqlite3.connect(DB_FILE)
+    rows = conn.execute("SELECT strava_activity_id FROM rides WHERE user_id = ? "
+                        "AND strava_activity_id IS NOT NULL", (user['id'],)).fetchall()
+    conn.close()
+    return {r[0] for r in rows}
+
+def get_ride_start_times(user_name):
+    """Start times (UTC, naive) of all dated rides, for cross-source dedup."""
+    user = get_user_data(user_name)
+    if not user:
+        return []
+    conn = sqlite3.connect(DB_FILE)
+    rows = conn.execute("SELECT date_time FROM rides WHERE user_id = ? AND date_time IS NOT NULL",
+                        (user['id'],)).fetchall()
+    conn.close()
+    out = []
+    for (d,) in rows:
+        ts = pd.to_datetime(d, errors='coerce', utc=True)
+        if pd.notna(ts):
+            out.append(ts.tz_convert(None))
+    return out
