@@ -22,9 +22,11 @@ from src.analysis.power import (
         estimate_critical_power
     )
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
+from src.analysis.training_load import compute_pmc
 from src.data.db import (
         save_user, get_all_users, get_user_data, delete_user, 
-        save_ride, get_user_rides, get_user_best_power, get_user_tss_history
+        save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
+        count_rides_missing_metadata, repair_ride_metadata, build_ride_metadata
     )
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
@@ -342,23 +344,8 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, speed, np_val, tss, if_val, power_curve_dict):
     """Helper to handle database saving logic."""
-    def safe_mean(series):
-        if series.empty: return 0
-        m = series.mean()
-        return int(m) if pd.notna(m) else 0
+    stats = build_ride_metadata(df, dist, ele, speed, np_val, tss, if_val)
 
-    stats = {
-        'date_time': df['time'].iloc[0],
-        'dist_km': dist / 1000,
-        'ele_m': ele,
-        'speed': speed,
-        'np': int(np_val) if pd.notna(np_val) else 0,
-        'avg_p': safe_mean(df['power']) if 'power' in df.columns else 0,
-        'tss': int(tss),
-        'if': if_val,
-        'avg_hr': safe_mean(df['hr']) if 'hr' in df.columns else 0
-    }
-    
     if 'saved_hashes' not in st.session_state:
         st.session_state['saved_hashes'] = set()
         
@@ -661,6 +648,25 @@ def render_history(user_name):
         hide_index=True,
     )
 
+def _render_history_repair(user_name):
+    """Rebuilds date/distance/elevation of stored rides from their saved files."""
+    n_broken = count_rides_missing_metadata(user_name)
+    if n_broken == 0:
+        return
+    with st.expander(f"🛠️ Repair ride history ({n_broken} rides with missing date/distance)"):
+        st.caption("Older versions of the app saved rides without their date, distance and "
+                   "elevation, so they were left out of the PMC. This re-reads the stored "
+                   "files and fills those fields in. TSS and power records are not changed.")
+        if st.button("Repair ride history"):
+            with st.spinner("Re-reading stored rides..."):
+                fixed, failed = repair_ride_metadata(user_name)
+            if failed:
+                st.warning(f"Repaired {fixed} rides; {len(failed)} could not be read: "
+                           + ", ".join(failed[:10]))
+            else:
+                st.toast(f"✅ Repaired {fixed} rides.")
+                st.rerun()
+
 def render_user_corner(user_name):
     st.header("👤 User Corner")
 
@@ -687,54 +693,27 @@ def render_user_corner(user_name):
     # Fetch Data
     history_data = get_user_tss_history(user_name)
     
-    # --- CHANGE: Allow chart if we have ANY data (> 0) ---
-    if len(history_data) > 0:
-        # Create DataFrame
-        pmc_df = pd.DataFrame(history_data)
-        pmc_df['date'] = pd.to_datetime(pmc_df['date'], errors='coerce')
-        
-        # Set index to date
-        pmc_df['tss'] = pd.to_numeric(pmc_df['tss'], errors='coerce')
-
-        pmc_df = pmc_df.dropna(subset=['date', 'tss'])
-        pmc_df = pmc_df[pmc_df['tss'] >= 0]
-
-        if pmc_df.empty:
-            st.warning("Found rides, but no valid TSS data to plot PMC.")
-            return
-
-        pmc_df = pmc_df.set_index('date')
-        pmc_df = pmc_df.resample('D').sum().fillna(0)
-
-       
-        # Calculate Metrics (Exponential Weighted Moving Averages)
-        # CTL = 42-day time constant
-        # ATL = 7-day time constant
-        # We use min_periods=1 so it calculates even with 1 data point
-        pmc_df['CTL'] = pmc_df['tss'].ewm(alpha=1/42, adjust=False, min_periods=1).mean()
-        pmc_df['ATL'] = pmc_df['tss'].ewm(alpha=1/7, adjust=False, min_periods=1).mean()
-        
-        # TSB (Form) = CTL - ATL
-        pmc_df['TSB'] = pmc_df['CTL'] - pmc_df['ATL']
-        
-        # Show Plot
+    pmc_df = compute_pmc(history_data)
+    if not history_data:
+        st.info("No TSS history data available. Upload a ride to see your chart!")
+    elif pmc_df.empty:
+        st.warning("Found rides, but none with a valid date and TSS. "
+                   "Use **Repair ride history** below to rebuild them from the stored files.")
+    else:
         st.plotly_chart(plot_pmc(pmc_df), use_container_width=True)
-        
-        # Show Current Status
+
+        # Current status (the PMC runs up to today, so this is "now")
         curr = pmc_df.iloc[-1]
         k1, k2, k3 = st.columns(3)
-        k1.metric("Fitness (CTL)", f"{curr['CTL']:.1f}", help="Chronic Training Load (42-day avg)")
-        k2.metric("Fatigue (ATL)", f"{curr['ATL']:.1f}", help="Acute Training Load (7-day avg)")
-        k3.metric("Form (TSB)", f"{curr['TSB']:.1f}", 
-                  delta=f"{curr['TSB']:.1f}", delta_color="normal",
-                  help="Training Stress Balance (Fitness - Fatigue)")
-                  
-        # DEBUG: Show raw data if user wants to check
+        k1.metric("Fitness (CTL)", f"{curr['CTL']:.1f}", help="Chronic Training Load (42-day time constant), as of today")
+        k2.metric("Fatigue (ATL)", f"{curr['ATL']:.1f}", help="Acute Training Load (7-day time constant), as of today")
+        k3.metric("Form (TSB)", f"{curr['TSB']:.1f}",
+                  help="Training Stress Balance: yesterday's CTL - ATL (form going into today)")
+
         with st.expander("View Raw PMC Data"):
             st.dataframe(pmc_df)
-                  
-    else:
-        st.info("No TSS history data available. Upload a ride to see your chart!")
+
+    _render_history_repair(user_name)
 
     st.markdown("---")
 

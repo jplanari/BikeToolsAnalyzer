@@ -61,41 +61,43 @@ def power_curve(power_series, duration_s=None):
     return out
 
 def coggan_zones(ftp):
-    """ Returns Coggan power zones based on FTP. """
-    # Coggan v3 approximate boundaries ratios
-    zones = {
-            1: (0, 0.55),
-            2: (0.56, 0.75),
-            3: (0.76, 0.90),
-            4: (0.91, 1.05),
-            5: (1.06, 1.20),
-            6: (1.21, 1.50),
-            7: (1.51, 50.0) # High cap
-    }
-    # Multiply the ratios by FTP
-    return {z: (ftp * low, ftp * high) for z, (low, high) in zones.items()}
+    """
+    Returns Coggan power zones based on FTP as {zone: (low, high)} in watts.
+    Bounds are contiguous and half-open [low, high): every sample falls in
+    exactly one zone (previously values between e.g. 0.55 and 0.56*FTP were
+    not counted at all).
+    """
+    # Coggan upper bounds as fraction of FTP (Z7 is open-ended)
+    upper = [0.55, 0.75, 0.90, 1.05, 1.20, 1.50, np.inf]
+    zones = {}
+    low = 0.0
+    for z, up in enumerate(upper, start=1):
+        zones[z] = (ftp * low, ftp * up)
+        low = up
+    return zones
 
 def time_in_zones(series, zones):
     """
-    Calculate time spent in each zone.
-    IMPORTANT: 'zones' must be a DICTIONARY of {zone_id: (low_bound, high_bound)}, 
-    not an FTP number.
+    Seconds spent in each zone (assumes 1 Hz samples).
+    'zones' must be a dict {zone_id: (low, high)} with half-open bounds
+    [low, high); NaNs are ignored and values below the first bound are
+    counted in the first zone.
     """
-    # FIX: Do NOT call coggan_zones here. We assume 'zones' is already the dictionary.
     counts = {z: 0 for z in zones}
-    
     if series is None or len(series) == 0:
         return counts
 
-    # Drop NaNs
-    clean_series = series.dropna()
+    vals = pd.Series(series).dropna().to_numpy(dtype=float)
+    if len(vals) == 0:
+        return counts
 
-    # Iterate and count
-    for val in clean_series:
-        for z, (low, high) in zones.items():
-            if low <= val <= high:
-                counts[z] += 1
-                break
+    keys = list(zones.keys())
+    # Inner edges = lower bounds of zones 2..n, so digitize gives the zone index
+    edges = np.array([zones[k][0] for k in keys[1:]], dtype=float)
+    idx = np.digitize(vals, edges, right=False)
+    binned = np.bincount(idx, minlength=len(keys))
+    for i, k in enumerate(keys):
+        counts[k] = int(binned[i])
     return counts
 
 def calculate_w_prime_balance(power_series, ftp, w_prime_cap_j=20000, tau=546):

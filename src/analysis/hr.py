@@ -29,17 +29,24 @@ def estimate_hr_threshold(hr_series):
 
 def hr_effort_zones(threshold_hr):
     """
-    Returns heart rate zones based on LTHR.
+    Returns Friel cycling heart rate zones based on LTHR, as
+    {name: (low, high)} with contiguous half-open bounds [low, high).
+    (Previously there were gaps, e.g. 0.89-0.90*LTHR, so those samples
+    were never counted.)
     """
-    # Friel Cycling Zones (approximate)
-    zones = {
-            "Z1 (Recovery)": (0, threshold_hr * 0.81),
-            "Z2 (Aerobic)":  (threshold_hr * 0.81, threshold_hr * 0.89),
-            "Z3 (Tempo)":    (threshold_hr * 0.90, threshold_hr * 0.93),
-            "Z4 (Threshold)":(threshold_hr * 0.94, threshold_hr * 0.99),
-            "Z5 (VO2 Max)":  (threshold_hr * 1.00, threshold_hr * 1.06),
-            "Z6 (Anaerobic)":(threshold_hr * 1.06, 250)
-            }
+    upper = [
+        ("Z1 (Recovery)", 0.81),
+        ("Z2 (Aerobic)", 0.90),
+        ("Z3 (Tempo)", 0.94),
+        ("Z4 (Threshold)", 1.00),
+        ("Z5 (VO2 Max)", 1.06),
+        ("Z6 (Anaerobic)", np.inf),
+    ]
+    zones = {}
+    low = 0.0
+    for name, up in upper:
+        zones[name] = (threshold_hr * low, threshold_hr * up)
+        low = up
     return zones
 
 def time_in_hr_zones(hr_series, thr):
@@ -47,18 +54,5 @@ def time_in_hr_zones(hr_series, thr):
     Calculates time spent in each HR zone.
     Returns a dictionary: {'Zone Name': seconds}
     """
-    zones = hr_effort_zones(thr)
-    counts = {z: 0 for z in zones}
-    
-    hr = hr_series.dropna()
-    if len(hr) == 0:
-        return counts
-
-    # Categorize HR data into zones
-    for val in hr:
-        for zone, (low, high) in zones.items():
-            if low <= val <= high:
-                counts[zone] += 1
-                break
-                
-    return counts
+    from src.analysis.power import time_in_zones
+    return time_in_zones(hr_series, hr_effort_zones(thr))
