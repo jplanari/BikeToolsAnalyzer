@@ -2,9 +2,10 @@
 import pandas as pd
 import streamlit as st
 
-from src.data.db import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
-                         get_kj_records, get_zone_rows, get_planned_sessions,
-                         replace_planned_sessions, count_rides_needing_update)
+from src.data.db import replace_planned_sessions
+from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
+                             get_kj_records, get_zone_rows, get_planned_sessions,
+                             count_rides_needing_update, compute_pmc, cp_history)
 from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
 from src.analysis import durability as du
@@ -162,7 +163,7 @@ def _render_load(user_name, today, mode):
     history = get_user_tss_history(user_name)
     plan = _plan_editor(user_name, today)
     planned = [] if plan is None or plan.empty else plan[['date', 'tss']].to_dict('records')
-    pmc = tl.compute_pmc(history, today=today, planned=planned)
+    pmc = compute_pmc(history, today=today, planned=planned)
     if pmc.empty:
         st.info("No rides with TSS yet. Upload a ride or import your Strava history.")
         return
@@ -254,7 +255,7 @@ def _render_power(user_name, user, today, mode):
     if not two and not three:
         st.caption("Needs maximal efforts between 3 and 20 minutes in the last 90 days.")
 
-    hist = pp.cp_history(recs, today=today)
+    hist = cp_history(recs, today=today)
     _chart(tp.plot_cp_history(hist, mode))
 
     st.markdown("##### Power profile")
