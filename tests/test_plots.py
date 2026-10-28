@@ -7,9 +7,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-go = pytest.importorskip("plotly.graph_objects")
-if not hasattr(go, "Figure") or type(go).__name__ == "MagicMock":
-    pytest.skip("plotly is stubbed", allow_module_level=True)
+import os
+
+try:
+    import plotly.graph_objects as go
+    _real_plotly = type(go).__name__ == "module"
+except ImportError:
+    _real_plotly = False
+if not _real_plotly:
+    if os.environ.get("CI"):
+        # CI installs requirements.txt: a skip there would hide broken figures
+        raise RuntimeError("plotly must be installed in CI to validate the figures")
+    pytest.skip("plotly not installed", allow_module_level=True)
 
 from src.analysis import ride_metrics as rm
 from src.analysis import correlations as co
