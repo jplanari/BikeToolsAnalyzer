@@ -10,6 +10,7 @@ from src.data.gpx import (parse_gpx, compute_distance_and_ascent, resample_to_se
                           compute_speed, compute_grade)
 from src.data.fit import parse_fit
 from src.data.strava import streams_to_dataframe
+from src.data.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
 from src.analysis import ride_metrics as rm
 from src.analysis import durability
@@ -42,6 +43,7 @@ def prepare_ride(filename, file_bytes):
     if df is None or df.empty or 'time' not in df.columns:
         raise ValueError("no timestamped samples")
 
+    df, fixed = clean_channels(df)            # impossible sensor readings, before any metric
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
     df = resample_to_seconds(df)
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
@@ -49,6 +51,7 @@ def prepare_ride(filename, file_bytes):
     if kind != "fit" or 'speed' not in df.columns or df['speed'].isna().all():
         df = compute_speed(df)
     df = compute_grade(df)
+    df.attrs['cleaned'] = fixed
     return df, total_dist, total_ascent
 
 
@@ -112,6 +115,7 @@ def summarize_ride(df, ftp, lthr=None):
         'hrr_efforts': hrr_n,
         'ftp': ftp,
         'lthr': lthr,
+        'cleaned': dict(df.attrs.get('cleaned') or {}),
     }
 
 

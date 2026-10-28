@@ -280,3 +280,31 @@ def test_same_activity_twice_is_rejected(connected):
     assert db.save_ride("Rider", "strava_99.json", payload, meta, {})[0]
     ok, msg = db.save_ride("Rider", "strava_99.json", payload + b" ", meta, {})
     assert not ok and "already exists" in msg
+
+
+def test_sync_starts_a_few_days_before_the_latest_imported_ride(connected, fake_strava, monkeypatch):
+    si.import_history(CFG, "Rider", date(2026, 8, 1), ftp=250)         # newest imported: 14 on 09 Sep
+    seen = {}
+
+    def spy(token, after=None, before=None, page=1, per_page=200, usage=None):
+        seen["after"] = pd.Timestamp(after, unit="s")
+        return [activity(10, "2026-09-01T07:00:00Z"), activity(20, "2026-09-12T07:00:00Z")] if page == 1 else []
+
+    monkeypatch.setattr(sv, "list_activities", spy)
+    fake_strava["streams"].clear()
+    res, since = si.sync_new_rides(CFG, "Rider", ftp=250)
+
+    assert since == pd.Timestamp("2026-09-06 07:00:30")                # 09 Sep minus the 3-day margin
+    assert seen["after"] == pd.Timestamp("2026-09-06 07:00:30")
+    assert (res.imported, res.already_imported) == (1, 1)              # only the new ride is downloaded
+    assert fake_strava["streams"] == [20]
+    assert db.latest_strava_ride_date("Rider") == pd.Timestamp("2026-09-12 07:00:00")
+
+
+def test_first_sync_looks_back_30_days(connected, fake_strava, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(sv, "list_activities", lambda token, after=None, **k: seen.setdefault("after", after) and [])
+    now = pd.Timestamp("2026-10-28 12:00:00")
+    res, since = si.sync_new_rides(CFG, "Rider", ftp=250, now=now)
+    assert since == now - pd.Timedelta(days=30) and res.found == 0
+    assert db.latest_strava_ride_date("Rider") is None

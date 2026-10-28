@@ -97,7 +97,6 @@ def test_training_page(seeded_db):
     _no_errors(at)
     labels = [m.label for m in at.metric]
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= set(labels)
-    assert any("Load" in t.label for t in at.tabs)
 
     # the widgets that re-run the page
     _widget(at.radio, "Show").set_value("6 months").run()
@@ -108,6 +107,19 @@ def test_training_page(seeded_db):
     _no_errors(at)
 
 
+def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
+    at = _go(_app(), "Training")
+    options = list(_widget(at.radio, "Section").options)
+    assert len(options) == 4
+    _widget(at.radio, "Show").set_value("6 months").run()
+    for name in options[1:]:                       # only the selected section is drawn
+        _widget(at.radio, "Section").set_value(name).run()
+        _no_errors(at)
+    _widget(at.radio, "Section").set_value(options[0]).run()
+    _no_errors(at)
+    assert _widget(at.radio, "Show").value == "6 months"      # survived the other sections
+
+
 def test_user_corner_and_deeper_analytics(seeded_db):
     at = _go(_app(), "User Corner")
     _no_errors(at)
@@ -116,6 +128,9 @@ def test_user_corner_and_deeper_analytics(seeded_db):
     assert "FTP" in labels and "Correlation (r)" in labels      # seeded rides have power and HR
     _widget(at.checkbox, "Compare with previous period").uncheck().run()
     _no_errors(at)
+    for name in list(_widget(at.radio, "Section").options)[1:]:
+        _widget(at.radio, "Section").set_value(name).run()
+        _no_errors(at)
 
 
 def test_pages_see_data_saved_after_the_first_run(seeded_db):
@@ -129,3 +144,33 @@ def test_pages_see_data_saved_after_the_first_run(seeded_db):
     at.run()
     _no_errors(at)
     assert "1 rides were saved by an older version" in _texts(at.warning)
+
+
+def test_build_a_session_from_intervals_and_remove_it(seeded_db):
+    at = _go(_app(), "Training")
+    _no_errors(at)
+    assert {"Duration", "Normalized", "IF", "TSS"} <= {m.label for m in at.metric}   # builder preview
+
+    at.button(key="add_session_Rider").click().run()                                  # default blocks
+    _no_errors(at)
+    today = pd.Timestamp.today().normalize()
+    built = db.get_planned_sessions("Rider", after=today, structured=True)
+    assert len(built) == 1 and 50 < built["tss"].iloc[0] < 100
+    assert "With the planned sessions" in _texts(at.info)                             # forecast uses it
+
+    at.button(key=f"del_plan_{int(built['id'].iloc[0])}").click().run()
+    _no_errors(at)
+    assert db.get_planned_sessions("Rider", after=today, structured=True).empty
+
+
+def test_ftp_suggestion_can_be_accepted_with_one_click(seeded_db):
+    # a hard 40-minute ride: 95 % of its best 20 min is well above the 250 W profile FTP
+    _save_ride(99, pd.Timestamp.today().normalize() - pd.Timedelta(days=2), 330)
+    at = _go(_app(), "Training")
+    _no_errors(at)
+    assert "Your FTP may be higher" in _texts(at.success)
+    assert db.get_user_data("Rider")["ftp"] == 250                   # nothing changed yet
+    at.button(key="accept_ftp_Rider").click().run()
+    _no_errors(at)
+    assert abs(db.get_user_data("Rider")["ftp"] - 313.5) <= 1         # 95 % of 330 W
+    assert "Your FTP may be higher" not in _texts(at.success)

@@ -1,0 +1,284 @@
+"""Sidebar: navigation, user profile, data import and the Strava connection."""
+import streamlit as st
+import pandas as pd
+import io
+from src.data.db import (save_user,
+                         get_all_users,
+                         delete_user,
+                         get_strava_auth,
+                         save_strava_auth,
+                         delete_strava_auth,
+                         create_oauth_state,
+                         consume_oauth_state)
+from src.data.cached import get_user_data
+from src.data import strava as sv
+from src.data.strava_import import (list_recent_rides,
+                                    fetch_ride_file,
+                                    import_history,
+                                    sync_new_rides)
+
+
+def render_sidebar():
+    """Renders the sidebar and returns all user configuration settings."""
+    
+    user_ftp = 200
+    user_weight = 70.0
+    user_lthr = 170
+    user_height = 175
+
+    st.sidebar.header("Navigation")
+    
+    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "Training", "User Corner"])
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("👤 User Profile")
+
+    # User Management
+    tab_select, tab_create = st.sidebar.tabs(["Select User", "Create/Edit"])
+    
+    selected_user_name = None
+    
+    with tab_select:
+        users = get_all_users()
+        if users:
+            selected_user_name = st.selectbox("Current User", users, key="current_user")
+            if selected_user_name:
+                u_data = get_user_data(selected_user_name)
+                if u_data:
+                    user_ftp = u_data['ftp']
+                    user_lthr = u_data['lthr']
+                    user_weight = u_data['weight']
+                    user_height = u_data['height']
+
+
+            if st.button("Delete User", type="primary"):
+                delete_user(selected_user_name)
+                st.rerun()
+        else:
+            st.info("No users found. Create one!")
+
+    with tab_create:
+        with st.form("user_form"):
+            new_name = st.text_input("Name")
+            new_ftp = st.number_input("FTP (Watts)", value=200)
+            new_lthr = st.number_input("LTHR (bpm)", value=170)
+            new_weight = st.number_input("Weight (kg)", value=70.0)
+            new_height = st.number_input("Height (cm)", value=175)
+            submitted = st.form_submit_button("Save User")
+            if submitted and new_name:
+                success, msg = save_user(new_name, new_ftp, new_lthr, new_weight, new_height)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("📂 Data Import")
+    
+    # 1. Initialize current_file to None by default
+    current_file = None
+    
+    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava"])
+
+    if import_method == "Upload Ride":
+        uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
+        # If user uploaded a file, assign it to current_file
+        if uploaded_file is not None:
+            current_file = uploaded_file
+
+    elif import_method == "Strava":
+        current_file = _render_strava_sidebar(selected_user_name, user_ftp, user_lthr)
+
+    # Settings
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Settings")
+    settings = {
+        'show_map': st.sidebar.checkbox("Show Map", value=True),
+        'show_curve': st.sidebar.checkbox("Show Power Curve", value=True),
+        'show_zones': st.sidebar.checkbox("Show Zones", value=True),
+        'show_ele': st.sidebar.checkbox("Show Elevation Profile", value=True),
+        'show_power': st.sidebar.checkbox("Show Power & Metrics", value=True),
+        'show_climbs': st.sidebar.checkbox("Show Climb Analysis", value=True),
+        'show_aero': st.sidebar.checkbox("Show Aerodynamic Analysis (Beta)", value=True),
+
+        'ftp': user_ftp,
+        'lthr': user_lthr,
+        'weight': user_weight,
+        'height': user_height
+    }
+
+    # RETURN 'current_file' (which works for both logic paths)
+    return app_mode, selected_user_name, current_file, settings
+
+
+def _strava_config():
+    """App credentials from .streamlit/secrets.toml ([strava] section), or None."""
+    try:
+        sec = st.secrets["strava"]
+        return sv.StravaConfig(
+            client_id=str(sec["client_id"]),
+            client_secret=str(sec["client_secret"]),
+            redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
+        )
+    except Exception:
+        return None
+
+
+def _strava_usage():
+    if 'strava_usage' not in st.session_state:
+        st.session_state['strava_usage'] = sv.RateUsage()
+    return st.session_state['strava_usage']
+
+
+def handle_strava_callback():
+    """
+    Completes the OAuth round trip when Strava redirects back to the app
+    (?code=...&scope=...&state=...). Call before rendering the sidebar.
+    """
+    params = st.query_params
+    if "state" not in params or not ("code" in params or "error" in params):
+        return
+
+    state, code = params.get("state"), params.get("code")
+    error, scope = params.get("error"), params.get("scope")
+    st.query_params.clear()  # the code is single-use; never process it twice
+
+    user_name = consume_oauth_state(state)
+    if not user_name:
+        st.error("Strava connection failed: the request expired or did not come from this app. Please try again.")
+        return
+    st.session_state["current_user"] = user_name
+
+    if error:
+        st.warning("Strava access was not granted.")
+        return
+    if not sv.granted_scope_ok(scope):
+        st.warning("Strava was connected without permission to read activities. "
+                   "Please reconnect and keep the activity access box ticked.")
+        return
+
+    cfg = _strava_config()
+    if cfg is None:
+        st.error("Strava is not configured (see README).")
+        return
+    try:
+        auth = sv.exchange_code(cfg, code)
+    except sv.StravaError as e:
+        st.error(f"Strava connection failed: {e}")
+        return
+    save_strava_auth(user_name, auth)
+    st.toast(f"✅ Strava connected for {user_name}")
+
+
+def _activity_label(a):
+    when = (a.get("start_date_local") or a.get("start_date") or "")[:10]
+    km = (a.get("distance") or 0) / 1000
+    return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
+
+
+def _show_import_result(res):
+    """Summary of an ImportResult in the sidebar."""
+    st.sidebar.success(f"Imported {res.imported} of {res.found} rides.")
+    skipped = []
+    if res.already_imported: skipped.append(f"{res.already_imported} already imported")
+    if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
+    if res.no_data: skipped.append(f"{res.no_data} without recorded data")
+    if skipped:
+        st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")
+    if res.failed:
+        st.sidebar.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
+    if res.stopped_reason:
+        st.sidebar.info(f"{res.stopped_reason} ({res.remaining} left)")
+
+
+def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
+    """Returns a file-like ride to analyse, or None."""
+    cfg = _strava_config()
+    if cfg is None:
+        st.sidebar.warning("Strava isn't set up yet. Add your API app's `client_id` and "
+                           "`client_secret` to `.streamlit/secrets.toml` (see README).")
+        return None
+    if not user_name:
+        st.sidebar.info("Select or create a user profile first.")
+        return None
+
+    auth = get_strava_auth(user_name)
+    if not auth:
+        key = f"oauth_state_{user_name}"
+        if key not in st.session_state:
+            st.session_state[key] = create_oauth_state(user_name)
+        st.sidebar.link_button("🔗 Connect Strava", sv.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption("Strava opens in a new tab; you'll continue there after approving.")
+        return None
+
+    who = auth.get("athlete_name") or "your account"
+    st.sidebar.caption(f"Connected to Strava as **{who}**")
+    usage = _strava_usage()
+    current_file = None
+
+    try:
+        # Recent rides (cached per session to spare the rate limit)
+        cache_key = f"strava_recent_{user_name}"
+        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list"):
+            with st.spinner("Loading your Strava rides..."):
+                st.session_state[cache_key] = list_recent_rides(cfg, user_name, usage=usage)
+        recent = st.session_state[cache_key]
+
+        if recent:
+            choice = st.sidebar.selectbox("Recent rides", recent, format_func=_activity_label)
+            if st.sidebar.button("Analyze ride"):
+                with st.spinner("Downloading ride from Strava..."):
+                    name, payload = fetch_ride_file(cfg, user_name, choice, usage=usage)
+                file_obj = io.BytesIO(payload)
+                file_obj.name = name
+                st.session_state[f'strava_file_{user_name}'] = file_obj
+        else:
+            st.sidebar.info("No recent rides found on Strava.")
+
+        if st.sidebar.button("⟳ Sync new rides", help="Imports rides added to Strava since the last one "
+                             "you imported (a few days of overlap catch late uploads)."):
+            bar = st.sidebar.progress(0.0, text="Checking Strava...")
+
+            def _sync_progress(done, total, name):
+                bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
+
+            res, since_dt = sync_new_rides(cfg, user_name, user_ftp, progress=_sync_progress, usage=usage,
+                                           lthr=user_lthr)
+            bar.empty()
+            if res.imported == 0 and not res.failed and not res.stopped_reason:
+                st.sidebar.success(f"Up to date (checked since {since_dt:%d %b %Y}).")
+            else:
+                _show_import_result(res)
+
+        with st.sidebar.expander("📥 Import ride history"):
+            st.caption("Imports every ride since the chosen date into your history "
+                       "(PMC, power records). Rides already saved are skipped.")
+            since = st.date_input("Since", value=pd.Timestamp.today().date() - pd.Timedelta(days=90))
+            if st.button("Import history"):
+                bar = st.progress(0.0, text="Listing activities...")
+
+                def _progress(done, total, name):
+                    frac = done / total if total else 1.0
+                    bar.progress(frac, text=f"{done}/{total} {name}"[:60])
+
+                res = import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage,
+                                     lthr=user_lthr)
+                bar.empty()
+                _show_import_result(res)
+
+    except sv.StravaAuthError as e:
+        st.sidebar.error(f"{e}")
+    except sv.StravaError as e:
+        st.sidebar.error(f"Strava: {e}")
+
+    if st.sidebar.button("Disconnect Strava"):
+        sv.revoke(cfg, auth["refresh_token"])
+        delete_strava_auth(user_name)
+        for k in [f"strava_recent_{user_name}", f"strava_file_{user_name}"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    # Keyed per profile so a ride is never auto-saved to the wrong rider
+    current_file = st.session_state.get(f'strava_file_{user_name}', current_file)
+    return current_file

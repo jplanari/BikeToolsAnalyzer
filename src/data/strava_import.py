@@ -164,3 +164,22 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
     if progress:
         progress(res.found, res.found, "")
     return res
+
+
+SYNC_MARGIN_DAYS = 3         # rides can reach Strava late; re-listing a few days is cheap and idempotent
+SYNC_FALLBACK_DAYS = 30      # first sync with nothing imported from Strava yet
+
+
+def sync_new_rides(cfg, user_name, ftp, progress=None, usage=None, lthr=None, now=None):
+    """
+    Imports what is new on Strava since the last imported ride. Returns (ImportResult, since).
+    Starts SYNC_MARGIN_DAYS before the newest imported ride to catch rides that were uploaded
+    late; the overlap costs one listing request because already-imported rides are skipped
+    without being downloaded again. With nothing imported yet it looks back SYNC_FALLBACK_DAYS.
+    """
+    now = pd.Timestamp(now) if now is not None else pd.Timestamp.now('UTC').tz_localize(None)
+    last = db.latest_strava_ride_date(user_name)
+    since = (last - pd.Timedelta(days=SYNC_MARGIN_DAYS)) if last is not None \
+        else now - pd.Timedelta(days=SYNC_FALLBACK_DAYS)
+    since = since.to_pydatetime()
+    return import_history(cfg, user_name, since, ftp, progress=progress, usage=usage, lthr=lthr), since

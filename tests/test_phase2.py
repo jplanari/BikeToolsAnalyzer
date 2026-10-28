@@ -212,3 +212,33 @@ def test_phase2_queries(temp_db):
     recs = db.get_power_records("Rider")
     assert pp.as_dict(pp.best_curve(recs))[1200] == pytest.approx(250)
     assert db.get_ride_stats("Rider")['kj'].iloc[0] == pytest.approx(1500, rel=0.01)
+
+
+# --- FTP suggestion ------------------------------------------------------------------
+
+def _eff(day, watts20, ride_id=1):
+    return [{'duration': d, 'watts': w, 'date': pd.Timestamp(day), 'ride_id': ride_id}
+            for d, w in ((300, watts20 + 30), (600, watts20 + 15), (1200, watts20))]
+
+
+def test_suggest_threshold_up_when_recent_20min_beats_ftp():
+    recs = pd.DataFrame(_eff('2026-10-10', 300))
+    s = pp.suggest_threshold(recs, current_ftp=250, today='2026-10-28')
+    assert s['direction'] == 'up' and s['ftp'] == 285 and s['change_w'] == 35
+    assert s['change_pct'] == pytest.approx(14.0) and s['best_20min_date'] == pd.Timestamp('2026-10-10')
+    assert s['cp'] > 280                                         # CP from the 5/10/20 min points
+
+
+def test_suggest_threshold_quiet_when_close_or_unsupported():
+    close = pd.DataFrame(_eff('2026-10-10', 262))                # 0.95 * 262 = 248.9: within 3 %
+    assert pp.suggest_threshold(close, 250, today='2026-10-28') is None
+    old = pd.DataFrame(_eff('2026-05-01', 320))                  # outside the 90-day window
+    assert pp.suggest_threshold(old, 250, today='2026-10-28') is None
+    no20 = pd.DataFrame(_eff('2026-10-10', 300)).query('duration < 1200')
+    assert pp.suggest_threshold(no20, 250, today='2026-10-28') is None
+    assert pp.suggest_threshold(pd.DataFrame(), 250) is None and pp.suggest_threshold(close, 0) is None
+
+
+def test_suggest_threshold_down_is_flagged_as_such():
+    s = pp.suggest_threshold(pd.DataFrame(_eff('2026-10-10', 232)), 250, today='2026-10-28')
+    assert s['direction'] == 'down' and s['ftp'] == 220

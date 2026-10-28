@@ -1,8 +1,11 @@
 """Training page: load, power profile, durability and intensity distribution."""
+import json
+
 import pandas as pd
 import streamlit as st
 
-from src.data.db import replace_planned_sessions
+from src.data.db import (replace_planned_sessions, add_structured_session as db_add_session,
+                         delete_planned_session, update_user_ftp)
 from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
                              get_kj_records, get_zone_rows, get_planned_sessions,
                              count_rides_needing_update, compute_pmc, cp_history)
@@ -10,8 +13,10 @@ from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
 from src.analysis import durability as du
 from src.analysis import intensity as it
+from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
+from src.viz.sections import section_picker, remembered
 
 PERIODS = {'6 weeks': 42, '3 months': 91, '6 months': 182, '1 year': 365, 'All': None}
 
@@ -122,47 +127,145 @@ def render_training_page(user_name):
 
     today = pd.Timestamp.today().normalize()
     mode = _theme()
-    t_load, t_power, t_dur, t_int = st.tabs(["📈 Load", "⚡ Power profile", "🔋 Durability",
-                                             "🎯 Intensity"])
-    with t_load:
-        _render_load(user_name, today, mode)
-    with t_power:
+    _threshold_hint(user_name, user, today)
+    sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
+    section = section_picker(sections, key="training_section")
+    if section == sections[0]:
+        _render_load(user_name, user['ftp'], today, mode)
+    elif section == sections[1]:
         _render_power(user_name, user, today, mode)
-    with t_dur:
+    elif section == sections[2]:
         _render_durability(user_name, today, mode)
-    with t_int:
+    else:
         _render_intensity(user_name, today, mode)
+
+
+def _threshold_hint(user_name, user, today):
+    """Suggests a new FTP when recent riding supports it; nothing changes until you accept."""
+    s = pp.suggest_threshold(get_power_records(user_name), user['ftp'], today)
+    if not s:
+        return
+    dismissed = f"ftp_hint_dismissed_{user_name}_{s['ftp']}"
+    if st.session_state.get(dismissed):
+        return
+    when = f"{s['best_20min_date']:%d %b}"
+    cp = f" Critical power from the same efforts: {s['cp']:.0f} W." if s['cp'] else ""
+    if s['direction'] == 'up':
+        st.success(f"📈 **Your FTP may be higher.** Your best 20 minutes in the last {s['window_days']} days "
+                   f"was **{s['best_20min_w']:.0f} W** ({when}), which suggests an FTP of about "
+                   f"**{s['ftp']} W** (95 %), {s['change_w']:+d} W vs your current {user['ftp']} W.{cp}")
+        b1, b2, _ = st.columns([1, 1, 4])
+        if b1.button(f"Set FTP to {s['ftp']} W", key=f"accept_ftp_{user_name}",
+                     help="Changes your profile FTP for new rides, zones and planning. Rides already saved "
+                          "keep the FTP they were scored with."):
+            update_user_ftp(user_name, s['ftp'])
+            st.rerun()
+        if b2.button("Not now", key=f"dismiss_ftp_{user_name}"):
+            st.session_state[dismissed] = True
+            st.rerun()
+    else:
+        st.info(f"ℹ️ Your best 20 minutes in the last {s['window_days']} days was {s['best_20min_w']:.0f} W "
+                f"({when}), about {s['ftp']} W as an FTP, below your current {user['ftp']} W. That only means "
+                f"no recent effort backs it up. If you haven't done a maximal 20-minute test lately, "
+                f"your FTP may well be unchanged.{cp}")
 
 
 # --- Load ----------------------------------------------------------------------
 
-def _plan_editor(user_name, today):
-    saved = get_planned_sessions(user_name, after=today)
-    if saved.empty:
-        saved = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
+def _plan_editor(user_name, ftp, today):
+    """
+    Planned sessions: quick TSS entries, sessions built from intervals, and the builder.
+    Returns the plan as [{'date', 'tss'}, ...] (quick edits included before they are saved).
+    """
+    quick = get_planned_sessions(user_name, after=today, structured=False)[['date', 'tss', 'note']]
+    if quick.empty:
+        quick = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
                               'tss': pd.Series(dtype=float), 'note': pd.Series(dtype=str)})
-    with st.expander(f"🗓️ Planned sessions ({len(saved)})", expanded=False):
-        st.caption("Add the TSS you plan to ride on future days; the chart forecasts fitness, fatigue "
-                   "and form from them. Rest days need no row. Edits preview immediately; **Save plan** "
-                   "keeps them.")
+    built = get_planned_sessions(user_name, after=today, structured=True)
+    with st.expander(f"🗓️ Planned sessions ({len(quick) + len(built)})", expanded=False):
+        st.caption("Plan the coming days and the chart forecasts fitness, fatigue and form from them. "
+                   "Rest days need no entry. Build a session from intervals, or just enter its TSS.")
+        _session_builder(user_name, ftp, today)
+        _built_sessions(user_name, built)
+
+        st.markdown("**Quick entry: just the TSS**")
         edited = st.data_editor(
-            saved, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
+            quick, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
             column_config={
                 'date': st.column_config.DateColumn("Date", min_value=(today + pd.Timedelta(days=1)).date(),
                                                     format="ddd DD MMM YYYY", required=True),
                 'tss': st.column_config.NumberColumn("TSS", min_value=0, max_value=500, step=5, required=True),
                 'note': st.column_config.TextColumn("Note (optional)"),
             })
+        st.caption("Edits preview immediately; **Save plan** keeps them.")
         if st.button("Save plan", key=f"save_plan_{user_name}"):
             n = replace_planned_sessions(user_name, edited, today)
             st.toast(f"✅ Saved {n} planned sessions")
-    return edited
+
+    plan = [] if edited is None or edited.empty else edited[['date', 'tss']].to_dict('records')
+    plan += built[['date', 'tss']].to_dict('records')
+    return plan
 
 
-def _render_load(user_name, today, mode):
+def _session_builder(user_name, ftp, today):
+    st.markdown("**Build a session from intervals**")
+    c1, c2 = st.columns([1, 2])
+    day = c1.date_input("Date", value=(today + pd.Timedelta(days=1)).date(),
+                        min_value=(today + pd.Timedelta(days=1)).date(), key=f"build_date_{user_name}")
+    title = c2.text_input("Name (optional)", key=f"build_name_{user_name}",
+                          placeholder="e.g. Threshold 4×8")
+    st.caption("Each row is a block: it repeats *Reps* times, *Work* min at *Work W*, with *Rest* min at "
+               "*Rest W* between the repeats. A warm-up is one rep with no rest.")
+    blocks = st.data_editor(
+        pd.DataFrame(wo.default_blocks(ftp), columns=wo.BLOCK_COLUMNS), num_rows="dynamic",
+        hide_index=True, use_container_width=True, key=f"build_blocks_{user_name}",
+        column_config={
+            'name': st.column_config.TextColumn("Block"),
+            'reps': st.column_config.NumberColumn("Reps", min_value=1, max_value=50, step=1),
+            'work_min': st.column_config.NumberColumn("Work (min)", min_value=0, max_value=600, step=0.5),
+            'work_w': st.column_config.NumberColumn("Work (W)", min_value=0, max_value=2000, step=5),
+            'rest_min': st.column_config.NumberColumn("Rest (min)", min_value=0, max_value=600, step=0.5),
+            'rest_w': st.column_config.NumberColumn("Rest (W)", min_value=0, max_value=2000, step=5),
+        })
+    s = wo.session_stats(blocks, ftp)
+    m = st.columns(5)
+    m[0].metric("Duration", f"{s['duration_s'] // 3600}:{s['duration_s'] % 3600 // 60:02d} h")
+    m[1].metric("Average", f"{s['avg_power']:.0f} W")
+    m[2].metric("Normalized", f"{s['np']:.0f} W")
+    m[3].metric("IF", f"{s['if']:.2f}")
+    m[4].metric("TSS", f"{s['tss']:.0f}")
+    if not ftp:
+        st.warning("Set an FTP in your profile to score the session.")
+    if st.button("Add to plan", key=f"add_session_{user_name}"):
+        clean = wo.clean_blocks(blocks)
+        if not clean:
+            st.warning("Add at least one block with some work time.")
+        else:
+            db_add_session(user_name, day, clean, s['tss'], title.strip() or wo.describe(clean))
+            st.rerun()
+
+
+def _built_sessions(user_name, built):
+    if built.empty:
+        return
+    st.markdown("**Built sessions**")
+    for _, r in built.iterrows():
+        c = st.columns([2, 6, 1, 1])
+        c[0].write(f"{r['date']:%a %d %b}")
+        try:
+            detail = wo.describe(json.loads(r['blocks']))
+        except (TypeError, ValueError):
+            detail = ""
+        c[1].write(f"**{r['note']}**  \n{detail}" if r['note'] and r['note'] != detail else detail)
+        c[2].write(f"{r['tss']:.0f} TSS")
+        if c[3].button("✖", key=f"del_plan_{int(r['id'])}", help="Remove this session"):
+            delete_planned_session(user_name, int(r['id']))
+            st.rerun()
+
+
+def _render_load(user_name, ftp, today, mode):
     history = get_user_tss_history(user_name)
-    plan = _plan_editor(user_name, today)
-    planned = [] if plan is None or plan.empty else plan[['date', 'tss']].to_dict('records')
+    planned = _plan_editor(user_name, ftp, today)
     pmc = compute_pmc(history, today=today, planned=planned)
     if pmc.empty:
         st.info("No rides with TSS yet. Upload a ride or import your Strava history.")
@@ -198,7 +301,7 @@ def _render_load(user_name, today, mode):
                 f"**{pmc['TSB'].iloc[-1]:+.0f}** ({form_status(pmc['TSB'].iloc[-1])}), "
                 f"fitness {pmc['CTL'].iloc[-1]:.0f}.")
 
-    label = st.radio("Show", list(PERIODS), index=1, horizontal=True, key="load_period")
+    label = remembered(st.radio, "load_period", "3 months", "Show", list(PERIODS), horizontal=True)
     start = _period_start(label, today)
     view = pmc if start is None else pmc.loc[start:]
     _chart(tp.plot_training_load(view, today, mode))
@@ -211,10 +314,10 @@ def _render_load(user_name, today, mode):
 
     st.subheader("Volume")
     v1, v2 = st.columns([1, 3])
-    freq = v1.radio("Group by", ["Week", "Month"], horizontal=True, key="vol_freq")
+    freq = remembered(v1.radio, "vol_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
     metrics = {'Hours': 'hours', 'Distance (km)': 'km', 'TSS': 'tss', 'Work (kJ)': 'kj',
                'Elevation (m)': 'elevation_m', 'Rides': 'rides'}
-    m_label = v2.radio("Measure", list(metrics), horizontal=True, key="vol_metric")
+    m_label = remembered(v2.radio, "vol_metric", "Hours", "Measure", list(metrics), horizontal=True)
     stats = get_ride_stats(user_name, start, today)
     vol = tl.volume(stats, 'W' if freq == "Week" else 'M')
     if vol.empty:
@@ -293,7 +396,7 @@ def _render_durability(user_name, today, mode):
     st.caption("How much of your fresh best power you can still produce after 1, 2 and 3 MJ of work "
                "(about 1, 2 and 3 hours at ~280 W). High retention = good durability, which decides "
                "the end of long races and gran fondos.")
-    label = st.radio("Period", list(PERIODS), index=2, horizontal=True, key="dur_period")
+    label = remembered(st.radio, "dur_period", "6 months", "Period", list(PERIODS), horizontal=True)
     start = _period_start(label, today)
     table = du.durability_table(get_power_records(user_name, start, today),
                                 get_kj_records(user_name, start, today), start, today)
@@ -317,9 +420,9 @@ def _render_durability(user_name, today, mode):
 
 def _render_intensity(user_name, today, mode):
     c1, c2, c3 = st.columns(3)
-    kind = c1.radio("Based on", ["Power", "Heart rate"], horizontal=True, key="tid_kind")
-    freq = c2.radio("Group by", ["Week", "Month"], horizontal=True, key="tid_freq")
-    label = c3.selectbox("Period", list(PERIODS), index=1, key="tid_period")
+    kind = remembered(c1.radio, "tid_kind", "Power", "Based on", ["Power", "Heart rate"], horizontal=True)
+    freq = remembered(c2.radio, "tid_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
+    label = remembered(c3.selectbox, "tid_period", "3 months", "Period", list(PERIODS))
     start = _period_start(label, today)
     rows = get_zone_rows(user_name, 'power' if kind == "Power" else 'hr', start, today)
     if rows.empty:

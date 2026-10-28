@@ -5,6 +5,8 @@ import re
 import secrets
 import time
 
+from src.analysis.dates import parse_utc
+
 DB_FILE = "bikethools.db"
 
 
@@ -102,6 +104,10 @@ def migrate_db():
     ''')
     try:
         c.execute("ALTER TABLE users ADD COLUMN crank_mm REAL DEFAULT 172.5")
+    except sqlite3.OperationalError:
+        pass
+    try:   # structured sessions keep their interval blocks (JSON); quick entries leave it NULL
+        c.execute("ALTER TABLE planned_sessions ADD COLUMN blocks TEXT")
     except sqlite3.OperationalError:
         pass
 
@@ -225,6 +231,13 @@ def save_user(name, ftp, lthr, weight, height=175.0):
     finally:
         conn.close()
 
+def update_user_ftp(user_name, ftp):
+    """Sets the FTP only. Rides already saved keep the FTP they were scored with."""
+    conn = _connect()
+    conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
+    conn.commit()
+    conn.close()
+
 def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     """
     Updates the user's physiological metrics.
@@ -342,7 +355,8 @@ def _iso_timestamp(ts):
 # 3: gap-aware resampling (smart recording), enhanced FIT channels, moving fallback
 # 4: power after 1/2/3 MJ of work (durability); zone times on moving time only
 # 5: decoupling ignores coasting (0 W) seconds
-METRICS_VERSION = 5
+# 6: impossible sensor readings (power spikes, HR dropouts) removed before scoring
+METRICS_VERSION = 6
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -755,6 +769,20 @@ def get_imported_strava_ids(user_name):
     conn.close()
     return {r[0] for r in rows}
 
+def latest_strava_ride_date(user_name):
+    """Start (naive UTC) of the newest ride imported from Strava, or None."""
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND strava_activity_id IS NOT NULL "
+                       "AND date_time IS NOT NULL", (user['id'],)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    ts = pd.to_datetime(row[0], errors='coerce', utc=True)
+    return None if pd.isna(ts) else ts.tz_convert(None)
+
 def get_ride_start_times(user_name):
     """Start times (UTC, naive) of all dated rides, for cross-source dedup."""
     user = get_user_data(user_name)
@@ -775,21 +803,8 @@ def get_ride_start_times(user_name):
 # --- Deeper analytics queries ------------------------------------------------
 
 def _parse_dates(series):
-    """
-    Stored ISO strings (with or without offset) -> naive UTC datetimes.
-    A history has few distinct dates but many rows (one per histogram cell or power
-    record), so each distinct string is parsed once and mapped back.
-    """
-    uniq = pd.unique(series.dropna())
-    if len(uniq) == 0:
-        return pd.Series(pd.NaT, index=series.index, dtype='datetime64[ns]')
-    try:
-        parsed = pd.to_datetime(pd.Series(uniq), errors='coerce', utc=True, format='ISO8601')
-    except (ValueError, TypeError):      # unusual stored format: slower, forgiving path
-        parsed = pd.Series([pd.to_datetime(d, errors='coerce', utc=True) for d in uniq])
-    parsed = pd.Series(pd.DatetimeIndex(parsed).tz_convert(None))
-    out = series.map(dict(zip(uniq, parsed)))
-    return pd.to_datetime(out).astype('datetime64[ns]')
+    """Stored ISO strings (with or without offset) -> naive UTC datetimes."""
+    return parse_utc(series)
 
 def _date_filter(start, end):
     sql, params = "", []
@@ -913,27 +928,59 @@ def get_zone_rows(user_name, kind, start=None, end=None):
     df['date'] = _parse_dates(df['date'])
     return df[cols]
 
-def get_planned_sessions(user_name, after=None):
-    """Planned sessions (date, tss, note), optionally only after a date."""
-    cols = ['date', 'tss', 'note']
+def get_planned_sessions(user_name, after=None, structured=None):
+    """
+    Planned sessions as DataFrame(id, date, tss, note, blocks), optionally only after a date.
+    structured: None = all, False = quick TSS entries only, True = interval-built sessions only.
+    blocks is the JSON text of the interval blocks (None for quick entries).
+    """
+    cols = ['id', 'date', 'tss', 'note', 'blocks']
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame(columns=cols)
-    sql = "SELECT date, tss, note FROM planned_sessions WHERE user_id = ?"
+    sql = "SELECT id, date, tss, note, blocks FROM planned_sessions WHERE user_id = ?"
     params = [user['id']]
     if after is not None:
         sql += " AND date > ?"
         params.append(pd.Timestamp(after).strftime("%Y-%m-%d"))
+    if structured is not None:
+        sql += " AND blocks IS NOT NULL" if structured else " AND blocks IS NULL"
     conn = _connect()
-    df = pd.read_sql_query(sql + " ORDER BY date", conn, params=params)
+    df = pd.read_sql_query(sql + " ORDER BY date, id", conn, params=params)
     conn.close()
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     return df[cols]
 
+def add_structured_session(user_name, date, blocks, tss, note=None):
+    """Stores one interval-built session (blocks: list of dicts, scored to `tss`). Returns its id."""
+    import json
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    cur = conn.execute("INSERT INTO planned_sessions (user_id, date, tss, note, blocks) VALUES (?, ?, ?, ?, ?)",
+                       (user['id'], pd.Timestamp(date).strftime("%Y-%m-%d"), float(tss),
+                        note or None, json.dumps(blocks)))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+def delete_planned_session(user_name, session_id):
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = _connect()
+    cur = conn.execute("DELETE FROM planned_sessions WHERE id = ? AND user_id = ?", (int(session_id), user['id']))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
 def replace_planned_sessions(user_name, sessions, after):
     """
-    Replaces the user's planned sessions dated after `after` (e.g. today)
-    with `sessions` (rows with date, tss, note). Past plans are kept.
+    Replaces the user's quick-entry planned sessions dated after `after` (e.g. today)
+    with `sessions` (rows with date, tss, note). Past plans and interval-built sessions
+    (see add_structured_session) are kept.
     Rows without a date or with a negative/missing TSS are ignored.
     Returns the number of sessions stored.
     """
@@ -951,7 +998,7 @@ def replace_planned_sessions(user_name, sessions, after):
         rows.append((user['id'], d.strftime("%Y-%m-%d"), float(t),
                      None if note is None or (isinstance(note, float) and pd.isna(note)) else str(note)))
     conn = _connect()
-    conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ?",
+    conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ? AND blocks IS NULL",
                  (user['id'], cutoff.strftime("%Y-%m-%d")))
     conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)
     conn.commit()

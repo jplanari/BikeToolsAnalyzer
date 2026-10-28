@@ -28,9 +28,17 @@ def best_curve(records, start=None, end=None):
         r = r[r['date'] < pd.Timestamp(end) + pd.Timedelta(days=1)]
     if r.empty:
         return pd.DataFrame(columns=cols)
-    # Ties go to the earliest ride (the record was set first)
-    r = r.sort_values(['duration', 'watts', 'date'], ascending=[True, False, True])
-    return r.groupby('duration', as_index=False).first()[cols]
+    return _best_of_sorted(_sort_for_best(r))
+
+
+def _sort_for_best(r):
+    # Best first within each duration; ties go to the earliest ride (the record was set first)
+    return r.sort_values(['duration', 'watts', 'date'], ascending=[True, False, True])
+
+
+def _best_of_sorted(r):
+    cols = ['duration', 'watts', 'date', 'ride_id']
+    return r.drop_duplicates('duration', keep='first')[cols].reset_index(drop=True)
 
 
 def window_curves(records, today=None):
@@ -104,8 +112,11 @@ def cp_history(records, window_days=90, freq='W', today=None):
     if len(ends) == 0 or ends[-1] < today:
         ends = ends.append(pd.DatetimeIndex([today]))
     rows = {}
+    ranked = _sort_for_best(records.dropna(subset=['watts']))     # sort once, filter per window
     for end in ends:
-        curve = as_dict(best_curve(records, end - pd.Timedelta(days=window_days - 1), end))
+        start = end - pd.Timedelta(days=window_days - 1)
+        in_window = ranked[(ranked['date'] >= start) & (ranked['date'] < end + pd.Timedelta(days=1))]
+        curve = as_dict(_best_of_sorted(in_window)) if not in_window.empty else {}
         cp = estimate_critical_power(curve) if curve else None
         rows[end] = {
             'cp': cp['cp'] if cp else np.nan,
@@ -115,6 +126,41 @@ def cp_history(records, window_days=90, freq='W', today=None):
     out = pd.DataFrame.from_dict(rows, orient='index', columns=cols)
     out.index.name = 'date'
     return out
+
+
+MIN_CHANGE_PCT = 3.0
+MIN_CHANGE_W = 5
+
+
+def suggest_threshold(records, current_ftp, today=None, window_days=90):
+    """
+    Does your recent riding suggest a different FTP? Uses the rolling `window_days` best curve:
+    FTP estimate = 95 % of the best 20-minute power, and CP from the 3-20 min efforts.
+    Returns None without a 20-minute effort in the window or when the estimate is within
+    max(3 %, 5 W) of `current_ftp`; otherwise
+      {'ftp', 'change_w', 'change_pct', 'direction' ('up'/'down'), 'best_20min_w',
+       'best_20min_date', 'cp', 'w_prime', 'window_days'}.
+    A 'down' result only means no recent effort backs your FTP up; an easy period does not
+    lower your fitness, so callers should word it softly.
+    """
+    if records is None or records.empty or not current_ftp:
+        return None
+    today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
+    best = best_curve(records, today - pd.Timedelta(days=window_days - 1), today)
+    row = best[best['duration'] == 1200]
+    if row.empty:
+        return None
+    best20 = float(row['watts'].iloc[0])
+    est = 0.95 * best20
+    diff = est - current_ftp
+    if abs(diff) < max(current_ftp * MIN_CHANGE_PCT / 100, MIN_CHANGE_W):
+        return None
+    cp = estimate_critical_power(as_dict(best))
+    return {'ftp': int(round(est)), 'change_w': int(round(diff)), 'change_pct': diff / current_ftp * 100,
+            'direction': 'up' if diff > 0 else 'down', 'best_20min_w': best20,
+            'best_20min_date': pd.Timestamp(row['date'].iloc[0]),
+            'cp': cp['cp'] if cp else None, 'w_prime': cp['w_prime'] if cp else None,
+            'window_days': window_days}
 
 
 def power_profile(curve_dict, weight_kg, ftp):
