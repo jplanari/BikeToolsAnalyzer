@@ -55,6 +55,12 @@ def parse_fit(file_bytes):
         'distance': 'dist_m'     # usually cumulative distance in meters
     }
     
+    # Newer devices often record only the 32-bit 'enhanced_' variants (or
+    # only fill those in): use them when the plain channel is absent/empty.
+    for plain, enhanced in (('speed', 'enhanced_speed'), ('altitude', 'enhanced_altitude')):
+        if enhanced in df.columns and (plain not in df.columns or df[plain].isna().all()):
+            df[plain] = df[enhanced]
+
     df.rename(columns=col_mapping, inplace=True)
 
     df['speed_kmh'] = df['speed'] * 3.6 if 'speed' in df.columns else np.nan

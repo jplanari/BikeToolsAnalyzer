@@ -216,47 +216,61 @@ def calculate_bearing(df):
 
     return bearing_deg
 
+# Recording gaps up to this long are treated as "still riding" (smart
+# recording, brief sensor dropouts): power, cadence and speed are carried
+# across. Longer gaps are pauses: power and cadence 0, position held.
+MAX_HOLD_GAP_S = 10
+
 def resample_to_seconds(df):
     """
     Resamples data to 1-second intervals.
-    Handles gaps (pauses) by holding position (distance=0) and zeroing power.
+    - Gaps <= MAX_HOLD_GAP_S: all channels interpolated (devices with smart
+      recording only log every few seconds; zero-filling those seconds used
+      to cut average power by up to two thirds).
+    - Longer gaps (pauses): position held, power/cadence 0, speed 0.
+    - Lat/lon/ele/HR are interpolated over gaps up to 30 s, as before.
     """
     if df.empty:
         return df
-        
+
     df = df.copy()
-    df = df.set_index('time')
-    
+    df = df.dropna(subset=['time']).drop_duplicates(subset='time').set_index('time').sort_index()
+    df['_orig'] = 1.0
+
     # 1. Resample to 1s grid
     df_resampled = df.resample('1s').asfreq()
-    
-    # 2. Interpolate short gaps (GPS dropouts < 30s)
-    #    We interpolate Lat/Lon/Ele/HR so movement looks smooth
-    cols_to_interp = ['lat', 'lon', 'ele', 'hr']
-    # Only interpolate columns that actually exist
-    cols_to_interp = [c for c in cols_to_interp if c in df_resampled.columns]
-    
-    df_resampled[cols_to_interp] = df_resampled[cols_to_interp].interpolate(
-        method='time', limit=30
-    )
 
-    # 3. Handle Long Gaps (> 30s, e.g., lunch break)
-    #    If we didn't interpolate (limit reached), we assume the rider STOPPED.
-    #    Position (lat/lon/ele) -> Forward Fill (stay at last known point)
-    df_resampled['lat'] = df_resampled['lat'].ffill()
-    df_resampled['lon'] = df_resampled['lon'].ffill()
-    df_resampled['ele'] = df_resampled['ele'].ffill()
-    
-    #    Power/Cadence -> Fill with 0 (not pedaling)
-    if 'power' in df_resampled.columns:
-        df_resampled['power'] = df_resampled['power'].fillna(0)
-    if 'cadence' in df_resampled.columns:
-        df_resampled['cadence'] = df_resampled['cadence'].fillna(0)
-        
-    #    HR -> Forward Fill (heart still beating, assume last value)
+    # Length of the recording gap each inserted second belongs to
+    t = df_resampled.index.to_series()
+    prev_t = t.where(df_resampled['_orig'].notna()).ffill()
+    next_t = t.where(df_resampled['_orig'].notna()).bfill()
+    gap_s = (next_t - prev_t).dt.total_seconds()
+    inserted = df_resampled['_orig'].isna()
+    short_gap = inserted & (gap_s <= MAX_HOLD_GAP_S)
+    long_gap = inserted & ~short_gap
+
+    # 2. Interpolate position/HR over gaps up to 30 s (GPS dropouts)
+    cols_to_interp = [c for c in ['lat', 'lon', 'ele', 'hr'] if c in df_resampled.columns]
+    df_resampled[cols_to_interp] = df_resampled[cols_to_interp].interpolate(method='time', limit=30)
+
+    # 3. Effort channels: carry across short gaps only
+    for col in ['power', 'cadence', 'speed']:
+        if col in df_resampled.columns:
+            filled = pd.to_numeric(df_resampled[col], errors='coerce').interpolate(
+                method='time', limit_area='inside')
+            df_resampled[col] = filled.where(~long_gap)
+
+    # 4. Long gaps: the rider stopped
+    for col in ['lat', 'lon', 'ele']:
+        if col in df_resampled.columns:
+            df_resampled[col] = df_resampled[col].ffill()
+    for col in ['power', 'cadence']:
+        if col in df_resampled.columns:
+            df_resampled[col] = df_resampled[col].fillna(0)
+    if 'speed' in df_resampled.columns:
+        df_resampled.loc[long_gap, 'speed'] = 0.0
     if 'hr' in df_resampled.columns:
         df_resampled['hr'] = df_resampled['hr'].ffill()
 
-    df_resampled = df_resampled.reset_index()
+    df_resampled = df_resampled.drop(columns='_orig').reset_index()
     return df_resampled
-
