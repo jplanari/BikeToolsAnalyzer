@@ -64,6 +64,19 @@ def migrate_db():
             FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
         )
     ''')
+    # Mean-maximal power of the part of each ride after `kj` of work (durability)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS power_records_kj (
+            ride_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            kj INTEGER NOT NULL,
+            duration_sec INTEGER NOT NULL,
+            watts REAL NOT NULL,
+            date_time TEXT,
+            PRIMARY KEY (ride_id, kj, duration_sec),
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
     try:
         c.execute("ALTER TABLE users ADD COLUMN crank_mm REAL DEFAULT 172.5")
     except sqlite3.OperationalError:
@@ -235,7 +248,8 @@ def _iso_timestamp(ts):
 # Bump when the per-ride calculations change; older rides get offered a recompute
 # 2: joint power/HR/cadence histograms, HR recovery
 # 3: gap-aware resampling (smart recording), enhanced FIT channels, moving fallback
-METRICS_VERSION = 3
+# 4: power after 1/2/3 MJ of work (durability); zone times on moving time only
+METRICS_VERSION = 4
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -288,6 +302,7 @@ def _metrics_fields(metrics):
         'tss_source': metrics.get('tss_source'),
         'zones': metrics.get('zones') or {},
         'hist': metrics.get('hist') or {},
+        'fatigued': metrics.get('fatigued') or {},
         'hrr60_bpm': _opt_float(metrics.get('hrr60')),
         'hrr_efforts': _opt_int(metrics.get('hrr_efforts')),
         'metrics_version': METRICS_VERSION,
@@ -308,6 +323,12 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     c.executemany("INSERT INTO ride_zones (ride_id, kind, zone, seconds) VALUES (?, ?, ?, ?)",
                   [(ride_id, kind, str(z), int(sec))
                    for kind, zz in zones.items() for z, sec in zz.items()])
+    fatigued = metadata.get('fatigued') or {}
+    c.executemany("""INSERT INTO power_records_kj (ride_id, user_id, kj, duration_sec, watts, date_time)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  [(ride_id, user_id, int(kj), int(d), float(w), metadata.get('date'))
+                   for kj, curve in fatigued.items() for d, w in curve.items()
+                   if w is not None and pd.notna(w)])
     hist = metadata.get('hist') or {}
     c.executemany("INSERT INTO ride_hist (ride_id, pair, x, y, seconds) VALUES (?, ?, ?, ?, ?)",
                   [(ride_id, pair, int(x), int(y), int(sec))
@@ -478,6 +499,7 @@ def update_ride_metrics(ride_id, metadata, power_curve_dict):
     c.execute("DELETE FROM power_records WHERE ride_id = ?", (ride_id,))
     c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
     c.execute("DELETE FROM ride_hist WHERE ride_id = ?", (ride_id,))
+    c.execute("DELETE FROM power_records_kj WHERE ride_id = ?", (ride_id,))
     _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
     conn.commit()
     conn.close()
@@ -645,7 +667,8 @@ def get_ride_stats(user_name, start=None, end=None):
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
                                       r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
-                                      r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source
+                                      r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source,
+                                      r.distance_km, r.elevation_m, r.kj
                                FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
                                ORDER BY r.date_time""", conn, params=[user['id'], *params])
     conn.close()
@@ -677,3 +700,53 @@ def period_coverage(user_name, start=None, end=None):
                 WHERE r.user_id = ? AND h.pair = ?{where}""", [user['id'], pair, *params]).fetchone()[0]
     conn.close()
     return out
+
+def get_power_records(user_name, start=None, end=None):
+    """Per-ride mean-maximal power: DataFrame(duration, watts, date, ride_id)."""
+    cols = ['duration', 'watts', 'date', 'ride_id']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"""SELECT p.duration_sec AS duration, p.watts, r.date_time AS date, r.id AS ride_id
+                               FROM power_records p JOIN rides r ON r.id = p.ride_id
+                               WHERE r.user_id = ? AND r.date_time IS NOT NULL
+                                 AND p.watts IS NOT NULL{where}""",
+                           conn, params=[user['id'], *params])
+    conn.close()
+    df['date'] = _parse_dates(df['date'])
+    return df[cols]
+
+def get_kj_records(user_name, start=None, end=None):
+    """Power after X kJ per ride: DataFrame(kj, duration, watts, date, ride_id)."""
+    cols = ['kj', 'duration', 'watts', 'date', 'ride_id']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"""SELECT k.kj, k.duration_sec AS duration, k.watts, r.date_time AS date,
+                                      r.id AS ride_id
+                               FROM power_records_kj k JOIN rides r ON r.id = k.ride_id
+                               WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}""",
+                           conn, params=[user['id'], *params])
+    conn.close()
+    df['date'] = _parse_dates(df['date'])
+    return df[cols]
+
+def get_zone_rows(user_name, kind, start=None, end=None):
+    """Time in zones per ride: DataFrame(ride_id, date, zone, seconds); kind 'power' or 'hr'."""
+    cols = ['ride_id', 'date', 'zone', 'seconds']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    where, params = _date_filter(start, end)
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"""SELECT z.ride_id, r.date_time AS date, z.zone, z.seconds
+                               FROM ride_zones z JOIN rides r ON r.id = z.ride_id
+                               WHERE r.user_id = ? AND z.kind = ? AND r.date_time IS NOT NULL{where}""",
+                           conn, params=[user['id'], kind, *params])
+    conn.close()
+    df['date'] = _parse_dates(df['date'])
+    return df[cols]

@@ -12,6 +12,7 @@ from src.data.fit import parse_fit
 from src.data.strava import streams_to_dataframe
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
 from src.analysis import ride_metrics as rm
+from src.analysis import durability
 
 MOVING_THRESHOLD_MS = 2.0
 
@@ -104,7 +105,8 @@ def summarize_ride(df, ftp, lthr=None):
         'ef': rm.efficiency_factor(norm_power, hr, is_moving) if has_power and has_hr else None,
         'decoupling_pct': (rm.aerobic_decoupling(df['power'], hr, is_moving)
                            if has_power and has_hr else None),
-        'zones': rm.zone_seconds(df, ftp, lthr),
+        'zones': rm.zone_seconds(df, ftp, lthr, is_moving),
+        'fatigued': durability.fatigued_curves(df['power']) if has_power else {},
         'hist': rm.joint_histograms(df, is_moving),
         'hrr60': hrr60,
         'hrr_efforts': hrr_n,
@@ -116,7 +118,7 @@ def summarize_ride(df, ftp, lthr=None):
 def metrics_for_storage(summary):
     """The per-ride columns that build_ride_metadata() adds to the metadata."""
     keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
-            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts']
+            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'fatigued']
     out = {k: summary.get(k) for k in keys}
     out['ftp_at_ride'] = summary.get('ftp') or None
     out['lthr_at_ride'] = summary.get('lthr') or None
