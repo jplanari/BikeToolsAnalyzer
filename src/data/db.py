@@ -98,6 +98,14 @@ def migrate_db():
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
                  ON rides(user_id, strava_activity_id)""")
 
+    # rides.file_content (the original ride file) sits in the middle of each row, so a
+    # query that needs a column stored after it has to read through the whole file. These
+    # covering indexes answer the per-rerun queries (TSS history, "needs update" count,
+    # period filters) from the index alone.
+    c.execute("""CREATE INDEX IF NOT EXISTS idx_rides_user_date
+                 ON rides(user_id, date_time, tss, metrics_version)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_power_records_ride ON power_records(ride_id)")
+
     c.execute('''
         CREATE TABLE IF NOT EXISTS strava_auth (
             user_id INTEGER PRIMARY KEY,
@@ -218,6 +226,21 @@ def update_user_physics(user_name, cp, w_prime, update_ftp=False):
         
     conn.commit()
     conn.close()
+
+def data_stamp():
+    """
+    Changes whenever the database file is written. UI caches key on it, so cached reads
+    stay valid between interactions and refresh themselves after any save or update.
+    """
+    import os
+    stamp = []
+    for path in (DB_FILE, DB_FILE + "-wal"):
+        try:
+            st = os.stat(path)
+            stamp.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append(None)
+    return tuple(stamp)
 
 def get_all_users():
     conn = sqlite3.connect(DB_FILE)
@@ -637,10 +660,21 @@ def get_ride_start_times(user_name):
 # --- Deeper analytics queries ------------------------------------------------
 
 def _parse_dates(series):
-    """Stored ISO strings (with or without offset) -> naive UTC datetimes."""
-    parsed = [pd.to_datetime(d, errors='coerce', utc=True) for d in series]
-    return pd.Series(pd.DatetimeIndex(parsed, dtype='datetime64[ns, UTC]').tz_convert(None),
-                     index=series.index)
+    """
+    Stored ISO strings (with or without offset) -> naive UTC datetimes.
+    A history has few distinct dates but many rows (one per histogram cell or power
+    record), so each distinct string is parsed once and mapped back.
+    """
+    uniq = pd.unique(series.dropna())
+    if len(uniq) == 0:
+        return pd.Series(pd.NaT, index=series.index, dtype='datetime64[ns]')
+    try:
+        parsed = pd.to_datetime(pd.Series(uniq), errors='coerce', utc=True, format='ISO8601')
+    except (ValueError, TypeError):      # unusual stored format: slower, forgiving path
+        parsed = pd.Series([pd.to_datetime(d, errors='coerce', utc=True) for d in uniq])
+    parsed = pd.Series(pd.DatetimeIndex(parsed).tz_convert(None))
+    out = series.map(dict(zip(uniq, parsed)))
+    return pd.to_datetime(out).astype('datetime64[ns]')
 
 def _date_filter(start, end):
     sql, params = "", []

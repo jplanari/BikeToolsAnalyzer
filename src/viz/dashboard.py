@@ -29,11 +29,12 @@ from src.analysis.training_load import compute_pmc
 from src.analysis import correlations as co
 from src.analysis import power_profile as pp
 from src.data.db import (
-        save_user, get_all_users, get_user_data, delete_user, 
-        save_ride, get_user_rides, get_user_best_power, get_user_tss_history,
-        count_rides_needing_update, build_ride_metadata, get_hist, get_ride_stats, update_user_crank, period_coverage, get_power_records,
+        save_user, get_all_users, delete_user, save_ride, build_ride_metadata, update_user_crank,
         get_strava_auth, save_strava_auth, delete_strava_auth, create_oauth_state, consume_oauth_state
     )
+from src.data.cached import (get_user_data, get_user_rides, get_user_best_power, get_user_tss_history,
+                             count_rides_needing_update, get_hist, get_ride_stats, period_coverage,
+                             get_power_records)
 from src.analysis.climbs import detect_climbs, get_climb_segments
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
