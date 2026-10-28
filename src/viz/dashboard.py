@@ -438,6 +438,12 @@ def process_and_display_analysis(file_obj, user_name, settings):
               help="Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals.")
     
+    fixed = summary.get('cleaned') or {}
+    if sum(fixed.values()):
+        parts = [f"{n} {name}" for name, n in (("power", fixed.get('power', 0)),
+                 ("heart-rate", fixed.get('hr', 0)), ("cadence", fixed.get('cadence', 0))) if n]
+        st.caption("🧹 Removed impossible sensor readings before scoring: " + ", ".join(parts) + " samples.")
+
     st.markdown("---")
 
     if laps_df is not None:
