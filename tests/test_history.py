@@ -99,3 +99,16 @@ def test_new_rides_are_saved_up_to_date(temp_db):
     r = _row(temp_db, "strava_3.json")
     assert (r['ftp_at_ride'], r['lthr_at_ride'], r['tss_source']) == (250, 170, 'power')
     assert sum(db.get_ride_zones([r['id']], 'hr').values()) == r['moving_s'] == 1799
+
+
+def test_recompute_backs_up_the_database_first(temp_db):
+    import glob
+    _legacy_ride(1, {'np': 200, 'if': 0.8, 'tss': 64})
+    recompute_history("Rider", current_ftp=300, current_lthr=170)
+    backups = glob.glob(str(temp_db.parent / "backups" / "*before-recompute.db"))
+    assert len(backups) == 1
+    old = sqlite3.connect(backups[0])
+    assert old.execute("SELECT metrics_version FROM rides").fetchone()[0] == 0   # state before the update
+    # nothing to update -> no new backup
+    recompute_history("Rider", current_ftp=300, current_lthr=170)
+    assert len(glob.glob(str(temp_db.parent / "backups" / "*.db"))) == 1

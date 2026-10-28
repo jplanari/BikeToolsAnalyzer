@@ -7,12 +7,23 @@ import time
 
 DB_FILE = "bikethools.db"
 
+
+def _connect():
+    """
+    Every connection goes through here. SQLite only enforces foreign keys (and so
+    ON DELETE CASCADE) when asked to, per connection; without this, deleting a user
+    left their rides, records and histograms behind.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
 def migrate_db():
     """
     Adds new columns (cp, w_prime) to the users table if they don't exist.
     Run this once safely; it catches errors if columns already exist.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     try:
@@ -130,7 +141,7 @@ def migrate_db():
 
 def init_db():
     """Initializes the database with users, rides, and power_records tables."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     # Users Table
@@ -189,7 +200,7 @@ def init_db():
     migrate_db()
 
 def save_user(name, ftp, lthr, weight, height=175.0):
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     try:
         c.execute("INSERT INTO users (name, ftp, lthr, weight, height) VALUES (?, ?, ?, ?, ?)", 
@@ -208,7 +219,7 @@ def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     Updates the user's physiological metrics.
     Optionally updates FTP to match CP.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     if update_ftp:
@@ -227,6 +238,41 @@ def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     conn.commit()
     conn.close()
 
+BACKUP_KEEP = 3
+
+def backup_db(reason="manual", keep=None):
+    """
+    Consistent copy of the database to backups/ next to it (SQLite's backup API, safe
+    while the app is running). Keeps the newest `keep` backups. Returns the path, or
+    None if there is no database yet or the copy failed; callers go on either way,
+    since a failed backup should not block the work it was protecting.
+    """
+    import os, glob
+    if not os.path.exists(DB_FILE):
+        return None
+    folder = os.path.join(os.path.dirname(os.path.abspath(DB_FILE)), "backups")
+    stem = os.path.splitext(os.path.basename(DB_FILE))[0]
+    dest = os.path.join(folder, f"{stem}-{time.strftime('%Y%m%d-%H%M%S')}-{reason}.db")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        src, dst = sqlite3.connect(DB_FILE), sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+    except (OSError, sqlite3.Error):
+        if os.path.exists(dest):
+            os.remove(dest)
+        return None
+    old = sorted(glob.glob(os.path.join(folder, f"{stem}-*.db")))[:-(keep or BACKUP_KEEP)]
+    for path in old:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return dest
+
 def data_stamp():
     """
     Changes whenever the database file is written. UI caches key on it, so cached reads
@@ -243,7 +289,7 @@ def data_stamp():
     return tuple(stamp)
 
 def get_all_users():
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     c.execute("SELECT name FROM users")
     users = [row[0] for row in c.fetchall()]
@@ -251,7 +297,7 @@ def get_all_users():
     return users
 
 def get_user_data(name):
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE name = ?", (name,))
@@ -262,7 +308,7 @@ def get_user_data(name):
     return None
 
 def delete_user(name):
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     c.execute("DELETE FROM users WHERE name = ?", (name,))
     conn.commit()
@@ -377,7 +423,7 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
 
     file_hash = hashlib.md5(file_content).hexdigest()
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     try:
@@ -414,7 +460,7 @@ def get_user_rides(user_name):
     if not user:
         return []
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('''
@@ -429,7 +475,7 @@ def get_user_rides(user_name):
     return [dict(row) for row in rows]
 
 def get_ride_file(ride_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     c.execute("SELECT filename, file_content FROM rides WHERE id = ?", (ride_id,))
     row = c.fetchone()
@@ -443,7 +489,7 @@ def get_user_best_power(user_name):
     if not user:
         return {}
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     # Query: Find the maximum watts for each duration across ALL rides for this user
@@ -470,7 +516,7 @@ def get_user_tss_history(user_name):
     if not user:
         return []
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     
     # Just select the columns we need
@@ -499,7 +545,7 @@ def count_rides_needing_update(user_name):
     user = get_user_data(user_name)
     if not user:
         return 0
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     n = conn.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_NEEDS_UPDATE_SQL}",
                      (user['id'], METRICS_VERSION)).fetchone()[0]
     conn.close()
@@ -510,7 +556,7 @@ def get_rides_for_recompute(user_name, all_rides=False):
     user = get_user_data(user_name)
     if not user:
         return []
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
     params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
@@ -522,7 +568,7 @@ def get_rides_for_recompute(user_name, all_rides=False):
 
 def update_ride_metrics(ride_id, metadata, power_curve_dict):
     """Overwrites a ride's computed fields, power records and zone times."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     c = conn.cursor()
     user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
     cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
@@ -544,7 +590,7 @@ def get_ride_zones(ride_ids, kind):
     """{zone: total seconds} summed over the given rides."""
     if not ride_ids:
         return {}
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     q = ",".join("?" * len(ride_ids))
     rows = conn.execute(f"""SELECT zone, SUM(seconds) FROM ride_zones
                             WHERE kind = ? AND ride_id IN ({q}) GROUP BY zone ORDER BY zone""",
@@ -562,7 +608,7 @@ def save_strava_auth(user_name, auth):
     user = get_user_data(user_name)
     if not user:
         return False
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.execute('''
         INSERT INTO strava_auth (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -582,7 +628,7 @@ def get_strava_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
     conn.close()
@@ -592,7 +638,7 @@ def delete_strava_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.execute("DELETE FROM strava_auth WHERE user_id = ?", (user['id'],))
     conn.commit()
     conn.close()
@@ -609,7 +655,7 @@ def create_oauth_state(user_name):
         return None
     state = secrets.token_urlsafe(24)
     now = int(time.time())
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (now - OAUTH_STATE_TTL_S,))
     conn.execute("INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)",
                  (state, user['id'], now))
@@ -620,7 +666,7 @@ def create_oauth_state(user_name):
 def consume_oauth_state(state):
     """Returns the user name the state was issued for (once), else None."""
     now = int(time.time())
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     row = conn.execute('''SELECT u.name, s.created_at FROM oauth_states s
                           JOIN users u ON u.id = s.user_id WHERE s.state = ?''', (state,)).fetchone()
     conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
@@ -634,7 +680,7 @@ def get_imported_strava_ids(user_name):
     user = get_user_data(user_name)
     if not user:
         return set()
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     rows = conn.execute("SELECT strava_activity_id FROM rides WHERE user_id = ? "
                         "AND strava_activity_id IS NOT NULL", (user['id'],)).fetchall()
     conn.close()
@@ -645,7 +691,7 @@ def get_ride_start_times(user_name):
     user = get_user_data(user_name)
     if not user:
         return []
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     rows = conn.execute("SELECT date_time FROM rides WHERE user_id = ? AND date_time IS NOT NULL",
                         (user['id'],)).fetchall()
     conn.close()
@@ -696,7 +742,7 @@ def get_hist(user_name, pair, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(f"""SELECT h.ride_id, r.date_time AS date, h.x, h.y, h.seconds
                                FROM ride_hist h JOIN rides r ON r.id = h.ride_id
                                WHERE r.user_id = ? AND h.pair = ?{where}""",
@@ -711,7 +757,7 @@ def get_ride_stats(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame()
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
                                       r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
                                       r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source,
@@ -723,7 +769,7 @@ def get_ride_stats(user_name, start=None, end=None):
     return df
 
 def update_user_crank(user_name, crank_mm):
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.execute("UPDATE users SET crank_mm = ? WHERE name = ?", (float(crank_mm), user_name))
     conn.commit()
     conn.close()
@@ -735,7 +781,7 @@ def period_coverage(user_name, start=None, end=None):
     if not user:
         return out
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     out['rides'], out['needs_update'] = conn.execute(
         f"""SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.metrics_version IS NULL
                                                OR r.metrics_version < ? THEN 1 ELSE 0 END), 0)
@@ -755,7 +801,7 @@ def get_power_records(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(f"""SELECT p.duration_sec AS duration, p.watts, r.date_time AS date, r.id AS ride_id
                                FROM power_records p JOIN rides r ON r.id = p.ride_id
                                WHERE r.user_id = ? AND r.date_time IS NOT NULL
@@ -772,7 +818,7 @@ def get_kj_records(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(f"""SELECT k.kj, k.duration_sec AS duration, k.watts, r.date_time AS date,
                                       r.id AS ride_id
                                FROM power_records_kj k JOIN rides r ON r.id = k.ride_id
@@ -789,7 +835,7 @@ def get_zone_rows(user_name, kind, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(f"""SELECT z.ride_id, r.date_time AS date, z.zone, z.seconds
                                FROM ride_zones z JOIN rides r ON r.id = z.ride_id
                                WHERE r.user_id = ? AND z.kind = ? AND r.date_time IS NOT NULL{where}""",
@@ -809,7 +855,7 @@ def get_planned_sessions(user_name, after=None):
     if after is not None:
         sql += " AND date > ?"
         params.append(pd.Timestamp(after).strftime("%Y-%m-%d"))
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     df = pd.read_sql_query(sql + " ORDER BY date", conn, params=params)
     conn.close()
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -835,7 +881,7 @@ def replace_planned_sessions(user_name, sessions, after):
         note = r.get('note')
         rows.append((user['id'], d.strftime("%Y-%m-%d"), float(t),
                      None if note is None or (isinstance(note, float) and pd.isna(note)) else str(note)))
-    conn = sqlite3.connect(DB_FILE)
+    conn = _connect()
     conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ?",
                  (user['id'], cutoff.strftime("%Y-%m-%d")))
     conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)

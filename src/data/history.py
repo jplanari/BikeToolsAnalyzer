@@ -31,6 +31,8 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
     from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # imports streamlit
 
     rows = db.get_rides_for_recompute(user_name, all_rides=all_rides)
+    if rows:
+        db.backup_db("before-recompute")        # recompute overwrites every ride's metrics
     updated, failed = 0, []
     for i, row in enumerate(rows):
         if progress:
