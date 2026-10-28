@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from src.analysis.dates import parse_utc
+
 CTL_DAYS = 42
 ATL_DAYS = 7
 
@@ -30,16 +32,15 @@ def compute_pmc(history, until=None, ctl_days=CTL_DAYS, atl_days=ATL_DAYS, plann
     if df.empty:
         return pd.DataFrame(columns=['tss', 'CTL', 'ATL', 'TSB'])
 
-    # Parse element-wise: rows may mix ISO strings with/without timezone, and
-    # vectorised parsing infers one format from the first row, dropping the rest.
-    df['date'] = df['date'].map(lambda d: pd.to_datetime(d, errors='coerce', utc=True))
+    # Rows may mix ISO strings with/without timezone: each value is parsed on its own
+    df['date'] = parse_utc(df['date'])
     df['tss'] = pd.to_numeric(df['tss'], errors='coerce')
     df = df.dropna(subset=['date', 'tss'])
     df = df[df['tss'] >= 0]
     if df.empty:
         return pd.DataFrame(columns=['tss', 'CTL', 'ATL', 'TSB'])
 
-    df['day'] = df['date'].dt.tz_convert(None).dt.normalize()
+    df['day'] = df['date'].dt.normalize()
     daily = df.groupby('day')['tss'].sum()
 
     today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()

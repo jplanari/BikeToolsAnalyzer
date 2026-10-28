@@ -28,9 +28,17 @@ def best_curve(records, start=None, end=None):
         r = r[r['date'] < pd.Timestamp(end) + pd.Timedelta(days=1)]
     if r.empty:
         return pd.DataFrame(columns=cols)
-    # Ties go to the earliest ride (the record was set first)
-    r = r.sort_values(['duration', 'watts', 'date'], ascending=[True, False, True])
-    return r.groupby('duration', as_index=False).first()[cols]
+    return _best_of_sorted(_sort_for_best(r))
+
+
+def _sort_for_best(r):
+    # Best first within each duration; ties go to the earliest ride (the record was set first)
+    return r.sort_values(['duration', 'watts', 'date'], ascending=[True, False, True])
+
+
+def _best_of_sorted(r):
+    cols = ['duration', 'watts', 'date', 'ride_id']
+    return r.drop_duplicates('duration', keep='first')[cols].reset_index(drop=True)
 
 
 def window_curves(records, today=None):
@@ -104,8 +112,11 @@ def cp_history(records, window_days=90, freq='W', today=None):
     if len(ends) == 0 or ends[-1] < today:
         ends = ends.append(pd.DatetimeIndex([today]))
     rows = {}
+    ranked = _sort_for_best(records.dropna(subset=['watts']))     # sort once, filter per window
     for end in ends:
-        curve = as_dict(best_curve(records, end - pd.Timedelta(days=window_days - 1), end))
+        start = end - pd.Timedelta(days=window_days - 1)
+        in_window = ranked[(ranked['date'] >= start) & (ranked['date'] < end + pd.Timedelta(days=1))]
+        curve = as_dict(_best_of_sorted(in_window)) if not in_window.empty else {}
         cp = estimate_critical_power(curve) if curve else None
         rows[end] = {
             'cp': cp['cp'] if cp else np.nan,

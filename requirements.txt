@@ -1,13 +1,16 @@
-streamlit
-pandas
-numpy
-matplotlib
-gpxpy
-scipy
-folium
-streamlit-folium
-geographiclib
-requests
-pytest
-fitparse
-plotly
+# Lower bounds are what the code needs (st.fragment/AppTest need Streamlit 1.37+, pandas
+# 2.2 for the date parsing options); upper bounds stop a new major release from breaking
+# the app unannounced. Raise them deliberately, after the tests pass on the new version.
+streamlit>=1.37,<2
+pandas>=2.2,<4
+numpy>=1.26,<3
+scipy>=1.11,<2
+matplotlib>=3.8,<4
+plotly>=5.20,<7
+folium>=0.16,<1
+streamlit-folium>=0.20,<1
+gpxpy>=1.6,<2
+fitparse>=1.2,<2
+geographiclib>=2,<3
+requests>=2.31,<3
+pytest>=8,<10

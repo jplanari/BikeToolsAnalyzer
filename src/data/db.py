@@ -5,6 +5,8 @@ import re
 import secrets
 import time
 
+from src.analysis.dates import parse_utc
+
 DB_FILE = "bikethools.db"
 
 
@@ -775,21 +777,8 @@ def get_ride_start_times(user_name):
 # --- Deeper analytics queries ------------------------------------------------
 
 def _parse_dates(series):
-    """
-    Stored ISO strings (with or without offset) -> naive UTC datetimes.
-    A history has few distinct dates but many rows (one per histogram cell or power
-    record), so each distinct string is parsed once and mapped back.
-    """
-    uniq = pd.unique(series.dropna())
-    if len(uniq) == 0:
-        return pd.Series(pd.NaT, index=series.index, dtype='datetime64[ns]')
-    try:
-        parsed = pd.to_datetime(pd.Series(uniq), errors='coerce', utc=True, format='ISO8601')
-    except (ValueError, TypeError):      # unusual stored format: slower, forgiving path
-        parsed = pd.Series([pd.to_datetime(d, errors='coerce', utc=True) for d in uniq])
-    parsed = pd.Series(pd.DatetimeIndex(parsed).tz_convert(None))
-    out = series.map(dict(zip(uniq, parsed)))
-    return pd.to_datetime(out).astype('datetime64[ns]')
+    """Stored ISO strings (with or without offset) -> naive UTC datetimes."""
+    return parse_utc(series)
 
 def _date_filter(start, end):
     sql, params = "", []
