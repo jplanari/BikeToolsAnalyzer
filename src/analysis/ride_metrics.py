@@ -33,6 +33,8 @@ def variability_index(power_series):
 
 def efficiency_factor(norm_power, hr_series, moving=None):
     hr = _clean(hr_series)
+    if len(hr) == 0:
+        return None
     if moving is not None:
         hr = hr[_clean(moving).astype(bool)]
     hr = hr[~np.isnan(hr) & (hr > 0)]
@@ -75,6 +77,8 @@ def hr_tss(hr_series, lthr, moving=None):
     drifts), so rides keep a tss_source flag.
     """
     hr = _clean(hr_series)
+    if len(hr) == 0:
+        return None
     if moving is not None:
         hr = hr[_clean(moving).astype(bool)]
     hr = hr[~np.isnan(hr) & (hr > 0)]

@@ -178,8 +178,45 @@ def process_and_display_analysis(file_obj, user_name, settings):
     if 'power' in df.columns:
         _render_thermal_analysis(df, settings['weight'], settings['height'], settings.get('ftp'))    
 
+    _render_report_expander(df, summary, settings, file_obj.name, total_dist, total_ascent, detected_climbs,
+                            laps_df, user_name)
+
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
+
+
+def _thermal_ride_id(df):
+    """Key of the stored thermal simulation: which ride it belongs to."""
+    return f"{len(df)}_{str(df['time'].iloc[0]) if 'time' in df.columns else '0'}"
+
+
+def _render_report_expander(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, user_name):
+    """PDF of this ride. Built on click (matplotlib is slow-ish) and kept for the download button; it includes
+    the thermal simulation when it has been run for this very ride."""
+    ride_id = hashlib.md5(f"{filename}{len(df)}".encode()).hexdigest()
+    with st.expander("📄 PDF report of this ride"):
+        if st.button("Create report", key="ride_report_make"):
+            from src.data.ride_report_data import collect_ride_report
+            from src.viz.ride_report_pdf import build_ride_report_pdf
+            with st.spinner("Building the report…"):
+                best_curve = recent_curve = None
+                if user_name and 'power' in df.columns:
+                    best_curve = get_user_best_power(user_name)
+                    today = pd.Timestamp.today().normalize()
+                    recent_curve = pp.as_dict(pp.best_curve(
+                        get_power_records(user_name, today - pd.Timedelta(days=89), today)))
+                stored = st.session_state.get('thermal_results')
+                thermal = stored['df'] if stored and stored.get('id') == _thermal_ride_id(df) else None
+                data = collect_ride_report(df, summary, settings, filename.rsplit('.', 1)[0], total_dist, total_ascent,
+                                           climbs=climbs, best_curve=best_curve, recent_curve=recent_curve,
+                                           laps=laps_df, thermal=thermal, user_name=user_name)
+                st.session_state['ride_report_pdf'] = (ride_id, build_ride_report_pdf(data), thermal is not None)
+        ready = st.session_state.get('ride_report_pdf')
+        if ready and ready[0] == ride_id:
+            st.download_button("⬇️ Download PDF", ready[1], mime="application/pdf",
+                               file_name=f"ride-report-{filename.rsplit('.', 1)[0]}.pdf", key="ride_report_dl")
+            if not ready[2]:
+                st.caption("The thermal chart is left out: run the thermal simulation above first, then create the report again.")
 
 
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
@@ -347,8 +384,7 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
     st.subheader("🔥 Thermal Analysis")
     
     # Unique ID for session state
-    start_time_str = str(df['time'].iloc[0]) if 'time' in df.columns else "0"
-    current_ride_id = f"{len(df)}_{start_time_str}"
+    current_ride_id = _thermal_ride_id(df)
 
     with st.expander("⚙️ Configure Thermal Model", expanded=False):
         # Clothing Selector
