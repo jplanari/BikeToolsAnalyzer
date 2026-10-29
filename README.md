@@ -2,6 +2,10 @@
 
 BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cycling performance data. Built with Streamlit, it processes GPX files to provide advanced metrics, interactive maps, climb detection, and physics-based aerodynamic (CdA) estimation using historical weather data.
 
+## Desktop app
+
+A standalone version with its own window (no terminal, no Python install) can be built for Windows, macOS and Linux: see [desktop/README.md](desktop/README.md). Your data is kept in a per-user folder, separate from the program.
+
 ## Key Features
 
 📊 Performance Metrics
