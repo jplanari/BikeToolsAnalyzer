@@ -174,3 +174,10 @@ def test_ftp_suggestion_can_be_accepted_with_one_click(seeded_db):
     _no_errors(at)
     assert abs(db.get_user_data("Rider")["ftp"] - 313.5) <= 1         # 95 % of 330 W
     assert "Your FTP may be higher" not in _texts(at.success)
+
+
+def test_wahoo_source_without_credentials_explains_the_setup(seeded_db):
+    at = _app()
+    _widget(at.sidebar.radio, "Source").set_value("Wahoo").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Wahoo isn't set up yet" in _texts(at.sidebar.warning)
