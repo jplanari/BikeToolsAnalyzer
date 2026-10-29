@@ -27,6 +27,7 @@ from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_comp
 from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
+from src.viz.climb_estimator import render_climb_estimator
 
 
 @st.cache_data(show_spinner=False)
@@ -302,6 +303,7 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
 
 
 def _render_climb_details(df, climbs, settings):
+    ride_id = f"{len(df)}_{df['time'].iloc[0]}" if 'time' in df.columns and len(df) else "0"
     if climbs:
         st.subheader(f"⛰️ Detected Climbs ({len(climbs)})")        
         # 1. Overview Plot (Interactive)
@@ -328,6 +330,7 @@ def _render_climb_details(df, climbs, settings):
                 if not segment.empty:
                     fig_climb = plot_detailed_climb(segment)
                     st.plotly_chart(fig_climb, use_container_width=True, key=f"climb_plot_{i}")
+                    render_climb_estimator(df, c, i, settings, ride_id)
                 
                 st.markdown("---")
     else:

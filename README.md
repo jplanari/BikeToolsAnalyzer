@@ -18,6 +18,10 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 - **Intensity:** weekly/monthly easy / moderate / hard distribution (power or HR) and the polarization index.
 - **PDF report:** the "📄 PDF report" box at the top builds a 6-page A4 report (summary and load chart, volume and ramp, power profile and CP, durability and records, intensity, recent rides and planned sessions) for the period you pick.
 
+⛰️ Climb performance estimator (Analyze Upload → Detected Climbs → View Details)
+
+- For each detected climb, change **system weight, CdA, rolling resistance, air density and power** and see the time it would take, or ask for the **power needed for a target time**. A steady-state model on the climb's gradient profile (no wind); the *as ridden* line applies it to your actual power so you can see how close it gets, and a small table shows what −1 kg, −0.01 m² CdA, −0.001 Crr and +10 W are worth.
+
 🔬 Deeper analytics (Training page → Deeper analytics)
 
 - Pick a period and compare it with the previous one of the same length.
@@ -107,6 +111,7 @@ BikeToolsAnalyzer/
         ├── sidebar.py          # navigation, user profile, import, Strava connection
         ├── ride_analysis.py    # Analyze Upload page
         ├── user_corner.py      # User Corner: profile summary and ride-history update
+        ├── climb_estimator.py  # per-climb what-if estimator (weight, CdA, Crr, power)
         ├── deeper_analytics.py # Training page section: power-HR, power-cadence, recovery/efficiency
         ├── report_pdf.py       # PDF training report (matplotlib)
         ├── training_page.py    # Training page (load, power profile, durability, intensity, planning)
