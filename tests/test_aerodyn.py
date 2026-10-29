@@ -162,6 +162,7 @@ def test_wind_is_converted_to_metres_per_second(monkeypatch, unit, factor):
         asked.update(params)
         return Resp()
     monkeypatch.setattr(weather.requests, "get", fake_get)
+    getattr(weather.fetch_ride_weather, 'clear', lambda: None)()      # st.cache_data would replay the other case
     df = pd.DataFrame({'time': pd.date_range("2026-10-01 08:00", periods=60, freq="1s"),
                        'lat': 41.0, 'lon': 2.0})
     out = weather.fetch_ride_weather(df)
