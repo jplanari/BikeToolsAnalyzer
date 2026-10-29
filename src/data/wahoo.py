@@ -180,6 +180,36 @@ def is_cycling(workout):
     return workout.get("workout_type_id") in CYCLING_WORKOUT_TYPES
 
 
+def is_planned_only(workout):
+    """
+    True when the list entry is clearly a scheduled workout that was not ridden: it starts in the
+    future, or its summary (when the list carries one) has no recorded file or active time.
+    Entries with no summary at all are undecided (see may_be_planned).
+    """
+    from datetime import datetime, timezone
+    try:
+        start = datetime.fromisoformat(str(workout.get("starts")).replace("Z", "+00:00"))
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if start > datetime.now(timezone.utc):
+            return True
+    except (TypeError, ValueError):
+        pass
+    summary = workout.get("workout_summary")
+    if isinstance(summary, dict):
+        try:
+            active = float(summary.get("duration_active_accum") or 0)
+        except ValueError:
+            active = 0
+        return not fit_url(workout) and active <= 0
+    return False
+
+
+def may_be_planned(workout):
+    """A recorded ride has no plan; anything linked to a plan (e.g. sent from this app) needs checking."""
+    return bool(workout.get("plan_id")) or str(workout.get("workout_token") or "").startswith("biketools-")
+
+
 def list_workouts(access_token, page=1, per_page=PER_PAGE, usage=None):
     """One page: {'workouts': [...], 'total', 'page', 'per_page', 'order', 'sort'}.
     Entries have workout_summary = null; use get_workout for the summary and file URL."""

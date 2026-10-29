@@ -150,10 +150,10 @@ def test_import_stops_at_the_rate_limit_and_resumes(connected, fake_wahoo, monke
     assert res.imported == 2 and db.get_imported_wahoo_ids("Rider") == {10, 13, 14}
 
 
-def test_workout_without_a_file_is_counted_not_failed(connected, fake_wahoo, monkeypatch):
+def test_scheduled_workout_without_a_file_is_counted_not_failed(connected, fake_wahoo, monkeypatch):
     monkeypatch.setattr(wh, "get_workout", lambda t, wid, usage=None: {"id": wid, "workout_summary": None})
     res = wi.import_history(CFG, "Rider", date(2026, 8, 1), ftp=250)
-    assert (res.no_data, res.imported, res.failed) == (3, 0, [])
+    assert (res.not_completed, res.imported, res.failed) == (3, 0, [])
 
 
 def test_unparsable_file_is_reported_and_the_rest_continue(connected, fake_wahoo, monkeypatch):
@@ -189,3 +189,33 @@ def test_first_sync_looks_back_30_days(connected, fake_wahoo):
     now = pd.Timestamp("2026-10-28 12:00:00")
     res, since = wi.sync_new_rides(CFG, "Rider", ftp=250, now=now)
     assert since == now - pd.Timedelta(days=30) and res.found == 0
+
+
+def test_future_and_summary_less_planned_entries_are_not_even_fetched(connected, fake_wahoo, monkeypatch):
+    soon = (pd.Timestamp.now("UTC") + pd.Timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    done = dict(workout(10, "2026-09-01T07:00:00Z"), workout_summary={"file": {"url": "https://cdn/10.fit"}})
+    skipped = dict(workout(13, "2026-09-07T07:00:00Z"),
+                   workout_summary={"duration_active_accum": "0", "file": None})      # list already says: not ridden
+    items = [workout(14, soon), done, skipped]
+    monkeypatch.setattr(wh, "list_workouts", lambda tok, page=1, per_page=100, usage=None: {
+        "workouts": items, "per_page": 100, "order": "descending"})
+    res = wi.import_history(CFG, "Rider", date(2026, 8, 1), ftp=250)
+    assert res.found == 1 and res.imported == 1 and fake_wahoo["detail"] == [10]
+
+
+def test_recent_list_hides_planned_workouts_that_were_never_ridden(connected, monkeypatch):
+    soon = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    items = [workout(30, soon),                                              # future
+             dict(workout(31, "2026-10-20T07:00:00Z"), workout_token="biketools-1-5", plan_id=9),   # missed
+             dict(workout(32, "2026-10-19T07:00:00Z"), workout_token="biketools-1-4", plan_id=8),   # ridden
+             workout(33, "2026-10-18T07:00:00Z")]                            # plain recorded ride
+    monkeypatch.setattr(wh, "list_workouts", lambda tok, page=1, per_page=100, usage=None: {"workouts": items})
+    asked = []
+
+    def detail(tok, wid, usage=None):
+        asked.append(wid)
+        return {"id": wid, "workout_summary": {"file": {"url": "u"}} if wid == 32 else None}
+    monkeypatch.setattr(wh, "get_workout", detail)
+    got = wi.list_recent_rides(CFG, "Rider")
+    assert [w["id"] for w in got] == [32, 33]
+    assert asked == [31, 32]                      # only plan-linked entries cost a request
