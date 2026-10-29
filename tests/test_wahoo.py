@@ -94,7 +94,7 @@ def test_refresh_token_is_single_use_and_saved_at_once(connected, monkeypatch):
 def test_api_errors(monkeypatch):
     for code, exc in ((401, wh.WahooAuthError), (403, wh.WahooAuthError), (429, wh.WahooRateLimitError),
                       (500, wh.WahooError)):
-        monkeypatch.setattr(wh.requests, "get", lambda *a, _c=code, **k: FakeResponse(_c, {}))
+        monkeypatch.setattr(wh.requests, "request", lambda *a, _c=code, **k: FakeResponse(_c, {}))
         with pytest.raises(exc):
             wh.api_get("/workouts", "A")
 

@@ -193,6 +193,7 @@ def _wahoo_config():
             client_id=str(sec["client_id"]),
             client_secret=str(sec["client_secret"]),
             redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
+            timezone=str(sec.get("timezone", "")),
         )
     except Exception:
         return None

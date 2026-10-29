@@ -18,7 +18,8 @@ TOKEN_URL = "https://api.wahooligan.com/oauth/token"
 API_BASE = "https://api.wahooligan.com/v1"
 
 # offline_data gives a long-lived refresh token; user_read gives the account name
-SCOPE = "user_read workouts_read offline_data"
+# plans_write/workouts_write let the app send planned sessions to the head unit
+SCOPE = "user_read workouts_read offline_data plans_read plans_write workouts_write"
 
 # workout_type_id is an unpublished enum; cycling outdoors is 0. Extend if your indoor rides
 # come back as "skipped (not cycling)".
@@ -37,6 +38,10 @@ class WahooAuthError(WahooError):
     """Token missing, revoked or lacking scope: the user must reconnect."""
 
 
+class WahooNotFound(WahooError):
+    """404: the plan or workout is gone (e.g. deleted in the Wahoo app)."""
+
+
 class WahooRateLimitError(WahooError):
     """HTTP 429 or our own budget guard."""
 
@@ -46,6 +51,7 @@ class WahooConfig:
     client_id: str
     client_secret: str
     redirect_uri: str = "http://localhost:8501/"
+    timezone: str = ""           # IANA name for scheduling planned sessions; empty = this computer's
 
 
 @dataclass
@@ -139,10 +145,11 @@ def revoke(access_token):
 
 # --- API -------------------------------------------------------------------
 
-def api_get(path, access_token, params=None, usage=None):
+def api_request(method, path, access_token, params=None, data=None, usage=None):
+    """One API call; returns the JSON body (None for 204)."""
     try:
-        r = requests.get(f"{API_BASE}{path}", params=params,
-                         headers={"Authorization": f"Bearer {access_token}"}, timeout=TIMEOUT_S)
+        r = requests.request(method, f"{API_BASE}{path}", params=params, data=data,
+                             headers={"Authorization": f"Bearer {access_token}"}, timeout=TIMEOUT_S)
     except requests.RequestException as e:
         raise WahooError(f"Could not reach Wahoo: {e}") from e
     if usage is not None:
@@ -150,14 +157,23 @@ def api_get(path, access_token, params=None, usage=None):
     if r.status_code == 401:
         raise WahooAuthError("Wahoo authorization expired or was revoked. Please reconnect.")
     if r.status_code == 403:
-        raise WahooAuthError("Missing permission (reconnect and allow workout access).")
+        raise WahooAuthError("Wahoo did not allow this (reconnect Wahoo to grant the new permissions).")
     if r.status_code == 404:
-        raise WahooError("Workout not found.")
+        raise WahooNotFound("Not found on Wahoo.")
     if r.status_code == 429:
         raise WahooRateLimitError("Wahoo rate limit reached; try again in a few minutes.")
     if not r.ok:
-        raise WahooError(f"Wahoo API error {r.status_code}")
-    return r.json()
+        detail = ""
+        try:
+            detail = f": {r.text[:200]}"
+        except Exception:
+            pass
+        raise WahooError(f"Wahoo API error {r.status_code}{detail}")
+    return None if r.status_code == 204 or not r.content else r.json()
+
+
+def api_get(path, access_token, params=None, usage=None):
+    return api_request("GET", path, access_token, params=params, usage=usage)
 
 
 def is_cycling(workout):
@@ -191,3 +207,69 @@ def download_fit(url):
 
 def ride_filename(workout_id):
     return f"wahoo_{int(workout_id)}.fit"
+
+
+# --- Planned sessions (plans + scheduled workouts) -------------------------------------------------
+
+# workout_type_id is an unpublished enum: 0 is outdoor cycling (as in the rides list)
+PLAN_WORKOUT_TYPE_ID = 0
+SYNC_WINDOW_DAYS = 6             # the head unit only receives workouts from today to today + 6
+
+
+def _plan_form(plan_json, name, filename, external_id=None, provider_updated_at=None):
+    import base64
+    uri = "data:application/json;base64," + base64.b64encode(plan_json.encode("utf-8")).decode("ascii")
+    form = {"plan[file]": uri, "plan[filename]": filename, "plan[name]": name}
+    if external_id:
+        form["plan[external_id]"] = external_id
+    if provider_updated_at:
+        form["plan[provider_updated_at]"] = provider_updated_at
+    return form
+
+
+def create_plan(token, plan_json, name, filename, external_id, provider_updated_at, usage=None):
+    return api_request("POST", "/plans", token, usage=usage,
+                       data=_plan_form(plan_json, name, filename, external_id, provider_updated_at))
+
+
+def update_plan(token, plan_id, plan_json, name, filename, provider_updated_at, usage=None):
+    """external_id cannot be changed on update, so it is not sent."""
+    return api_request("PUT", f"/plans/{int(plan_id)}", token, usage=usage,
+                       data=_plan_form(plan_json, name, filename, None, provider_updated_at))
+
+
+def find_plan(token, external_id, usage=None):
+    """The plan with this external_id, or None."""
+    data = api_request("GET", "/plans", token, params={"external_id": external_id}, usage=usage) or {}
+    plans = data.get("plans") if isinstance(data, dict) else data
+    return (plans or [None])[0]
+
+
+def delete_plan(token, plan_id, usage=None):
+    try:
+        api_request("DELETE", f"/plans/{int(plan_id)}", token, usage=usage)
+    except WahooNotFound:
+        pass
+
+
+def _workout_form(name, workout_token, starts_utc_iso, minutes, plan_id):
+    return {"workout[name]": name, "workout[workout_token]": workout_token,
+            "workout[workout_type_id]": PLAN_WORKOUT_TYPE_ID, "workout[starts]": starts_utc_iso,
+            "workout[minutes]": int(minutes), "workout[plan_id]": int(plan_id)}
+
+
+def schedule_workout(token, name, workout_token, starts_utc_iso, minutes, plan_id, usage=None):
+    return api_request("POST", "/workouts", token, usage=usage,
+                       data=_workout_form(name, workout_token, starts_utc_iso, minutes, plan_id))
+
+
+def update_workout(token, workout_id, name, workout_token, starts_utc_iso, minutes, plan_id, usage=None):
+    return api_request("PUT", f"/workouts/{int(workout_id)}", token, usage=usage,
+                       data=_workout_form(name, workout_token, starts_utc_iso, minutes, plan_id))
+
+
+def delete_workout(token, workout_id, usage=None):
+    try:
+        api_request("DELETE", f"/workouts/{int(workout_id)}", token, usage=usage)
+    except WahooNotFound:
+        pass

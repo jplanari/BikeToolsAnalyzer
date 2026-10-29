@@ -136,7 +136,7 @@ def _plan_editor(user_name, ftp, today):
         st.caption("Plan the coming days and the chart forecasts fitness, fatigue and form from them. "
                    "Rest days need no entry. Build a session from intervals, or just enter its TSS.")
         _session_builder(user_name, ftp, today)
-        _built_sessions(user_name, built)
+        _built_sessions(user_name, built, ftp, today)
 
         st.markdown("**Quick entry: just the TSS**")
         edited = st.data_editor(
@@ -195,10 +195,54 @@ def _session_builder(user_name, ftp, today):
             st.rerun()
 
 
-def _built_sessions(user_name, built):
+def _wahoo_ready(user_name):
+    """(WahooConfig, True) when Wahoo is configured and this profile is connected, else (None/cfg, False)."""
+    from src.viz.sidebar import _wahoo_config
+    from src.data.db import get_wahoo_auth
+    cfg = _wahoo_config()
+    return cfg, bool(cfg and get_wahoo_auth(user_name))
+
+
+def _send_controls(user_name, ftp, cfg, row, sent, today):
+    """Send / resend button for one built session; shows what happened."""
+    from src.data import wahoo as wh
+    from src.data import wahoo_send as ws
+    sid = int(row['id'])
+    label = "↻ Update on Wahoo" if sent else "📲 Send to Wahoo"
+    if st.button(label, key=f"wahoo_send_{sid}", help="Creates (or updates) this workout in your Wahoo account "
+                 "so it shows up on your ELEMNT."):
+        try:
+            res = ws.send_session(cfg, user_name, row.to_dict(), ftp, st.session_state.get("wahoo_send_time"),
+                                  outdoor=st.session_state.get("wahoo_send_outdoor", True))
+            st.toast("✅ Updated on Wahoo" if res['updated'] else "✅ Sent to Wahoo")
+            st.rerun()
+        except (ws.SendError, wh.WahooError) as e:
+            st.error(f"Wahoo: {e}")
+    if sent:
+        if st.button("Remove from Wahoo", key=f"wahoo_remove_{sid}"):
+            try:
+                ws.remove_session(cfg, user_name, sid)
+                st.rerun()
+            except wh.WahooError as e:
+                st.error(f"Wahoo: {e}")
+
+
+def _built_sessions(user_name, built, ftp=None, today=None):
     if built.empty:
         return
     st.markdown("**Built sessions**")
+    cfg, wahoo_ok = _wahoo_ready(user_name)
+    sent = {}
+    if wahoo_ok:
+        import datetime as _dt
+        from src.data.db import get_wahoo_sent
+        from src.data import wahoo_send as ws
+        sent = get_wahoo_sent(user_name)
+        c1, c2 = st.columns([1, 1])
+        c1.time_input("Start time on Wahoo", value=_dt.time(8, 0), key="wahoo_send_time",
+                      help="Local time shown on the workout. Wahoo only delivers sessions to the ELEMNT from "
+                           "today up to 6 days ahead.")
+        c2.checkbox("Outdoor ride", value=True, key="wahoo_send_outdoor")
     for _, r in built.iterrows():
         c = st.columns([2, 6, 1, 1])
         c[0].write(f"{r['date']:%a %d %b}")
@@ -209,8 +253,21 @@ def _built_sessions(user_name, built):
         c[1].write(f"**{r['note']}**  \n{detail}" if r['note'] and r['note'] != detail else detail)
         c[2].write(f"{r['tss']:.0f} TSS")
         if c[3].button("✖", key=f"del_plan_{int(r['id'])}", help="Remove this session"):
+            if int(r['id']) in sent:           # also take it off the head unit
+                try:
+                    ws.remove_session(cfg, user_name, int(r['id']))
+                except Exception as e:
+                    st.warning(f"Could not remove it from Wahoo ({e}); delete it in the Wahoo app.")
             delete_planned_session(user_name, int(r['id']))
             st.rerun()
+        if wahoo_ok:
+            with c[1]:
+                _send_controls(user_name, ftp, cfg, r, int(r['id']) in sent, today)
+                if int(r['id']) in sent and not ws.in_sync_window(r['date'], today):
+                    st.caption("Sent. It reaches your ELEMNT within 6 days of the ride; use ↻ Update then if it "
+                               "doesn't show up.")
+                elif int(r['id']) in sent:
+                    st.caption("Sent to Wahoo.")
 
 
 def _render_load(user_name, ftp, today, mode):
