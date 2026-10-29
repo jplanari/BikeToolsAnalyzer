@@ -65,12 +65,16 @@ def run_server(port):
     os.chdir(folder)                       # backups/ and .streamlit/secrets.toml (Strava keys) live here
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
+    from streamlit import config
     from streamlit.web import bootstrap
-    bootstrap.run(os.path.join(ROOT, "app.py"), False, [], flag_options={
+    options = {
         "server.port": port, "server.address": "127.0.0.1", "server.headless": True,
         "server.fileWatcherType": "none", "browser.gatherUsageStats": False,
-        "global.developmentMode": False, "server.maxUploadSize": 500,
-    })
+        "global.developmentMode": False, "server.maxUploadSize": 500, "logger.level": "warning",
+    }
+    for key, value in options.items():          # bootstrap.run(flag_options=...) alone leaves the defaults in place
+        config.set_option(key, value, "desktop launcher")
+    bootstrap.run(os.path.join(ROOT, "app.py"), False, [], flag_options=options)
 
 
 def wait_until_up(port, process, timeout=START_TIMEOUT_S):
