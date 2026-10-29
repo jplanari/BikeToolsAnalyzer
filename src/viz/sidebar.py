@@ -98,18 +98,8 @@ def render_sidebar():
     elif import_method == "Wahoo":
         current_file = _render_wahoo_sidebar(selected_user_name, user_ftp, user_lthr)
 
-    # Settings
-    st.sidebar.markdown("---")
-    st.sidebar.header("⚙️ Settings")
+    # Every section of the ride analysis is always shown; only the profile values are passed on
     settings = {
-        'show_map': st.sidebar.checkbox("Show Map", value=True),
-        'show_curve': st.sidebar.checkbox("Show Power Curve", value=True),
-        'show_zones': st.sidebar.checkbox("Show Zones", value=True),
-        'show_ele': st.sidebar.checkbox("Show Elevation Profile", value=True),
-        'show_power': st.sidebar.checkbox("Show Power & Metrics", value=True),
-        'show_climbs': st.sidebar.checkbox("Show Climb Analysis", value=True),
-        'show_aero': st.sidebar.checkbox("Show Aerodynamic Analysis (Beta)", value=True),
-
         'ftp': user_ftp,
         'lthr': user_lthr,
         'weight': user_weight,
