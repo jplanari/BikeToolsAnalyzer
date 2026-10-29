@@ -19,7 +19,9 @@ def climb_baseline(df, climb, settings):
     ele_col = 'ele_smooth' if 'ele_smooth' in seg.columns else 'ele'
     lengths, grades = cm.climb_profile(seg['dist_m'], seg[ele_col])
     power = float(seg['power'].fillna(0).mean()) if 'power' in seg.columns and seg['power'].notna().any() else None
-    cda = get_avg_cda(df['cda']) if 'cda' in df.columns else np.nan
+    cda = df.attrs.get('cda_est')
+    if cda is None:
+        cda = get_avg_cda(df['cda']) if 'cda' in df.columns else np.nan
     t = seg['time']
     return {
         'lengths': lengths, 'grades': grades,
@@ -28,7 +30,9 @@ def climb_baseline(df, climb, settings):
         'mass': float(settings['weight']) + BIKE_MASS_KG,
         'cda': float(cda) if pd.notna(cda) and 0.15 <= cda <= 0.6 else DEFAULT_CDA,
         'crr': DEFAULT_CRR,
-        'rho': float(get_air_density(float(seg[ele_col].mean()))),
+        'rho': float(get_air_density(float(seg[ele_col].mean()),
+                                     seg['temp_c'].mean() if 'temp_c' in seg.columns and seg['temp_c'].notna().any() else None,
+                                     seg['relative_humidity'].mean() if 'relative_humidity' in seg.columns and seg['relative_humidity'].notna().any() else 0.0)),
     }
 
 

@@ -1,77 +1,135 @@
+"""
+Cycling power balance and CdA estimation from a recorded ride.
+
+At the wheel, P_pedals * (1 - drivetrain_loss) = P_aero + P_roll + P_grav + P_accel, with
+
+    P_roll  = m g Crr v                    P_grav  = m g grade v
+    P_accel = m v dv/dt                    P_aero  = 1/2 rho CdA v_air |v_air| v
+
+v is ground speed (the power is force x ground speed) and v_air is the air speed along the road:
+ground speed plus the head-wind component (negative of a tail wind). CdA is what makes the balance
+close, so every error in the other terms ends up in it: speed and grade are smoothed before use
+(accelerations from raw 1 Hz speed are mostly noise) and the ride's CdA is a least-squares fit over
+all usable samples instead of an average of per-second ratios, which is biased once noise is clipped.
+"""
 import numpy as np
 import pandas as pd
 
-def get_air_density(elevation_m, temp_c=15):
-    #Standard atmosphere model for air density
-    P0 = 101325  # Sea level standard atmospheric pressure, Pa
-    T0 = 288.15  # Sea level standard temperature, K
-    L = 0.0065   # Temperature lapse rate, K/m
-    R = 287.05   # Ideal gas constant for air, J/(kg·K)
-    g = 9.80665  # Gravitational acceleration, m/s²
+G = 9.80665                      # m/s²
+BIKE_MASS_KG = 8.0
+CRR = 0.005
+DRIVETRAIN_LOSS = 0.03
+MIN_CDA_SPEED_MS = 5.0           # slower than this, drag is too small to tell from noise
+SPEED_SMOOTH_S = 5               # centred window for speed before differentiating
+# Open-Meteo gives wind at 10 m; at a rider's height (~1.5 m) it is weaker (boundary-layer profile,
+# shelter from hedges and buildings). 0.7 is a common rule of thumb for road cycling.
+WIND_HEIGHT_FACTOR = 0.7
+CDA_VALID = (0.10, 0.80)         # outside this a fitted CdA is a sign of bad data, not a rider
 
-    T = T0 - L * elevation_m
-    P = P0 * (1 - (L * elevation_m) / T0)
-    rho = P / (R * T)
-    return rho
+_RD, _RV = 287.058, 461.495      # gas constants of dry air and water vapour, J/(kg K)
 
-def calculate_CdA(df, rider_mass, bike_mass=8.0, crr=0.004, rho=1.225, drivetrain_loss=0.03):
-    g = 9.80665  # m/s²: gravitational acceleration
-    total_mass = rider_mass + bike_mass  # kg
 
+def get_air_density(elevation_m, temp_c=None, rel_humidity=0.0):
+    """
+    Air density (kg/m³) at an altitude, from the standard-atmosphere pressure, the temperature and
+    the humidity. Without a temperature the standard-atmosphere one for that altitude is used.
+    Works on scalars and arrays. (Sea level, 15 °C, dry: 1.225.)
+    """
+    h = np.asarray(elevation_m, dtype=float)
+    t0, lapse, p0 = 288.15, 0.0065, 101325.0
+    pressure = p0 * (1.0 - lapse * h / t0) ** (G / (_RD * lapse))
+    t_k = (t0 - lapse * h) if temp_c is None else np.asarray(temp_c, dtype=float) + 273.15
+    rh = np.clip(np.asarray(rel_humidity, dtype=float), 0.0, 1.0)
+    p_sat = 610.94 * np.exp(17.625 * (t_k - 273.15) / (t_k - 273.15 + 243.04))      # Magnus, Pa
+    p_vap = rh * p_sat
+    rho = (pressure - p_vap) / (_RD * t_k) + p_vap / (_RV * t_k)
+    return float(rho) if rho.ndim == 0 else rho
+
+
+def _density(df, ele):
+    """Per-sample air density from the ride's altitude, temperature and humidity (where known)."""
+    ele = pd.Series(ele, index=df.index).ffill().bfill().fillna(0.0)
+    temp = df['temp_c'] if 'temp_c' in df.columns and df['temp_c'].notna().any() else None
+    hum = df['relative_humidity'].fillna(0.0) if 'relative_humidity' in df.columns else 0.0
+    rho = get_air_density(ele.to_numpy(), None if temp is None else temp.ffill().bfill().to_numpy(),
+                          hum.to_numpy() if hasattr(hum, 'to_numpy') else hum)
+    return pd.Series(rho, index=df.index)
+
+
+def _air_speed(df, v):
+    """Speed of the air relative to the rider along the road (m/s, >= 0), from the 10 m wind."""
+    if not {'wind_speed', 'wind_deg', 'bearing'} <= set(df.columns):
+        return v.copy()
+    wind = df['wind_speed'].fillna(0) * WIND_HEIGHT_FACTOR
+    # wind_deg is where the wind blows FROM: a wind from straight ahead has cos = 1, a head wind
+    head = wind * np.cos(np.radians(df['wind_deg'].fillna(0) - df['bearing'].fillna(0)))
+    return (v + head).abs()
+
+
+def _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss):
+    """Terms of the power balance (W) and the quantities they use. None if the ride lacks the channels."""
     if df.empty or 'speed' not in df.columns or 'power' not in df.columns:
-        return pd.Series(dtype=float)
+        return None
+    m = rider_mass + bike_mass
+    v = df['speed'].rolling(SPEED_SMOOTH_S, center=True, min_periods=1).mean()
+    slope = df['grade_smooth'] / 100.0 if 'grade_smooth' in df.columns else pd.Series(0.0, index=df.index)
+    cos_t = 1.0 / np.sqrt(1.0 + slope ** 2)
+    accel = pd.Series(np.gradient(v.to_numpy()) if len(v) > 1 else np.zeros(len(v)), index=df.index)
+    rho_s = _density(df, df['ele'] if 'ele' in df.columns else 0.0) if rho is None else \
+        pd.Series(float(rho), index=df.index)
+    v_air = _air_speed(df, v)
+    p_wheel = df['power'] * (1 - drivetrain_loss)
+    p_roll = m * G * crr * cos_t * v
+    p_grav = m * G * slope * cos_t * v
+    p_accel = m * v * accel
+    p_aero = p_wheel - p_accel - p_roll - p_grav          # what is left for drag
+    unit_drag = 0.5 * rho_s * v_air ** 2 * v              # aero power per unit CdA
+    return {'v': v, 'p_aero': p_aero, 'p_roll': p_roll, 'p_grav': p_grav, 'p_accel': p_accel,
+            'unit_drag': unit_drag}
 
-    if 'grade_smooth' in df.columns:
-        slope = df['grade_smooth'] / 100.0
-    else:
-        slope = 0.0
 
-    v = df['speed'] # m/s. Ground speed
+def calculate_CdA(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
+    """
+    (cda_series, p_aero_series): per-sample CdA (m², NaN where it can't be told: slower than 5 m/s,
+    negative or implausible) for plotting, and the aerodynamic power (W) that closes the balance.
+    rho=None uses the ride's altitude, temperature and humidity.
+    """
+    b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
+    if b is None:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    cda = (b['p_aero'] / b['unit_drag']).where(b['v'] > MIN_CDA_SPEED_MS)
+    cda = cda.replace([np.inf, -np.inf], np.nan)
+    cda = cda.mask((cda < 0) | (cda > 1.0))
+    return cda, b['p_aero']
 
-    if 'wind_speed' in df.columns and 'bearing' in df.columns:
-        w_speed = df['wind_speed'].fillna(0)
-        w_deg = df['wind_deg'].fillna(0)
-        ride_bearing = df['bearing'].fillna(0)
-        rad_diff = np.radians(w_deg - ride_bearing)
-        v_hdwind = w_speed * np.cos(rad_diff)
-        v_air = v + v_hdwind
 
-        v_air = v_air.abs()
-    else:
-        v_air = v
+def estimate_cda(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
+    """
+    The ride's CdA as the least-squares fit of P_aero = CdA x (1/2 rho v_air² v) over all samples
+    faster than 5 m/s: sum(P k) / sum(k²), so fast samples (a lot of drag signal) count for more than
+    slow ones, and noise cancels instead of being clipped. Returns {'cda', 'seconds'} or None when
+    there are too few samples or the result is implausible.
+    """
+    b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
+    if b is None:
+        return None
+    k = b['unit_drag']
+    ok = (b['v'] > MIN_CDA_SPEED_MS) & k.notna() & b['p_aero'].notna() & (k > 0)
+    if ok.sum() < 120:
+        return None
+    k, p = k[ok], b['p_aero'][ok]
+    cda = float((p * k).sum() / (k * k).sum())
+    if not CDA_VALID[0] <= cda <= CDA_VALID[1]:
+        return None
+    return {'cda': cda, 'seconds': int(ok.sum())}
 
-    p_input = df['power']
-
-    p_wheel = p_input * (1 - drivetrain_loss)
-
-    # Acceleration term
-
-    accel = df['speed'].diff().fillna(0)  # m/s²
-    p_accel = total_mass * v * accel
-
-    # Rolling resistance term
-    p_roll = total_mass * g * crr * v
-
-    # Gravitational term
-    p_grav = total_mass * g * slope * v
-
-    # Aerodynamic drag term
-    p_aero = p_wheel - p_accel - p_roll - p_grav
-
-    valid_speed_mask = v > 5.0
-
-    cda_series = p_aero / (0.5 * rho * v**2*v_air)
-    cda_series = cda_series.where(valid_speed_mask, np.nan)
-
-    cda_series = cda_series.mask(cda_series < 0, np.nan)
-    cda_series = cda_series.mask(cda_series > 1.0, np.nan)
-
-    return cda_series, p_aero
 
 def get_avg_cda(cda_series):
-    if cda_series.empty:
+    """Mean of the per-sample series (kept for compatibility; estimate_cda is the better number)."""
+    if cda_series is None or len(cda_series) == 0:
         return np.nan
     return cda_series.mean()
+
 
 def get_avg_power(p_aero_series):
     if p_aero_series.empty:
@@ -79,45 +137,10 @@ def get_avg_power(p_aero_series):
     return p_aero_series.mean()
 
 
-def calculate_power_components(df, rider_mass, bike_mass=8.0, crr=0.004, rho=1.225, drivetrain_loss=0.03):
-    g = 9.80665  # m/s²: gravitational acceleration
-    total_mass = rider_mass + bike_mass  # kg
-
-    if df.empty or 'speed' not in df.columns or 'power' not in df.columns:
+def calculate_power_components(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None,
+                               drivetrain_loss=DRIVETRAIN_LOSS):
+    """(p_grav, p_roll, p_accel) in W, on the same basis as calculate_CdA."""
+    b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
+    if b is None:
         return pd.Series(dtype=float)
-
-    if 'grade_smooth' in df.columns:
-        slope = df['grade_smooth'] / 100.0
-    else:
-        slope = 0.0
-
-    v = df['speed'] # m/s. Ground speed
-
-    if 'wind_speed' in df.columns and 'bearing' in df.columns:
-        w_speed = df['wind_speed'].fillna(0)
-        w_deg = df['wind_deg'].fillna(0)
-        ride_bearing = df['bearing'].fillna(0)
-        rad_diff = np.radians(w_deg - ride_bearing)
-        v_hdwind = w_speed * np.cos(rad_diff)
-        v_air = v + v_hdwind
-
-        v_air = v_air.abs()
-    else:
-        v_air = v
-
-    p_input = df['power']
-
-    p_wheel = p_input * (1 - drivetrain_loss)
-
-    # Acceleration term
-
-    accel = df['speed'].diff().fillna(0)  # m/s²
-    p_accel = total_mass * v * accel
-
-    # Rolling resistance term
-    p_roll = total_mass * g * crr * v
-
-    # Gravitational term
-    p_grav = total_mass * g * slope * v
-
-    return p_grav, p_roll, p_accel
+    return b['p_grav'], b['p_roll'], b['p_accel']
