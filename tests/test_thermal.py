@@ -73,3 +73,25 @@ def test_output_columns_unchanged():
     out = calculate_thermal_profile(ride(wind=3, wind_from=45), 70, 175, [])
     assert {'core_temp', 'skin_temp', 'heat_generated_W', 'heat_lost_W'} <= set(out.columns)
     assert out['core_temp'].between(35, 42).all()
+
+
+def _ride(power, temp, rh=0.5, speed=8.0, n=3600):
+    df = pd.DataFrame({'time': pd.date_range("2026-07-01 09:00", periods=n, freq="1s"), 'speed': speed,
+                       'power': power, 'temp_c': temp, 'relative_humidity': rh})
+    return calculate_thermal_profile(df, 70, 175, ["Summer Jersey"])
+
+
+def test_resting_rider_stays_in_equilibrium():
+    for temp in (10, 20, 30):
+        out = _ride(0, temp, speed=0)
+        assert out.core_temp.iloc[0] == pytest.approx(out.core_temp.iloc[-1], abs=0.3)
+        assert 36.5 < out.core_temp.iloc[-1] < 37.3
+
+
+def test_humidity_raises_core_temperature_monotonically():
+    ends = [_ride(220, 28, rh=rh).core_temp.iloc[-1] for rh in (0.2, 0.5, 0.8, 0.95)]
+    assert ends == sorted(ends) and ends[-1] - ends[0] > 0.5
+
+
+def test_cool_humid_air_still_evaporates():
+    assert _ride(200, 10, rh=0.9).core_temp.iloc[-1] < 37.5
