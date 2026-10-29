@@ -110,7 +110,7 @@ def test_training_page(seeded_db):
 def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
     at = _go(_app(), "Training")
     options = list(_widget(at.radio, "Section").options)
-    assert len(options) == 4
+    assert len(options) == 5
     _widget(at.radio, "Show").set_value("6 months").run()
     for name in options[1:]:                       # only the selected section is drawn
         _widget(at.radio, "Section").set_value(name).run()
@@ -120,17 +120,41 @@ def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
     assert _widget(at.radio, "Show").value == "6 months"      # survived the other sections
 
 
-def test_user_corner_and_deeper_analytics(seeded_db):
-    at = _go(_app(), "User Corner")
+def test_deeper_analytics_live_on_the_training_page(seeded_db):
+    at = _go(_app(), "Training")
+    _widget(at.radio, "Section").set_value("🔬 Deeper analytics").run()
     _no_errors(at)
-    assert "Deeper Analytics" in _texts(at.subheader)
-    labels = [m.label for m in at.metric]
-    assert "FTP" in labels and "Correlation (r)" in labels      # seeded rides have power and HR
+    assert "Correlation (r)" in [m.label for m in at.metric]     # seeded rides have power and HR
     _widget(at.checkbox, "Compare with previous period").uncheck().run()
     _no_errors(at)
-    for name in list(_widget(at.radio, "Section").options)[1:]:
-        _widget(at.radio, "Section").set_value(name).run()
+    inner = next(r for r in at.radio if r.key == "da_section")
+    for name in list(inner.options)[1:]:
+        next(r for r in at.radio if r.key == "da_section").set_value(name).run()
         _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()      # leaving and coming back keeps the choice
+    _widget(at.radio, "Section").set_value("🔬 Deeper analytics").run()
+    _no_errors(at)
+    assert _widget(at.checkbox, "Compare with previous period").value is False
+
+
+def test_user_corner_keeps_the_profile_and_maintenance_only(seeded_db):
+    at = _go(_app(), "User Corner")
+    _no_errors(at)
+    assert {"FTP", "LTHR", "Weight"} <= {m.label for m in at.metric}
+    assert "Correlation (r)" not in [m.label for m in at.metric]
+    assert not at.subheader or "Deeper Analytics" not in _texts(at.subheader)
+
+
+def test_power_profile_section_with_the_critical_power_expander_renders(seeded_db):
+    at = _go(_app(), "Training")
+    _widget(at.radio, "Section").set_value("⚡ Power profile").run()
+    _no_errors(at)
+
+
+def test_ride_analysis_has_no_settings_in_the_sidebar(seeded_db):
+    at = _app()
+    assert not at.sidebar.checkbox
+    assert "Settings" not in _texts(at.sidebar.header)
 
 
 def test_pages_see_data_saved_after_the_first_run(seeded_db):

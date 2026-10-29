@@ -1,14 +1,14 @@
-"""Training page: load, power profile, durability and intensity distribution."""
+"""Training page: load, power profile, durability, intensity distribution and deeper analytics."""
 import json
 
 import pandas as pd
 import streamlit as st
 
 from src.data.db import (replace_planned_sessions, add_structured_session as db_add_session,
-                         delete_planned_session, update_user_ftp)
+                         delete_planned_session, update_user_ftp, update_user_physics)
 from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
                              get_kj_records, get_zone_rows, get_planned_sessions,
-                             count_rides_needing_update, compute_pmc, cp_history)
+                             count_rides_needing_update, compute_pmc, cp_history, get_user_best_power)
 from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
 from src.analysis import durability as du
@@ -17,6 +17,7 @@ from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
 from src.viz.sections import section_picker, remembered
+from src.viz.deeper_analytics import render_deeper_analytics
 from src.analysis.labels import (PERIODS, period_start, dur_label, ramp_status, acwr_status, form_status,
                                  monotony_status, tid_label)
 
@@ -59,7 +60,7 @@ def render_training_page(user_name):
     mode = _theme()
     _threshold_hint(user_name, user, today)
     _report_expander(user_name, today)
-    sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity"]
+    sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity", "🔬 Deeper analytics"]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
         _render_load(user_name, user['ftp'], today, mode)
@@ -67,8 +68,10 @@ def render_training_page(user_name):
         _render_power(user_name, user, today, mode)
     elif section == sections[2]:
         _render_durability(user_name, today, mode)
-    else:
+    elif section == sections[3]:
         _render_intensity(user_name, today, mode)
+    else:
+        render_deeper_analytics(user_name, user)
 
 
 def _report_expander(user_name, today):
@@ -312,6 +315,8 @@ def _render_load(user_name, ftp, today, mode):
     start = _period_start(label, today)
     view = pmc if start is None else pmc.loc[start:]
     _chart(tp.plot_training_load(view, today, mode))
+    with st.expander("Raw load data"):
+        st.dataframe(view, use_container_width=True)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -395,6 +400,45 @@ def _render_power(user_name, user, today, mode):
                      hide_index=True, use_container_width=True,
                      column_config={'Watts': st.column_config.NumberColumn(format="%.0f"),
                                     'Last 90 d': st.column_config.NumberColumn(format="%.0f")})
+
+    _render_cp_profile(user_name)
+
+
+def _render_cp_profile(user_name):
+    """Critical-power model from ALL your best efforts, with buttons that store it in the profile."""
+    best_power = get_user_best_power(user_name)
+    if not best_power:
+        return
+    with st.expander("💾 Save critical power to your profile (all-time model)"):
+        cp_results = estimate_critical_power(best_power)
+        if not cp_results:
+            st.info("Not enough data to model Critical Power. Upload maximal efforts between 3 and 20 minutes.")
+            return
+        c = st.columns(3)
+        c[0].metric("Critical Power (CP)", f"{cp_results['cp']:.0f} W",
+                    help="The theoretical power you can sustain 'indefinitely' (aerobic ceiling). "
+                         "Usually slightly higher than FTP.")
+        c[1].metric("W' (Anaerobic Capacity)", f"{cp_results['w_prime'] / 1000:.1f} kJ",
+                    help="Battery size above CP. Typical values: 10kJ (Sprinter) to 25kJ (Pursuiter).")
+        c[2].metric("Model Fit (R²)", f"{cp_results['r_squared']:.3f}",
+                    help="How well your data fits the model. >0.95 is excellent. If low, you might need more "
+                         "all-out efforts between 3 and 12 mins.")
+        if cp_results['w_prime'] > 20000:
+            st.caption("💡 You have a high anaerobic capacity: likely a **Puncheur** or **Sprinter**.")
+        elif cp_results['w_prime'] < 12000:
+            st.caption("💡 Your engine is more diesel: likely a **Time Trialist** or **Climber** "
+                       "(or you need more intervals!).")
+        st.caption("Fitted to your best efforts of all time, so it can be higher than the last-90-days "
+                   "figures above.")
+        b1, b2 = st.columns([1, 2])
+        if b1.button("💾 Save CP & W'", key="save_cp"):
+            update_user_physics(user_name, cp=cp_results['cp'], w_prime=cp_results['w_prime'])
+            st.success(f"Updated {user_name}: CP={cp_results['cp']:.0f}W, W'={cp_results['w_prime'] / 1000:.1f}kJ")
+            st.rerun()
+        if b2.button("💾 Save CP & W' AND set FTP = CP", key="save_cp_ftp"):
+            update_user_physics(user_name, cp=cp_results['cp'], w_prime=cp_results['w_prime'], update_ftp=True)
+            st.success(f"Full update! FTP is now {cp_results['cp']:.0f}W.")
+            st.rerun()
 
 
 # --- Durability ------------------------------------------------------------------

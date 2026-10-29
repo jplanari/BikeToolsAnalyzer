@@ -115,9 +115,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
              _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary)
 
     # Detect Climbs
-    detected_climbs = []
-    if settings['show_climbs'] or settings['show_map']:
-         detected_climbs = climbs
+    detected_climbs = climbs
 
     # Dashboard
     st.subheader("Ride Summary")
@@ -208,18 +206,16 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
 
 def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name):
 
-    if settings['show_map']:
-        st.subheader("Route Map")
-        map_obj = create_route_map(df, detected_climbs)
-        if map_obj: st_folium(map_obj, width=1000, height=500)
-        else: st.warning("No GPS coordinates found.")
+    st.subheader("Route Map")
+    map_obj = create_route_map(df, detected_climbs)
+    if map_obj: st_folium(map_obj, width=1000, height=500)
+    else: st.warning("No GPS coordinates found.")
 
-    if settings['show_ele']:
-        st.subheader("Elevation Profile")
-        show_centered(plot_elevation(df))
+    st.subheader("Elevation Profile")
+    show_centered(plot_elevation(df))
 
     # --- CdA SECTION ---
-    if settings.get('show_aero', True) and 'power' in df.columns and 'speed' in df.columns:
+    if 'power' in df.columns and 'speed' in df.columns:
         st.subheader("💨 Aerodynamic Analysis & Power Budget")
         
         # Calculation happens automatically here using available columns
@@ -240,41 +236,40 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
                 fig_budget = plot_power_budget(df)
                 show_centered(fig_budget)
                 
-    if settings['show_power']:
-        st.subheader("Speed")
-        show_centered(plot_x_time(df, 'speed_kmh', 'Speed (km/h)'))
+    st.subheader("Speed")
+    show_centered(plot_x_time(df, 'speed_kmh', 'Speed (km/h)'))
 
-        st.subheader("Power")
-        if 'power' not in df.columns:
-            st.info("No power data available.")
-        else:
-            show_centered(plot_x_time(df, 'power', 'Power (W)'))
+    st.subheader("Power")
+    if 'power' not in df.columns:
+        st.info("No power data available.")
+    else:
+        show_centered(plot_x_time(df, 'power', 'Power (W)'))
 
-        st.subheader("Cadence")
-        if 'cadence' in df.columns:
-            show_centered(plot_x_time(df, 'cadence', 'Cadence (rpm)'))
-        else:
-            st.info("No cadence data available.")
+    st.subheader("Cadence")
+    if 'cadence' in df.columns:
+        show_centered(plot_x_time(df, 'cadence', 'Cadence (rpm)'))
+    else:
+        st.info("No cadence data available.")
 
-        st.subheader("Heart Rate")
-        if 'hr' in df.columns:
-            show_centered(plot_x_time(df, 'hr', 'Heart Rate (bpm)'))
-        else:
-            st.info("No heart rate data available.")
+    st.subheader("Heart Rate")
+    if 'hr' in df.columns:
+        show_centered(plot_x_time(df, 'hr', 'Heart Rate (bpm)'))
+    else:
+        st.info("No heart rate data available.")
 
-        st.subheader("CdA")
-        if 'cda' in df.columns:
-            show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
-        else:
-            st.info("No CdA data available.")
+    st.subheader("CdA")
+    if 'cda' in df.columns:
+        show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
+    else:
+        st.info("No CdA data available.")
 
-        st.subheader("W' Balance")
-        if 'w_prime_balance' in df.columns:
-            show_centered(plot_w_prime_balance(df,settings['w_prime_cap']))
-        else:
-            st.info("No W' Balance data available.")
+    st.subheader("W' Balance")
+    if 'w_prime_balance' in df.columns:
+        show_centered(plot_w_prime_balance(df,settings['w_prime_cap']))
+    else:
+        st.info("No W' Balance data available.")
 
-    if settings['show_curve'] and 'power' in df.columns:
+    if 'power' in df.columns:
         st.subheader("Power Curve")
         best_curve, recent_curve = None, None
         if user_name:
@@ -285,27 +280,25 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
 
         show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
 
-    if settings['show_zones']:
-        st.subheader("Zone Distribution")
-        c1, c2 = st.columns(2)
-        if 'power' in df.columns and settings['ftp']:
-            zones = coggan_zones(settings['ftp'])
-            times = time_in_zones(df['power'], zones)
-            fig = plot_zone_distribution(times, "Power Zones")
-            if fig: c1.plotly_chart(fig, use_container_width=True)
+    st.subheader("Zone Distribution")
+    c1, c2 = st.columns(2)
+    if 'power' in df.columns and settings['ftp']:
+        zones = coggan_zones(settings['ftp'])
+        times = time_in_zones(df['power'], zones)
+        fig = plot_zone_distribution(times, "Power Zones")
+        if fig: c1.plotly_chart(fig, use_container_width=True)
         
-        active_lthr = settings['lthr']
-        if not active_lthr and 'hr' in df.columns:
-             est, _ = estimate_hr_threshold(df['hr'])
-             active_lthr = est
+    active_lthr = settings['lthr']
+    if not active_lthr and 'hr' in df.columns:
+         est, _ = estimate_hr_threshold(df['hr'])
+         active_lthr = est
         
-        if 'hr' in df.columns and active_lthr:
-            times = time_in_hr_zones(df['hr'], active_lthr)
-            fig = plot_zone_distribution(times, "Heart Rate Zones")
-            if fig: c2.plotly_chart(fig, use_container_width=True)
+    if 'hr' in df.columns and active_lthr:
+        times = time_in_hr_zones(df['hr'], active_lthr)
+        fig = plot_zone_distribution(times, "Heart Rate Zones")
+        if fig: c2.plotly_chart(fig, use_container_width=True)
 
-    if settings['show_climbs']:
-        _render_climb_details(df, detected_climbs, settings)
+    _render_climb_details(df, detected_climbs, settings)
 
 
 def _render_climb_details(df, climbs, settings):
