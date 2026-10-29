@@ -51,13 +51,14 @@ class ImportResult:
     already_imported: int = 0
     duplicates_of_uploads: int = 0
     no_data: int = 0
+    not_completed: int = 0       # Wahoo: scheduled workouts that were never ridden
     failed: list = field(default_factory=list)
     stopped_reason: str = ""
 
     @property
     def remaining(self):
         return (self.found - self.imported - self.already_imported
-                - self.duplicates_of_uploads - self.no_data - len(self.failed))
+                - self.duplicates_of_uploads - self.no_data - self.not_completed - len(self.failed))
 
 
 def _start_utc(activity):

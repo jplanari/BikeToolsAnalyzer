@@ -229,6 +229,7 @@ def _show_import_result(res):
     if res.already_imported: skipped.append(f"{res.already_imported} already imported")
     if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
     if res.no_data: skipped.append(f"{res.no_data} without recorded data")
+    if res.not_completed: skipped.append(f"{res.not_completed} planned but not ridden")
     if skipped:
         st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")
     if res.failed:

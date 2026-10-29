@@ -43,7 +43,8 @@ def list_cycling_since(auth, since, usage=None):
         if not batch:
             break
         starts = [_start_utc(w) for w in batch]
-        found.extend(w for w, s in zip(batch, starts) if s is not None and s >= after and wh.is_cycling(w))
+        found.extend(w for w, s in zip(batch, starts)
+                     if s is not None and s >= after and wh.is_cycling(w) and not wh.is_planned_only(w))
         newest_first = str(data.get('order', 'descending')).lower().startswith('desc')
         if len(batch) < data.get('per_page', wh.PER_PAGE):
             break
@@ -56,8 +57,20 @@ def list_cycling_since(auth, since, usage=None):
 def list_recent_rides(cfg, user_name, limit=30, usage=None):
     auth = get_valid_auth(cfg, user_name)
     data = wh.list_workouts(auth['access_token'], page=1, per_page=min(wh.PER_PAGE, limit * 2), usage=usage)
-    rides = [w for w in data.get('workouts') or [] if wh.is_cycling(w)]
-    return sorted(rides, key=lambda w: w.get('starts') or '', reverse=True)[:limit]
+    rides = [w for w in data.get('workouts') or [] if wh.is_cycling(w) and not wh.is_planned_only(w)]
+    rides = sorted(rides, key=lambda w: w.get('starts') or '', reverse=True)
+    out = []
+    for w in rides:
+        if len(out) >= limit:
+            break
+        if wh.may_be_planned(w):                    # linked to a plan: ridden only if it has a recorded file
+            try:
+                if not wh.fit_url(wh.get_workout(auth['access_token'], w['id'], usage=usage)):
+                    continue
+            except wh.WahooNotFound:
+                continue
+        out.append(w)
+    return out
 
 
 def fetch_ride_file(cfg, user_name, workout, usage=None):
@@ -119,7 +132,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
             raise
         except wh.WahooError as e:
             if "no recorded data" in str(e):
-                res.no_data += 1
+                res.not_completed += 1       # a scheduled workout has no file until it is ridden
             else:
                 res.failed.append(f"{name}: {e}")
             continue
