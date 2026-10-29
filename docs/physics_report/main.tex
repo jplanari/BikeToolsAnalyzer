@@ -39,7 +39,7 @@ and a two-node model of core and skin temperature}
 
 \begin{abstract}
 \noindent
-This report documents, derives and critically assesses the two physical models used by BikeToolsAnalyzer to interpret a recorded ride: (i) the \emph{road-cycling power balance}, which closes the balance between measured crank power and the sum of aerodynamic, rolling, gravitational and inertial power, and from which the effective drag area \(\CdA\) is estimated by least squares; and (ii) a lumped \emph{two-node thermoregulation model} (core and skin) that predicts core temperature from power, ambient temperature, humidity, air speed and clothing. For each model we state the governing equations, relate every term to the code, give the provenance of each constant, and quantify the behaviour of the implementation with controlled numerical experiments (Monte-Carlo recovery of a known \(\CdA\), first-order error propagation, step-size convergence, energy-conservation checks and parameter sensitivity). The audit identified and corrected several defects, which are listed in a findings register together with the limitations that remain. The main conclusions are: the least-squares \(\CdA\) estimator is unbiased where the per-sample-ratio estimator is biased by up to \SI{10}{\percent}, but its accuracy is limited by \emph{systematic} errors (grade, wind, rolling resistance) of the order \(0.01\)--\(0.04\ \si{m^2}\) rather than by random noise, and descents steeper than \SI{5}{\percent} are excluded because unmeasured braking there would otherwise be booked as drag (\(+15\%\) in a test ride). The thermal model is physically consistent and energy-conserving but \emph{uncalibrated}, with a strong dependence on the assumed gross efficiency, so it should be used for relative comparisons rather than as an absolute predictor of core temperature.
+This report documents, derives and critically assesses the two physical models used by BikeToolsAnalyzer to interpret a recorded ride: (i) the \emph{road-cycling power balance}, which closes the balance between measured crank power and the sum of aerodynamic, rolling, gravitational and inertial power, and from which the effective drag area \(\CdA\) is estimated by least squares; and (ii) a lumped \emph{two-node thermoregulation model} (core and skin) that predicts core temperature from power, ambient temperature, humidity, air speed and clothing. For each model we state the governing equations, relate every term to the code, give the provenance of each constant, and quantify the behaviour of the implementation with controlled numerical experiments (Monte-Carlo recovery of a known \(\CdA\), first-order error propagation, step-size convergence, energy-conservation checks and parameter sensitivity). The audit identified and corrected several defects, which are listed in a findings register together with the limitations that remain. The main conclusions are: the least-squares \(\CdA\) estimator is unbiased where the per-sample-ratio estimator is biased by up to \SI{10}{\percent}, but its accuracy is limited by \emph{systematic} errors (grade, wind, rolling resistance) of the order \(0.01\)--\(0.04\ \si{m^2}\) rather than by random noise, and descents steeper than \SI{5}{\percent} are excluded because unmeasured braking there would otherwise be booked as drag (\(+15\%\) in a test ride). The thermal model is physically consistent and energy-conserving but \emph{uncalibrated}, with a strong dependence on the assumed gross efficiency (its exercise set point is driven by the rider's FTP), so it should be used for relative comparisons rather than as an absolute predictor of core temperature.
 \end{abstract}
 
 \tableofcontents
@@ -388,10 +388,10 @@ Two simplifications deserve mention: (i) \(\eta\) is a constant, whereas it vari
 \label{sec:dry}
 Sensible heat (convection and radiation combined) flows through the series resistance of the clothing and the air boundary layer:
 \begin{equation}
- Q_{dry}=\frac{A\,(T_s-T_a)}{R_{cl}+R_{air}(v_{air})},\qquad R_{air}=\frac{1}{h_a},\quad h_a=\alpha\,v_{air}^{\,n},
+ Q_{dry}=\frac{A\,(T_s-T_a)}{R_{cl}+R_{air}(v_{air})},\qquad R_{air}=\frac{1}{h_a},\quad h_a=\max\bigl(\alpha\,v_{air}^{\,n},\ h_0\bigr),
  \label{eq:dry}
 \end{equation}
-with \(\alpha=8.5\), \(n=0.84\) and \(v_{air}\) the \emph{apparent air speed} \(\sqrt{v_a^2+v_\perp^2}\) of Eq.~\eqref{eq:vair} computed with the smoothed ground speed and the wind at rider height (identical to the wind treatment of the drag model; the thermal model previously computed the wind separately). Clothing insulation is
+with \(\alpha=8.5\), \(n=0.84\), \(h_0=\SI{7.8}{W/(m^2K)}\) and \(v_{air}\) the \emph{apparent air speed} \(\sqrt{v_a^2+v_\perp^2}\) of Eq.~\eqref{eq:vair} computed with the smoothed ground speed and the wind at rider height (identical to the wind treatment of the drag model; the thermal model previously computed the wind separately). Clothing insulation is
 \begin{equation}
  R_{cl}=0.155\sum_j I_j\quad(\si{m^2\,K/W}),
 \end{equation}
@@ -399,7 +399,7 @@ where \(I_j\) (in clo; \(1\,\mathrm{clo}=\SI{0.155}{m^2K/W}\), \citealp{gagge194
 
 \paragraph{Assessment.} The coefficient \(h_a=8.5\,v^{0.84}\) is an empirical combined (convective+radiative) coefficient, not a standard correlation. Figure~\ref{fig:h} compares it with the ASHRAE correlation for a clothed standing person, \(h_c=8.3\,v^{0.6}\) (\(0.2<v<\SI{4}{m/s}\), \citealp{ashrae2017}), to which a linearised radiative coefficient \(h_r\approx\SI{4.7}{W/(m^2K)}\) must be added. The model is lower than the standard value at \(v\lesssim3\,\si{m/s}\) and increasingly higher above it (\SI{33}{W/(m^2K)} against \SI{26.5}{} at \SI{5}{m/s}; \SI{59}{} against \SI{38}{} at \SI{10}{m/s}, Table~\ref{tab:h}). At cycling speeds the standard correlation is outside its validated range (\(\le\SI{4}{m/s}\)), so a stronger dependence is not unreasonable: however, the exponent and prefactor have not been calibrated against measurements for cyclists. The consequence is shown in Section~\ref{sec:thermal-sens}: the model is moderately insensitive to \(\alpha\) at moderate temperatures (\(\pm20\%\) in \(\alpha\) changes the final core temperature by \(\lesssim0.15\,\si{K}\)).
 
-At low air speed the power law has a serious shortcoming: \(h_a\to0\) as \(v_{air}\to0\), whereas natural convection and radiation guarantee a floor of about \(3\)--\SI{8}{W/(m^2K)} even in still air. With the minimum speed of \SI{0.2}{m/s} used in the code, \(h_a=\SI{2.2}{W/(m^2K)}\). This affects stops, slow climbs and the pre-ride resting state (Section~\ref{sec:rest}) and is listed as open finding~O1.
+\paragraph{Still-air limit.} A pure power law has a serious shortcoming at low speed: \(h_a\to0\) as \(v_{air}\to0\), whereas radiation and natural convection guarantee a floor of about \(4.7+3.1\approx\SI{7.8}{W/(m^2K)}\) even in still air \citep{ashrae2017}. The unfloored model gave \(h_a=\SI{2.2}{W/(m^2K)}\) at \SI{0.2}{m/s}, which kept riders too warm at stops, on slow climbs and at rest (skin \(\approx2\,\si{K}\) too warm; finding~O1). The coefficient is therefore \(h_a=\max(\alpha v_{air}^{\,n},\,h_0)\) with \(h_0=\SI{7.8}{W/(m^2K)}\); the floor is active only below \(\approx\SI{0.9}{m/s}\) and leaves all riding conditions unchanged.
 
 \begin{figure}[H]
 \centering
@@ -454,6 +454,16 @@ The conductance between core and skin combines tissue conduction with convective
 \end{align}
 The basal terms \(5.28\) and \(7.3\) are those of the Gagge model \citep{gagge1971,gagge1977} (minimal skin blood flow of \SI{6.3}{L/(m^2h)}, multiplied by the volumetric heat capacity of blood, \(\SI{1.163}{W\,h/(L\,K)}\)). The saturating vasodilation term is a heuristic: it rises smoothly with the core temperature above \SI{36.8}{\degreeCelsius}, avoids a hard switch, and reaches half its asymptote at \(T_c=37.8\ \si{\degreeCelsius}\). In Gagge-type models skin blood flow increases linearly with the core-temperature error up to a physiological cap of about \SI{90}{L/(m^2h)}, i.e.\ \(\approx\SI{105}{W/(m^2K)}\); the present form reaches that conductance only at \(\sigma\approx1.6\) (\(T_c\approx38.4\) \si{\degreeCelsius}) --- later and more gradually than the physiological controller --- so it is, if anything, \emph{conservative} regarding heat dissipation. It also ignores the inhibition of skin vasodilation by cold skin and the reduction of blood flow to the skin during heavy exercise.
 
+\subsection{Exercise set point}
+\label{sec:setpoint}
+In exercising humans the steady-state core temperature is not fixed by the environment but rises in proportion to the \emph{relative} workload (fraction of maximal oxygen uptake), almost independently of ambient temperature over a wide range \citep{saltin1966}: the thermoregulatory set point is shifted upward during exercise, so that thresholds for sweating and skin vasodilation are higher than at rest. A model with fixed resting thresholds (\SI{37.0}{\degreeCelsius} and \SI{36.8}{\degreeCelsius}) holds the core at about \SI{37.1}{\degreeCelsius} at \SI{200}{W} in mild air, \(\sim0.8\,\si{K}\) below the measured plateau. We shift both thresholds by
+\begin{equation}
+ \Delta(t)=g_{sp}\,\phi(t),\qquad
+ \frac{\dd\phi}{\dd t}=\frac{\min\!\bigl(W(t)/\mathrm{FTP},\ \phi_{max}\bigr)-\phi}{\tau_{sp}},
+ \label{eq:setpoint}
+\end{equation}
+so that sweat onset is \(37.0+\Delta\) and vasodilation onset \(36.8+\Delta\) (\si{\degreeCelsius}), with \(g_{sp}=\SI{1.0}{K}\) per unit of FTP, \(\phi_{max}=1.2\) and \(\tau_{sp}=\SI{300}{s}\) (the first-order filter reproduces the observed rise of core temperature over the first \(10\)--\SI{20}{min}). The relative intensity is taken as power over the rider's FTP, because the FTP is known to the application while \(\dot V\mathrm{O}_{2,max}\) is not; FTP is a proxy for the lactate threshold, at about \(75\)--\(85\%\) of \(\dot V\mathrm{O}_{2,max}\) in trained riders. Without an FTP the shift is zero and the model reduces to the resting-threshold version. The gain \(g_{sp}\) is chosen to reproduce a core temperature of \(\approx\SI{38}{\degreeCelsius}\) at about \(80\%\) of FTP in mild air; it has \emph{not} been fitted to data, and its effect is shown in Section~\ref{sec:setpoint-results}.
+
 \section{Numerical integration}
 \label{sec:numerics}
 Equations~\eqref{eq:core}--\eqref{eq:skin} are integrated with the explicit (forward) Euler method with time step \(\Delta t\). For a linear relaxation with time constant \(\tau\), forward Euler is stable only for \(\Delta t<2\tau\), and monotone for \(\Delta t<\tau\) \citep{hairer1993}. The skin node is the stiffest: \(\tau_s=C_s/(K+A/R_{tot})\) ranges from \SI{1050}{s} (resting conductance, no air flow) to \SI{71}{s} (full vasodilation, \SI{10}{m/s} air speed), computed for a \SI{70}{kg}, \SI{175}{cm} rider (\(C_s=\SI{24.5}{kJ/K}\)). The stability limit is therefore \(\Delta t<\SI{141}{s}\). For \SI{1}{Hz} data this holds with a large margin, but \emph{recording gaps and smart-recording files with long intervals could violate it}: we reproduced, with \(\Delta t=\SI{200}{s}\), non-physical skin temperatures of \SI{16}{\degreeCelsius} and jumps of \SI{36}{K} between samples (the original code skipped only intervals above \SI{300}{s}). The integration now subdivides every interval into sub-steps of at most \SI{5}{s}, a factor of \(\approx14\) below the minimum \(\tau_s\). Table~\ref{tab:conv} shows convergence: results are identical for sampling intervals of \(1\) and \SI{5}{s}, and differ by less than \(0.1\ \si{K}\) even for \SI{299}{s}, the residual being due to the sample-and-hold of the inputs rather than to the integrator.
@@ -474,7 +484,11 @@ Sampling interval (s) & core \(T_c\) at 60 min (\si{\degreeCelsius}) & skin \(T_
 \caption{Step-size convergence for \SI{250}{W}, \SI{30}{\degreeCelsius}, \SI{50}{\percent} RH, \SI{8}{m/s}, summer jersey, after the sub-stepping fix. (Before the fix, the \SI{200}{s} and \SI{299}{s} runs diverged.)}\label{tab:conv}
 \end{table}
 
-\paragraph{Initial state.} Starting the integration at an arbitrary temperature (the original code used \(T_c=36.0\), \(T_s=\SI{32.0}{\degreeCelsius}\)) produces a fictitious warm-up transient. The model now first integrates, for 90 simulated minutes, a rider \emph{at rest in near-still air} (\SI{0.2}{m/s}) at the first sample's weather and clothing, and starts the ride from that equilibrium.
+\paragraph{Initial state.} Starting the integration at an arbitrary skin temperature produces a fictitious warm-up transient (the original code used \(T_c=36.0\), \(T_s=\SI{32.0}{\degreeCelsius}\)). The ride now starts with a warm, rested rider, \(T_c=\SI{36.9}{\degreeCelsius}\) (\code{CORE_START_C}), and a skin temperature in quasi-steady balance with the first sample's air and clothing in still air,
+\begin{equation}
+ T_{s,0}=\frac{k_{min}A\,T_{c,0}+g\,T_a}{k_{min}A+g},\qquad g=\frac{A}{R_{cl}+1/h_0}.
+\end{equation}
+An earlier version integrated a ``resting equilibrium'' with the same equations; with a realistic still-air coefficient that equilibrium is cold at low ambient temperatures, because the model has no shivering thermogenesis (Section~\ref{sec:limits-thermal}), and so is not a meaningful starting condition.
 
 \section{Verification and behaviour}
 \label{sec:thermal-verif}
@@ -483,7 +497,7 @@ Summing Eq.~\eqref{eq:energy} over the simulation shows that the heat stored in 
 
 \subsection{Resting state}
 \label{sec:rest}
-Table~\ref{tab:rest} gives the temperatures of the model's own resting equilibrium. A rider at rest produces \(M_0A=\SI{108}{W}\); the core settles within about \SI{0.1}{K} of \SI{37.0}{\degreeCelsius}, which is physiologically plausible (resting core \(\approx36.6\)--\SI{37.2}{\degreeCelsius}). The skin temperature, however, is \(35.6\)--\SI{35.9}{\degreeCelsius}, about \SI{2}{K} warmer than the neutral skin temperature of \(\approx33\)--\SI{34}{\degreeCelsius}. The reason is the one identified in Section~\ref{sec:dry}: the combined coefficient at \SI{0.2}{m/s} is only \SI{2.2}{W/(m^2K)}, so the dry heat loss at rest is too low and the core is pushed above the vasodilation onset (\SI{36.8}{\degreeCelsius}); vasodilation then couples the skin strongly to the core (warm skin) and, at \(20\)--\SI{30}{\degreeCelsius}, slight sweating sets in above \SI{37}{\degreeCelsius}. The equilibrium therefore lies between the two controller thresholds for every ambient temperature, i.e.\ it is set by the thresholds rather than by the environment. The pre-ride state should accordingly be read as a convenient and \emph{stable} initial condition, not as a prediction of physiological rest.
+Table~\ref{tab:rest} shows a rider who sits still after the starting state of Section~\ref{sec:numerics} (no power, no air movement). A resting rider produces \(M_0A=\SI{108}{W}\). At \SI{30}{\degreeCelsius} the core is stable (\(36.9\to37.0\,\si{\degreeCelsius}\)) and skin settles near \SI{35.7}{\degreeCelsius}, as in a warm environment. In cooler air the rider \emph{loses more heat than a resting body produces}: with only a jersey the core falls by \(0.6\,\si{K}\) in an hour at \SI{20}{\degreeCelsius} and by \SI{1.9}{K} at \SI{5}{\degreeCelsius} and \SI{1.4}{K} at \SI{10}{\degreeCelsius} with two layers. Real riders would shiver (raising \(M\) by a factor of 2--3) and vasoconstrict; the model has neither, so \textbf{long stops in cold air are overcooled} (finding~O9). The change from the previous version, in which the resting skin was about \SI{2}{K} too warm and the core was pinned between the controller thresholds, is the consequence of the still-air floor of Section~\ref{sec:dry}.
 
 \begin{table}[H]
 \centering\small
@@ -491,17 +505,17 @@ Table~\ref{tab:rest} gives the temperatures of the model's own resting equilibri
 \toprule
 \(T_a\) (\si{\degreeCelsius}) & clothing & core, start & core, after 60 min & skin, after 60 min \\
 \midrule
-5  & jersey + long-sleeve jersey & 36.77 & 36.95 & 35.63 \\
-10 & jersey + long-sleeve jersey & 36.88 & 37.04 & 35.82 \\
-20 & summer jersey               & 37.04 & 37.06 & 35.86 \\
-30 & summer jersey               & 37.08 & 37.09 & 35.91 \\
+5 & jersey + long-sleeve jersey & 36.90 & 35.01 & 26.4 \\
+10 & jersey + long-sleeve jersey & 36.90 & 35.54 & 28.2 \\
+20 & summer jersey & 36.90 & 36.31 & 30.8 \\
+30 & summer jersey & 36.90 & 37.03 & 35.7 \\
 \bottomrule
 \end{tabular}
-\caption{Resting rider (power 0, no air movement), temperatures in \si{\degreeCelsius}. The core drifts by at most \(0.2\,\si{K}\) in one hour.}\label{tab:rest}
+\caption{Resting rider (power 0, no air movement), temperatures in \si{\degreeCelsius}.}\label{tab:rest}
 \end{table}
 
 \subsection{Exercise scenarios}
-Table~\ref{tab:scen} and Figure~\ref{fig:core} show one-hour rides at constant power on flat ground (\SI{8}{m/s}, \SI{50}{\percent} RH, rider \SI{70}{kg}/\SI{175}{cm}, no wind).
+Table~\ref{tab:scen} and Figure~\ref{fig:core} show one-hour rides at constant power on flat ground (\SI{8}{m/s}, \SI{50}{\percent} RH, rider \SI{70}{kg}/\SI{175}{cm}, FTP \SI{250}{W}, no wind).
 
 \begin{table}[H]
 \centering\small
@@ -509,25 +523,25 @@ Table~\ref{tab:scen} and Figure~\ref{fig:core} show one-hour rides at constant p
 \toprule
 Power & Conditions & core, 60 min & skin, 60 min & mean \(H\) (W) & mean heat lost (W) \\
 \midrule
-150 W & \SI{20}{\degreeCelsius}, jersey & 36.98 & 30.4 & 502 & 542 \\
-200 W & \SI{10}{\degreeCelsius}, 3 layers & 37.18 & 31.6 & 670 & 677 \\
-200 W & \SI{20}{\degreeCelsius}, jersey & 37.13 & 30.8 & 670 & 698 \\
-200 W & \SI{30}{\degreeCelsius}, jersey & 38.25 & 35.1 & 670 & 603 \\
-300 W & \SI{25}{\degreeCelsius}, jersey & 38.99 & 35.0 & 1004 & 892 \\
+150 W & \SI{20}{\degreeCelsius}, jersey & 37.55 & 30.3 & 502 & 468 \\
+200 W & \SI{10}{\degreeCelsius}, 3 layers & 37.97 & 32.3 & 670 & 586 \\
+200 W & \SI{20}{\degreeCelsius}, jersey & 37.90 & 31.3 & 670 & 607 \\
+200 W & \SI{30}{\degreeCelsius}, jersey & 38.68 & 35.2 & 670 & 557 \\
+300 W & \SI{25}{\degreeCelsius}, jersey & 39.55 & 35.1 & 1004 & 828 \\
 \bottomrule
 \end{tabular}
-\caption{Temperatures in \si{\degreeCelsius}. The ``3 layers'' are summer jersey, long-sleeve jersey and gilet. Mean heat lost exceeds mean production in the cooler rows because the skin cools from its resting temperature (about \SI{35.9}{\degreeCelsius}) to the exercise value during the first minutes.}\label{tab:scen}
+\caption{Temperatures in \si{\degreeCelsius}. The ``3 layers'' are summer jersey, long-sleeve jersey and gilet. Mean heat lost is below or close to production because the core is storing heat while the set point rises; the skin cools from its starting value to the exercise value during the first minutes.}\label{tab:scen}
 \end{table}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.62\textwidth]{figs/fig_core_curves.pdf}
-\caption{Core temperature during a 60-min ride at \SI{200}{W} (summer jersey, \SI{8}{m/s}, \SI{50}{\percent} RH). In cool and mild air the core temperature stabilises in the first 10--15 minutes; at \SI{30}{\degreeCelsius} it rises steadily, and at \SI{35}{\degreeCelsius} it reaches \SI{40}{\degreeCelsius}.}\label{fig:core}
+\caption{Core temperature during a 60-min ride at \SI{200}{W} (summer jersey, \SI{8}{m/s}, \SI{50}{\percent} RH). In cool and mild air the core temperature rises over the first \(10\)--\SI{20}{min} to a plateau of about \SI{37.7}{}--\SI{37.9}{\degreeCelsius}, as the exercise set point builds up; at \SI{30}{\degreeCelsius} it keeps rising, and at \SI{35}{\degreeCelsius} it reaches \SI{40}{\degreeCelsius}. FTP \SI{250}{W}.}\label{fig:core}
 \end{figure}
 
-The qualitative behaviour is that of a thermoregulating body: in cool conditions heat is lost as fast as it is produced (the core stays near \SI{37}{\degreeCelsius}); as the temperature rises, the dry gradient disappears and the core must store heat until sweating (which starts at \(T_c>\SI{37}{\degreeCelsius}\)) and vasodilation balance production. At \SI{35}{\degreeCelsius} and \SI{60}{\percent} RH the model predicts \(T_c\approx\SI{40.7}{\degreeCelsius}\) after an hour. Experimental studies place exhaustion in hyperthermic exercise at a core temperature of about \SI{40}{\degreeCelsius} \citep{gonzalez1999}; the model has no behavioural feedback (the rider cannot slow down), no dehydration and no cardiovascular limit, so such values should be read as an upper bound on heat storage rather than a forecast.
+The qualitative behaviour is that of a thermoregulating body: in cool conditions heat is lost as fast as it is produced (the core stays near \SI{37}{\degreeCelsius}); as the temperature rises, the dry gradient disappears and the core must store heat until sweating (which starts above \SI{37}{\degreeCelsius} plus the exercise set-point shift, Section~\ref{sec:setpoint}) and vasodilation balance production. At \SI{35}{\degreeCelsius} and \SI{60}{\percent} RH the model predicts \(T_c\approx\SI{40.8}{\degreeCelsius}\) after an hour. Experimental studies place exhaustion in hyperthermic exercise at a core temperature of about \SI{40}{\degreeCelsius} \citep{gonzalez1999}; the model has no behavioural feedback (the rider cannot slow down), no dehydration and no cardiovascular limit, so such values should be read as an upper bound on heat storage rather than a forecast.
 
-The effect of humidity is quantified in Figure~\ref{fig:hum}. At \SI{220}{W} and \SI{28}{\degreeCelsius}, increasing relative humidity from 20 to \SI{95}{\percent} raises the one-hour core temperature from \SI{37.5}{} to \SI{39.3}{\degreeCelsius}; at \SI{24}{\degreeCelsius} the same change causes only \(0.5\ \si{K}\), because evaporation is not yet the limiting process. The dependence on RH is monotone in every case, as it must be physically (this is a regression test).
+The effect of humidity is quantified in Figure~\ref{fig:hum}. At \SI{220}{W} and \SI{28}{\degreeCelsius}, increasing relative humidity from 20 to \SI{95}{\percent} raises the one-hour core temperature from \SI{38.3}{} to \SI{39.6}{\degreeCelsius}; at \SI{24}{\degreeCelsius} the same change causes only \(0.3\ \si{K}\), because evaporation is not yet the limiting process. The dependence on RH is monotone in every case, as it must be physically (this is a regression test).
 
 \begin{figure}[H]
 \centering
@@ -535,30 +549,48 @@ The effect of humidity is quantified in Figure~\ref{fig:hum}. At \SI{220}{W} and
 \caption{Core temperature after \SI{60}{min} at \SI{220}{W} as a function of relative humidity, for three ambient temperatures.}\label{fig:hum}
 \end{figure}
 
-\subsection{Known bias in mild conditions}
-In real exercise the steady-state core temperature is not set by the thermal environment alone but is proportional to the relative workload (percentage of maximal oxygen uptake) over a wide range of ambient temperatures: the thermoregulatory set point is shifted upward during exercise, so that typical values are \(\approx38\)--\SI{39}{\degreeCelsius} for hard sustained efforts irrespective of ambient temperature \citep{saltin1966}. The model contains fixed sweat and vasodilation thresholds (\(37.0\) and \SI{36.8}{\degreeCelsius}) and therefore predicts a core temperature of about \SI{37.1}{\degreeCelsius} at \SI{200}{W} in \SI{20}{\degreeCelsius}, \emph{lower} than the typical measured value. The bias is probably \(0.5\)--\SI{1}{K} in mild conditions and vanishes once heat storage dominates (warm, humid). Raising the thresholds with the intensity relative to the rider's FTP (available in the app) would be a natural improvement (open finding~O2). This is the main reason the model should not be used as an absolute predictor in the cool-to-mild range.
+\subsection{Effect of the exercise set point}
+\label{sec:setpoint-results}
+Table~\ref{tab:setpoint} compares one hour at \SI{200}{W} (same conditions as above) without the set-point shift, i.e.\ with the fixed resting thresholds, and with the shift for riders of different FTP. Without it the model predicts about \SI{37.1}{\degreeCelsius} in \SI{20}{\degreeCelsius} air, whereas the measured plateau at a moderately high relative workload is \(\approx38\)--\SI{39}{\degreeCelsius} \citep{saltin1966}; with FTP \SI{250}{W} (\SI{200}{W} \(=80\%\) of FTP) the prediction is \SI{37.9}{\degreeCelsius}. A stronger rider (FTP \SI{400}{W}, \(50\%\)) is less stressed by the same power (\SI{37.6}{\degreeCelsius}), a weaker one (FTP \SI{200}{W}, \(100\%\)) more (\SI{38.1}{\degreeCelsius}), as in the experimental literature. The effect decreases in hot air (\(+0.5\)\,K at \SI{30}{\degreeCelsius} against \(+0.8\)\,K at \SI{20}{\degreeCelsius} for FTP \SI{250}{W}), because the heat-storage regime is then limited by the environment, not by the set point. The gain \(g_{sp}\) is an uncalibrated choice: \(\pm20\%\) of it changes the final core temperature by \(\approx\pm0.13\,\si{K}\) (Figure~\ref{fig:sens}).
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & \SI{10}{\degreeCelsius} (3 layers) & \SI{20}{\degreeCelsius} & \SI{30}{\degreeCelsius} \\
+\midrule
+Fixed resting thresholds (no FTP) & 36.87 & 37.13 & 38.22 \\
+FTP \SI{400}{W} (50\,\%) & 37.36 & 37.61 & 38.49 \\
+FTP \SI{250}{W} (80\,\%) & 37.66 & 37.90 & 38.68 \\
+FTP \SI{200}{W} (100\,\%) & 37.86 & 38.10 & 38.82 \\
+\bottomrule
+\end{tabular}
+\caption{Core temperature (\si{\degreeCelsius}) after \SI{60}{min} at \SI{200}{W} by rider FTP. The \SI{10}{\degreeCelsius} column uses jersey, long-sleeve jersey and gilet; the others a summer jersey.}\label{tab:setpoint}
+\end{table}
 
 \subsection{Parameter sensitivity}
 \label{sec:thermal-sens}
-Each constant was varied by \(\pm20\%\) (clothing insulation values of all garments scaled together) in two scenarios: a warm one (\SI{220}{W}, \SI{28}{\degreeCelsius}, \SI{50}{\percent}) and a cool one (\SI{180}{W}, \SI{12}{\degreeCelsius}, \SI{70}{\percent}, two layers). Figure~\ref{fig:sens} shows the change in core temperature at 60 minutes.
+Each constant was varied by \(\pm20\%\) (clothing insulation values of all garments scaled together) in two scenarios: a warm one (\SI{220}{W}, \SI{28}{\degreeCelsius}, \SI{50}{\percent}) and a cool one (\SI{180}{W}, \SI{12}{\degreeCelsius}, \SI{70}{\percent}, two layers), both with FTP \SI{250}{W}. Figure~\ref{fig:sens} shows the change in core temperature at 60 minutes.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{figs/fig_sens.pdf}
-\caption{Sensitivity of the final core temperature to \(\pm20\%\) changes of each model parameter (blue: \(-20\%\); orange: \(+20\%\)). Baselines are \SI{38.10}{\degreeCelsius} (warm) and \SI{37.09}{\degreeCelsius} (cool).}\label{fig:sens}
+\caption{Sensitivity of the final core temperature to \(\pm20\%\) changes of each model parameter (blue: \(-20\%\); orange: \(+20\%\)). Baselines are \SI{38.63}{\degreeCelsius} (warm) and \SI{37.79}{\degreeCelsius} (cool); FTP \SI{250}{W}.}\label{fig:sens}
 \end{figure}
 
 \begin{itemize}
- \item The result in warm conditions is dominated by the \textbf{gross efficiency} \(\eta\): \(\eta=0.184\) (\(-20\%\)) raises the final core temperature by \SI{+1.8}{K} and \(\eta=0.276\) lowers it by \SI{0.8}{K}. The asymmetry arises because the heat produced is \(P(1/\eta-1)\), which changes by \(+32\%\) and \(-22\%\) respectively. Since individual gross efficiency varies at least over \(0.18\)--\(0.25\) \citep{ettema2009}, \emph{the largest uncertainty of the predicted core temperature is the rider's own efficiency}.
- \item The evaporative capacity (\(\pm0.3\)--\SI{0.4}{K}) and the vasodilation conductance (\(\pm0.2\)--\SI{0.3}{K}) are next. The convective coefficient (\(\lesssim0.15\,\si{K}\)) and the clothing insulation (\(\pm0.14\,\si{K}\) for \(\pm20\%\)) matter less.
- \item In the cool scenario no sweat is secreted and all sensitivities are \(\lesssim0.2\,\si{K}\) (\(\eta\): \(+0.17/-0.15\,\si{K}\)).
+ \item The result in warm conditions is dominated by the \textbf{gross efficiency} \(\eta\): \(\eta=0.184\) (\(-20\%\)) raises the final core temperature by \SI{+1.5}{K} and \(\eta=0.276\) lowers it by \SI{0.5}{K}. The asymmetry arises because the heat produced is \(P(1/\eta-1)\), which changes by \(+32\%\) and \(-22\%\) respectively. Since individual gross efficiency varies at least over \(0.18\)--\(0.25\) \citep{ettema2009}, \emph{the largest uncertainty of the predicted core temperature is the rider's own efficiency}.
+ \item The evaporative capacity (\(+0.29/-0.21\,\si{K}\)) and the vasodilation conductance (\(+0.23/-0.16\,\si{K}\)) are next. The set-point gain (\(\pm0.13\,\si{K}\)), the clothing insulation (\(\pm0.10\,\si{K}\)) and the convective coefficient (\(\lesssim0.11\,\si{K}\)) matter less.
+ \item In the cool scenario no sweat is secreted and all sensitivities are \(\lesssim0.2\,\si{K}\) (\(\eta\): \(+0.17/-0.18\,\si{K}\); set-point gain \(\pm0.14\,\si{K}\)).
  \item The resting metabolic rate has no effect during exercise, as expected from Eq.~\eqref{eq:metab} (\(W/\eta\gg M_0A\) once \(W>\SI{25}{W}\)).
 \end{itemize}
 
 \section{Limitations of the thermal model}
 \label{sec:limits-thermal}
 \begin{itemize}
- \item \textbf{No calibration or validation against measured core temperature} (e.g.\ with an ingestible pill or a skin-core sensor). The structure and most basal constants come from the literature; the coefficients \(\alpha,n,\varepsilon_0\), the exponent \(0.3\), \(g_s\), \(k_v\) and the sweat/vasodilation thresholds are heuristic and unvalidated.
+ \item \textbf{No calibration or validation against measured core temperature} (e.g.\ with an ingestible pill or a skin-core sensor). The structure and most basal constants come from the literature; the coefficients \(\alpha,n,\varepsilon_0\), the exponent \(0.3\), \(g_s\), \(k_v\), the thresholds and the set-point gain \(g_{sp}\) are heuristic and unvalidated (the gain is chosen to give \(\approx\SI{38}{\degreeCelsius}\) at \(80\%\) of FTP).
+ \item \textbf{No cold response.} There is no shivering thermogenesis or cold-induced vasoconstriction: the core of a rider who stops for a long time in cold air falls without limit (Section~\ref{sec:rest}), and skin temperatures in cold air during rides are likely too low.
+ \item \textbf{Set point from FTP.} The exercise set point is driven by power over FTP, a proxy for relative intensity; it knows nothing of fitness, fatigue or heat acclimatisation, and reacts to the instantaneous power through a single \SI{300}{s} filter.
  \item \textbf{Solar and radiant load} (direct sun, ground radiation) is not modelled; it is several hundred \si{W} in full sun at midday and shifts the dry heat balance substantially in summer.
  \item \textbf{No state for hydration, acclimatisation, circadian phase or sex differences.} Sweat supply is a single linear function of core temperature.
  \item \textbf{Uniform surface:} one skin temperature, one clothing resistance and one air speed for the whole body; helmet, bare head and hands, and the posture-dependent exposed area are ignored.
@@ -574,7 +606,7 @@ Table~\ref{tab:findings} lists the issues found during the audit of both models.
 
 {\footnotesize\renewcommand{\arraystretch}{1.15}
 \begin{longtable}{@{}l>{\raggedright\arraybackslash}p{6.3cm}>{\raggedright\arraybackslash}p{4.6cm}>{\raggedright\arraybackslash}p{2.4cm}@{}}
-\caption{Findings register. A = power balance/\(\CdA\); T = thermal, fixed; O = open or documented limitations.}\label{tab:findings}\\
+\caption{Findings register. A = power balance/\(\CdA\); T = thermal, fixed; O = limitations found; the status column says whether they have since been fixed.}\label{tab:findings}\\
 \toprule
 ID & Finding & Consequence & Status \\
 \midrule
@@ -602,21 +634,22 @@ T5 & Hard-coded initial state 36.0/32.0 \si{\degreeCelsius} & fictitious warm-up
 T6 & Wind computed separately from, and not consistently with, the drag model (now shared through \code{apparent_air_speed}) & inconsistent air speed between models & Fixed \\
 T7 & Forward Euler unstable for sampling intervals \(\gtrsim140\) s & non-physical output for sparse files & Fixed (\(\le5\) s sub-steps) \\
 \midrule
-O1 & \(h_a\propto v^{0.84}\to0\) at low speed; no still-air floor & skin 2 K warm at rest; slow riding & Open \\
-O2 & No exercise-induced set-point shift & core \(\approx0.5\)--1 K too low in mild conditions & Open \\
+O1 & \(h_a\propto v^{0.84}\to0\) at low speed; no still-air floor & skin 2 K warm at rest; slow riding & Fixed (\(h_0=7.8\)) \\
+O2 & No exercise-induced set-point shift & core \(\approx0.8\) K too low in mild conditions & Fixed (FTP-driven shift, gain uncalibrated) \\
 O3 & Fixed gross efficiency \(\eta=0.23\) & \(\pm1.8/-0.8\) K at \(\pm20\%\) in heat & Documented \\
 O4 & Evaporative capacity not from the Lewis relation; clothing vapour resistance and dripping lumped & uncalibrated & Open \\
 O5 & No solar or radiant load & underestimates summer heat storage & Open \\
 O6 & Clothing insulation static and additive; no wind penetration & over-/underestimate by up to \(\sim\)40\% & Open \\
 O7 & Convection exponent/prefactor uncalibrated (higher than ASHRAE above 3 m/s) & overestimates cooling at speed & Open \\
+O9 & No shivering or cold vasoconstriction & long stops in cold air overcool; core \(-1.9\) K in 1 h at 5 \si{\degreeCelsius} & Open \\
 O8 & Two Magnus parameter sets (Alduchov--Eskridge in density; Bolton in thermal) & \(\approx0.2\%\) difference in \(e_s\); negligible & Documented \\
 \end{longtable}}
 
 \section{Recommendations}
 \begin{enumerate}
  \item \textbf{Calibrate before trusting absolute values.} Collect a small number of rides with a core-temperature sensor and fit \(\eta\) (or a per-rider efficiency), \(\varepsilon_0\), \(k_v\) and the thresholds; this is the single most valuable step for the thermal model.
- \item \textbf{Add a physical floor to the heat-transfer coefficient} (\(h_a\ge h_r+h_{c,nat}\approx8\)\,W/(m\(^2\)K)) and move the exponent/prefactor towards the standard \(8.3\,v^{0.6}+4.7\) unless rides show otherwise; re-derive the sweat and vasodilation thresholds from the result.
- \item \textbf{Make the exercise set point depend on intensity} (percentage of FTP) following \citet{saltin1966}.
+ \item \textbf{Fit the set-point gain} \(g_{sp}\) and time constant \(\tau_{sp}\) of Eq.~\eqref{eq:setpoint} together with \(\eta\), and move the exponent/prefactor of the convective coefficient towards the standard \(8.3\,v^{0.6}+4.7\) unless rides show otherwise.
+ \item \textbf{Add a minimal cold response} (shivering thermogenesis and cold vasoconstriction) so that long stops in cold air are not overcooled.
  \item \textbf{For \(\CdA\): fit \(C_{rr}\) and \(\CdA\) jointly} on rides with speed variation (regression/virtual-elevation approach, \citealp{martin1998,chung}), also exclude samples with strong deceleration at zero power (bends, braking on moderate grades), and report an uncertainty interval from Table~\ref{tab:sens} alongside the point estimate.
  \item \textbf{Use measured on-route wind where available} (an anemometer or a nearby station), since the modelled wind dominates the uncertainty of single-ride \(\CdA\).
 \end{enumerate}
@@ -644,6 +677,11 @@ evaporation exponent & 0.3 & \code{EVAP_EXP} & \emph{heuristic} \\
 reference skin temperature & \SI{33}{\degreeCelsius} & \code{SWEAT_REF_SKIN_C} & normalisation \\
 minimum air speed & \SI{0.2}{m/s} & \code{MIN_AIR_SPEED_MS} & natural convection \\
 \(\alpha,\ n\) & 8.5, 0.84 & \code{H_CONV_COEFF, H_CONV_EXP} & \emph{empirical}, see Section~\ref{sec:dry} \\
+\(h_0\) still-air floor & \SI{7.8}{W/(m^2K)} & \code{H_STILL_AIR_W_PER_M2K} & radiation 4.7 + natural convection 3.1 \citep{ashrae2017} \\
+Start core temperature & \SI{36.9}{\degreeCelsius} & \code{CORE_START_C} & warm, rested rider \\
+\(g_{sp}\) set-point gain & \SI{1.0}{K} per FTP & \code{SETPOINT_GAIN_K} & \emph{calibration} to \(\approx38\) \si{\degreeCelsius} at 80\,\% FTP \citep{saltin1966} \\
+\(\phi_{max}\) & 1.2 & \code{SETPOINT_MAX_FTP_FRACTION} & \emph{heuristic} \\
+\(\tau_{sp}\) & \SI{300}{s} & \code{SETPOINT_TAU_S} & \emph{heuristic} \\
 clothing & \(0.155\) m\(^2\)K/W per clo & (inline) & \citep{gagge1941,iso9920} \\
 max.\ sub-step & \SI{5}{s} & \code{MAX_SUBSTEP_S} & stability, Section~\ref{sec:numerics} \\
 \bottomrule
@@ -653,7 +691,7 @@ max.\ sub-step & \SI{5}{s} & \code{MAX_SUBSTEP_S} & stability, Section~\ref{sec:
 
 \section{Reproducibility}
 \label{app:repro}
-The report, its figures and all numerical results are generated by the scripts \code{experiments.py} (Monte Carlo, sensitivity and thermal scenarios), \code{mc_hard.py} (ride (b)) and \code{figs.py} (figures) archived in \code{docs/physics_report/} of the repository; random numbers use fixed seeds. The unit tests in \code{tests/test_aerodyn.py} and \code{tests/test_thermal.py} encode the properties verified here (exclusion of steep descents, apparent wind at rider height, cross wind, head vs.\ tail wind, resting stability, humidity monotonicity, evaporation in cool humid air, energy conservation and stability for sparse sampling).
+The report, its figures and all numerical results are generated by the scripts \code{experiments.py} (Monte Carlo, sensitivity and thermal scenarios), \code{mc_hard.py} (ride (b)) and \code{figs.py} (figures) archived in \code{docs/physics_report/} of the repository; random numbers use fixed seeds. The unit tests in \code{tests/test_aerodyn.py} and \code{tests/test_thermal.py} encode the properties verified here (exclusion of steep descents, apparent wind at rider height, cross wind, head vs.\ tail wind, still-air floor, start state, exercise set point, humidity monotonicity, evaporation in cool humid air, energy conservation and stability for sparse sampling).
 
 \bibliographystyle{plainnat}
 \bibliography{refs}

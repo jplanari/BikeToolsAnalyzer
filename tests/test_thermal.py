@@ -81,11 +81,48 @@ def _ride(power, temp, rh=0.5, speed=8.0, n=3600):
     return calculate_thermal_profile(df, 70, 175, ["Summer Jersey"])
 
 
-def test_resting_rider_stays_in_equilibrium():
-    for temp in (10, 20, 30):
-        out = _ride(0, temp, speed=0)
-        assert out.core_temp.iloc[0] == pytest.approx(out.core_temp.iloc[-1], abs=0.3)
-        assert 36.5 < out.core_temp.iloc[-1] < 37.3
+def test_still_air_keeps_a_heat_transfer_floor():
+    from src.physics import thermal as th
+    assert 1.0 / th.R_air_boundary_layer(0.0) == pytest.approx(th.H_STILL_AIR_W_PER_M2K)
+    assert 1.0 / th.R_air_boundary_layer(10.0) == pytest.approx(th.H_CONV_COEFF * 10 ** th.H_CONV_EXP)
+
+
+def test_start_state_is_a_warm_rider_with_ambient_dependent_skin():
+    cold, warm = _ride(0, 5, speed=0, n=10), _ride(0, 30, speed=0, n=10)
+    assert cold.core_temp.iloc[0] == pytest.approx(36.9, abs=0.05)
+    assert 24 < cold.skin_temp.iloc[0] < warm.skin_temp.iloc[0] < 36.9
+
+
+def test_resting_rider_is_stable_in_comfortable_air_and_cools_slowly_in_cold():
+    warm = _ride(0, 30, speed=0)
+    assert warm.core_temp.iloc[-1] == pytest.approx(warm.core_temp.iloc[0], abs=0.3)
+    mild = _ride(0, 20, speed=0)
+    assert 36.0 < mild.core_temp.iloc[-1] <= mild.core_temp.iloc[0]          # no shivering in the model, but no collapse
+
+
+def _with_ftp(power, temp, ftp, n=3600):
+    df = pd.DataFrame({'time': pd.date_range("2026-07-01 09:00", periods=n, freq="1s"), 'speed': 8.0,
+                       'power': power, 'temp_c': temp, 'relative_humidity': 0.5})
+    return calculate_thermal_profile(df, 70, 175, ["Summer Jersey"], ftp=ftp)
+
+
+def test_exercise_raises_the_set_point_in_proportion_to_relative_intensity():
+    none, hard, easy = _with_ftp(200, 20, None), _with_ftp(200, 20, 250), _with_ftp(200, 20, 400)
+    end = lambda d: d.core_temp.iloc[-1]
+    assert end(hard) - end(none) > 0.5                       # about 38 degC, as measured at ~80 % of FTP
+    assert end(none) < end(easy) < end(hard)                 # a stronger rider is less stressed at the same power
+    assert 37.5 < end(hard) < 38.6
+
+
+def test_set_point_follows_the_effort_with_a_lag():
+    none, hard = _with_ftp(200, 20, None), _with_ftp(200, 20, 250)
+    gap = (hard.core_temp - none.core_temp)
+    assert gap.iloc[60] < gap.iloc[1800]                     # builds up over minutes
+    assert gap.iloc[0] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_without_ftp_the_thresholds_stay_at_rest_values():
+    assert _with_ftp(200, 30, None).core_temp.iloc[-1] == pytest.approx(_with_ftp(200, 30, 0).core_temp.iloc[-1])
 
 
 def test_humidity_raises_core_temperature_monotonically():

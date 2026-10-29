@@ -13,6 +13,11 @@ SWEAT_REF_SKIN_C = 33.0         # skin temperature the evaporative-capacity coef
 MIN_AIR_SPEED_MS = 0.2          # natural convection / body movement: sweat still evaporates in still air
 H_CONV_COEFF = 8.5              # combined convective + radiative coefficient h = H_CONV_COEFF * v^H_CONV_EXP, W/m²K
 H_CONV_EXP = 0.84
+H_STILL_AIR_W_PER_M2K = 7.8     # floor in still air: radiation (~4.7) + natural convection (~3.1), ASHRAE Fundamentals ch. 9
+CORE_START_C = 36.9             # core temperature at the start of the ride (warm, rested rider)
+SETPOINT_GAIN_K = 1.0           # rise of the sweat and vasodilation thresholds at an intensity equal to FTP
+SETPOINT_MAX_FTP_FRACTION = 1.2 # intensity above which the set point does not rise further
+SETPOINT_TAU_S = 300.0          # the set point follows the (smoothed) intensity with this time constant
 EVAP_COEFF_W_PER_M2 = 150.0     # evaporative capacity of dry air at 1 m/s over skin at SWEAT_REF_SKIN_C, W/m²
 EVAP_EXP = 0.3
 SWEAT_ONSET_CORE_C = 37.0       # core temperature at which sweating starts
@@ -43,10 +48,10 @@ def du_bois_BSA(height_cm, weight_kg):
     return 0.007184 * (height_cm ** 0.725) * (weight_kg ** 0.425)
 
 def R_air_boundary_layer(air_speed):
-    """Calculate air boundary layer heat resistance."""
-    # Avoid division by zero
+    """Air boundary-layer resistance, m²K/W. The combined coefficient never falls below its still-air value
+    (radiation and natural convection do not vanish when the air does)."""
     speed = max(0.1, air_speed)
-    return 1 / (H_CONV_COEFF * (speed ** H_CONV_EXP))
+    return 1 / max(H_STILL_AIR_W_PER_M2K, H_CONV_COEFF * (speed ** H_CONV_EXP))
 
 def saturation_pressure_kpa(T):
     """Saturation vapour pressure (kPa) at a temperature in °C (Magnus)."""
@@ -62,9 +67,9 @@ def calculate_vapor_pressure_kpa(Ta, rh_fraction):
     es = 0.6112 * np.exp((17.67 * Ta) / (Ta + 243.5))
     return rh_fraction * es
 
-def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
+def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt, shift=0.0):
     """
-    One time step of the two-node model. mech_w is the mechanical (pedalling) power. Returns
+    One time step of the two-node model. mech_w is the mechanical (pedalling) power; shift (K) raises the sweat and vasodilation thresholds (exercise set point). Returns
     (t_core, t_skin, heat generated, heat lost) with heat in W.
     """
     # Metabolism: gross efficiency while pedalling, but never below the resting rate
@@ -77,7 +82,7 @@ def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
     # 2. Evaporative heat loss: sweat supply (rises once the core passes 37 °C) against what the air can
     #    take up. Capacity scales with the vapour-pressure gap between the wet skin and the air, normalised
     #    to a dry-air gap at 33 °C skin (reduces to the old (1 - RH) when air and skin are at the same temperature).
-    sweat_supply = max(0.0, t_core - SWEAT_ONSET_CORE_C) * SWEAT_GAIN_W_PER_K
+    sweat_supply = max(0.0, t_core - SWEAT_ONSET_CORE_C - shift) * SWEAT_GAIN_W_PER_K
     gap = (saturation_pressure_kpa(t_skin) - calculate_vapor_pressure_kpa(T_air, RH)) / \
         saturation_pressure_kpa(SWEAT_REF_SKIN_C)
     max_evap = EVAP_COEFF_W_PER_M2 * (max(v_air, MIN_AIR_SPEED_MS) ** EVAP_EXP) * max(0.0, gap) * A
@@ -89,7 +94,7 @@ def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
 
     mass_skin = mass * SKIN_MASS_FRACTION
     mass_core = mass - mass_skin
-    vaso = max(0.0, t_core - VASO_ONSET_CORE_C)
+    vaso = max(0.0, t_core - VASO_ONSET_CORE_C - shift)
     K_total = K_MIN_W_PER_M2K * A + K_VASO_MAX_W_PER_M2K * A * vaso / (1 + vaso)
     Q_transfer = K_total * (t_core - t_skin)
 
@@ -98,16 +103,23 @@ def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
     return t_core, t_skin, H, Q_dry + Q_evap + Q_resp
 
 
-def _resting_state(T_air, RH, R_clothing, A, mass, minutes=90):
-    """Core and skin temperature of a rider sitting in still air before the ride (the model's own rest equilibrium)."""
-    t_core, t_skin = 36.9, 33.0
-    R = R_clothing + R_air_boundary_layer(MIN_AIR_SPEED_MS)
-    for _ in range(minutes * 60 // 5):
-        t_core, t_skin, _, _ = _step(t_core, t_skin, 0.0, MIN_AIR_SPEED_MS, T_air, RH, R, A, mass, 5.0)
-    return t_core, t_skin
+def _start_state(T_air, R_clothing, A):
+    """
+    Core and skin temperature at the start of the ride: a warm, rested rider (core CORE_START_C) whose skin
+    is at the quasi-steady value for the first sample's air and clothing, i.e. the skin balance
+    K (Tc - Ts) = A (Ts - Ta) / R with the basal conductance and still air.
+    """
+    k = K_MIN_W_PER_M2K * A
+    g = A / (R_clothing + R_air_boundary_layer(MIN_AIR_SPEED_MS))
+    return CORE_START_C, (k * CORE_START_C + g * T_air) / (k + g)
 
 
-def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clothing_items=(), weather_data=None):
+def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clothing_items=(), weather_data=None,
+                              ftp=None):
+    """
+    Core and skin temperature along the ride. With ftp (W) the sweat and vasodilation thresholds rise with the
+    relative intensity (exercise set point, Saltin & Hermansen 1966); without it they stay at their resting values.
+    """
     if df.empty:
         return df
 
@@ -143,18 +155,21 @@ def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clo
     dt_arr, T_air, RH_arr = dt_series.to_numpy(), T_AIR.to_numpy(), RH.to_numpy()
     v_air_arr, r_arr = v_air.to_numpy(), r_total.to_numpy()
 
-    # Start from the rider's resting state, not from an arbitrary 36 °C
-    t_core, t_skin = _resting_state(T_air[0], RH_arr[0], base_rsi, A, RIDER_MASS)
+    t_core, t_skin = _start_state(T_air[0], base_rsi, A)
+    frac = 0.0                                          # smoothed relative intensity (fraction of FTP)
 
     core_temps, skin_temps, heat_gen_list, heat_loss_list = [], [], [], []
     for i in range(len(df)):
         dt = dt_arr[i]
         if dt > 300 or dt <= 0:
             dt = 1.0                                   # pauses or errors
+        if ftp:
+            frac += (min(mech[i] / ftp, SETPOINT_MAX_FTP_FRACTION) - frac) * min(1.0, dt / SETPOINT_TAU_S)
+        shift = SETPOINT_GAIN_K * frac
         n_sub = int(np.ceil(dt / MAX_SUBSTEP_S))          # keep the explicit scheme stable across long gaps
         for _ in range(n_sub):
             t_core, t_skin, H, lost = _step(t_core, t_skin, mech[i], v_air_arr[i], T_air[i], RH_arr[i],
-                                            r_arr[i], A, RIDER_MASS, dt / n_sub)
+                                            r_arr[i], A, RIDER_MASS, dt / n_sub, shift)
         core_temps.append(t_core)
         skin_temps.append(t_skin)
         heat_gen_list.append(H)

@@ -120,10 +120,11 @@ R['k_sum_sq'] = float((k[ok]**2).sum()); R['analytic_sd_8W'] = float(8/np.sqrt((
 R['k_mean'] = float(k[ok].mean())
 
 # ---------------- Thermal ----------------
-def ride(power, temp, rh=0.5, speed=8.0, n=3600, clothes=('Summer Jersey',), mass=70, height=175, wind=None):
+FTP = 250.0
+def ride(power, temp, rh=0.5, speed=8.0, n=3600, clothes=('Summer Jersey',), mass=70, height=175, wind=None, ftp=FTP):
     d = pd.DataFrame({'time': pd.date_range('2026-07-01 09:00', periods=n, freq='1s'), 'speed': speed,
         'power': power, 'temp_c': temp, 'relative_humidity': rh})
-    return th.calculate_thermal_profile(d, mass, height, list(clothes))
+    return th.calculate_thermal_profile(d, mass, height, list(clothes), ftp=ftp)
 R['bsa_70_175'] = th.du_bois_BSA(175, 70)
 # rest equilibrium
 rest = {}
@@ -143,6 +144,7 @@ for lab, kw in {'200W,10C':dict(power=200,temp=10,clothes=('Summer Jersey','Long
     o = ride(**kw); scen[lab] = [float(o.core_temp.iloc[-1]), float(o.skin_temp.iloc[-1]),
                                   float(o.core_temp.max()), float(o.heat_generated_W.mean()), float(o.heat_lost_W.mean())]
 R['scen'] = scen
+R['setpoint'] = {lab: [float(ride(power=200, temp=T, ftp=f).core_temp.iloc[-1]) for T in (10, 20, 30)] for lab, f in (('none', None), ('ftp400', 400.0), ('ftp250', 250.0), ('ftp200', 200.0))}
 # humidity sweep
 hum = {}
 for T in (24, 28, 32):
@@ -152,7 +154,7 @@ R['hum'] = hum
 def sens(scn):
     base = ride(**scn).core_temp.iloc[-1]; out = {}
     for name in ['EFFICIENCY','M_REST_W_PER_M2','K_MIN_W_PER_M2K','H_CONV_COEFF','EVAP_COEFF_W_PER_M2',
-                 'SWEAT_GAIN_W_PER_K','K_VASO_MAX_W_PER_M2K']:
+                 'SWEAT_GAIN_W_PER_K','K_VASO_MAX_W_PER_M2K','SETPOINT_GAIN_K']:
         v0 = getattr(th, name); r = []
         for f in (0.8, 1.2):
             setattr(th, name, v0*f); r.append(float(ride(**scn).core_temp.iloc[-1] - base))

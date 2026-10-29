@@ -176,7 +176,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
     # --- NEW: THERMAL SECTION ---
     # Only show if we have power data, as the model depends on it
     if 'power' in df.columns:
-        _render_thermal_analysis(df, settings['weight'], settings['height'])    
+        _render_thermal_analysis(df, settings['weight'], settings['height'], settings.get('ftp'))    
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
@@ -340,7 +340,7 @@ def _render_climb_details(df, climbs, settings):
         st.info("No significant climbs detected on this route.")
 
 
-def _render_thermal_analysis(df, user_weight, user_height):
+def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
     """
     Renders the Thermal Analysis interface with Distance x Elevation plot.
     """
@@ -370,7 +370,8 @@ def _render_thermal_analysis(df, user_weight, user_height):
                     df, 
                     rider_weight_kg=user_weight, 
                     rider_height_cm=user_height, 
-                    clothing_items=selected_clothing
+                    clothing_items=selected_clothing,
+                    ftp=ftp
                 )
                 
                 # Save to session state
