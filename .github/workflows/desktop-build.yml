@@ -29,7 +29,14 @@ jobs:
         [ -f "$EXE.exe" ] && EXE="$EXE.exe"
         "$EXE" --server 8765 > "$RUNNER_TEMP/server-out.txt" 2>&1 &
         for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/_stcore/health && exit 0; sleep 2; done
-        cat "$BIKETOOLS_DATA/launcher.log" || true
+        for f in "$BIKETOOLS_DATA/launcher.log" "$RUNNER_TEMP/server-out.txt"; do
+          if [ -f "$f" ]; then
+            msg=$(tail -c 3000 "$f" | tr -d '\r' | sed -e ':a' -e 'N' -e '$!ba' -e 's/%/%25/g' -e 's/\n/%0A/g')
+            echo "::error title=$(basename "$f")::$msg"
+          else
+            echo "::error title=missing log::$f not found; listing dist: $(ls dist/BikeToolsAnalyzer | head -20 | tr '\n' ' ')"
+          fi
+        done
         exit 1
     - name: Keep the logs
       if: always()
