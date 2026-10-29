@@ -34,6 +34,10 @@ def _chart(fig):
 _period_start, _dur_label = period_start, dur_label
 
 
+def _metric(col, label, value, status, help_text):
+    col.metric(label, value, delta=status, delta_color="off", help=help_text)
+
+
 # --- Page --------------------------------------------------------------------
 
 def render_training_page(user_name):
