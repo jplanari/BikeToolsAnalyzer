@@ -2,9 +2,15 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
+from src.physics.aerodyn import apparent_air_speed
+
 # Constants
 C_BODY = 3470  # Specific heat capacity [J/(kg·K)]
-EFFICIENCY = 0.23
+EFFICIENCY = 0.23              # gross efficiency (mechanical power / total metabolic rate)
+M_REST_W_PER_M2 = 58.2         # resting metabolic rate, 1 met (ISO 7730), W per m² of body surface
+K_MIN_W_PER_M2K = 12.6         # core-to-skin conductance at rest: tissue 5.28 + minimal skin blood flow 7.3 (Gagge)
+SWEAT_REF_SKIN_C = 33.0         # skin temperature the evaporative-capacity coefficient (150) is referred to
+MIN_AIR_SPEED_MS = 0.2          # natural convection / body movement: sweat still evaporates in still air
 
 CLOTHING_CATALOG = {
     "None (Shorts only)": 0.05,
@@ -31,6 +37,11 @@ def R_air_boundary_layer(air_speed):
     speed = max(0.1, air_speed)
     return 1 / (8.5 * (speed ** 0.84))
 
+def saturation_pressure_kpa(T):
+    """Saturation vapour pressure (kPa) at a temperature in °C (Magnus)."""
+    return 0.6112 * np.exp((17.67 * T) / (T + 243.5))
+
+
 def calculate_vapor_pressure_kpa(Ta, rh_fraction):
     """
     Calculate vapor pressure in kPa.
@@ -40,163 +51,105 @@ def calculate_vapor_pressure_kpa(Ta, rh_fraction):
     es = 0.6112 * np.exp((17.67 * Ta) / (Ta + 243.5))
     return rh_fraction * es
 
-def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clothing_items=[], weather_data=None):
+def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
+    """
+    One time step of the two-node model. mech_w is the mechanical (pedalling) power. Returns
+    (t_core, t_skin, heat generated, heat lost) with heat in W.
+    """
+    # Metabolism: gross efficiency while pedalling, but never below the resting rate
+    M = max(mech_w / EFFICIENCY, M_REST_W_PER_M2 * A)
+    H = M - mech_w                                   # heat produced (the work leaves the body)
+
+    # 1. Dry heat loss through clothing and boundary layer
+    Q_dry = A * (t_skin - T_air) / R
+
+    # 2. Evaporative heat loss: sweat supply (rises once the core passes 37 °C) against what the air can
+    #    take up. Capacity scales with the vapour-pressure gap between the wet skin and the air, normalised
+    #    to a dry-air gap at 33 °C skin (= the old (1 - RH) when the skin is at 33 °C).
+    sweat_supply = max(0.0, t_core - 37.0) * 1000     # suitable for average users, pros up to ~1500
+    gap = (saturation_pressure_kpa(t_skin) - calculate_vapor_pressure_kpa(T_air, RH)) / \
+        saturation_pressure_kpa(SWEAT_REF_SKIN_C)
+    max_evap = 150 * (max(v_air, MIN_AIR_SPEED_MS) ** 0.3) * max(0.0, gap) * A
+    Q_evap = min(sweat_supply, max_evap)
+
+    # 3. Respiratory heat loss (ISO 7730, M in W)
+    vp_kpa = calculate_vapor_pressure_kpa(T_air, RH)
+    Q_resp = max(0.0, 0.0014 * M * (34 - T_air) + 0.0173 * M * (5.87 - vp_kpa))
+
+    mass_skin = mass * 0.1
+    mass_core = mass * 0.9
+    vaso = max(0.0, t_core - 36.8)
+    K_total = K_MIN_W_PER_M2K * A + 150 * A * vaso / (1 + vaso)
+    Q_transfer = K_total * (t_core - t_skin)
+
+    t_core += (H - Q_resp - Q_transfer) * dt / (mass_core * C_BODY)
+    t_skin += (Q_transfer - Q_dry - Q_evap) * dt / (mass_skin * 3500)
+    return t_core, t_skin, H, Q_dry + Q_evap + Q_resp
+
+
+def _resting_state(T_air, RH, R_clothing, A, mass, minutes=90):
+    """Core and skin temperature of a rider sitting in still air before the ride (the model's own rest equilibrium)."""
+    t_core, t_skin = 36.9, 33.0
+    R = R_clothing + R_air_boundary_layer(MIN_AIR_SPEED_MS)
+    for _ in range(minutes * 60 // 5):
+        t_core, t_skin, _, _ = _step(t_core, t_skin, 0.0, MIN_AIR_SPEED_MS, T_air, RH, R, A, mass, 5.0)
+    return t_core, t_skin
+
+
+def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clothing_items=(), weather_data=None):
     if df.empty:
         return df
 
-    # --- 1. SETUP PARAMETERS ---
     RIDER_MASS = rider_weight_kg
-    RIDER_HEIGHT = rider_height_cm
-    A = du_bois_BSA(RIDER_HEIGHT, RIDER_MASS)
+    A = du_bois_BSA(rider_height_cm, RIDER_MASS)
 
-    # Weather Defaults (Safe Handling)
-    # Check if columns exist, otherwise use defaults
-    T_AIR = df['temp_c'].fillna(15.0) if 'temp_c' in df.columns else pd.Series([15.0]*len(df), index=df.index)
-    
-    # Handle Humidity
+    # Weather (defaults when the ride has none)
+    T_AIR = df['temp_c'].ffill().bfill().fillna(15.0) if 'temp_c' in df.columns \
+        else pd.Series(15.0, index=df.index)
     if 'relative_humidity' in df.columns:
-        # Assuming input is 0-100 or 0-1. Let's assume 0-100 if max > 1
         rh_raw = df['relative_humidity'].fillna(50)
-        # Normalize to 0.0 - 1.0
-        RH = rh_raw.apply(lambda x: x / 100.0 if x > 1.0 else x)
+        RH = rh_raw.apply(lambda x: x / 100.0 if x > 1.0 else x)          # accept 0-1 or 0-100
     else:
-        RH = pd.Series([0.5]*len(df), index=df.index)
+        RH = pd.Series(0.5, index=df.index)
 
-    base_clo = sum([CLOTHING_CATALOG.get(item, 0) for item in clothing_items])
-    base_rsi = base_clo * 0.155 
+    base_rsi = sum(CLOTHING_CATALOG.get(item, 0) for item in clothing_items) * 0.155   # 1 clo = 0.155 m²K/W
 
-    t_core = 36.0
-    t_skin = 32.0
+    # Air speed over the skin: ground speed (smoothed; 1 Hz GPS speed is noisy) plus the wind at rider
+    # height, cross wind included. Same wind treatment as the drag model in physics.aerodyn.
+    v_air = apparent_air_speed(df)
+    r_total = base_rsi + v_air.apply(R_air_boundary_layer)
 
-    core_temps = []
-    skin_temps = []
-    heat_gen_list = []
-    heat_loss_list = []
+    mech = df['power'].fillna(0).clip(lower=0).to_numpy() if 'power' in df.columns else np.zeros(len(df))
 
-    # --- 2. VECTORIZED PRE-CALCULATION ---
-    
-    # Rider Speed (v)
-    # Ensure speed exists. If km/h, convert to m/s. Standard FIT/GPX parsing usually gives m/s or km/h.
-    # We will assume the dataframe has 'speed' in m/s for physics. 
-    # If your parser gives km/h, divide by 3.6 here. 
-    # Let's assume input 'speed' is m/s (standard SI).
-    if 'speed' in df.columns:
-        v = df['speed'].fillna(0)
-    else:
-        v = pd.Series([0.0]*len(df), index=df.index)
-
-    # Wind Logic
-    if 'wind_speed' in df.columns and 'wind_deg' in df.columns and 'bearing' in df.columns:
-        w_speed = df['wind_speed'].fillna(0)
-        w_deg = df['wind_deg'].fillna(0)
-        ride_bearing = df['bearing'].fillna(0)
-        
-        # Calculate Apparent Wind
-        rad_diff = np.radians(w_deg - ride_bearing)
-        v_hdwind = w_speed * np.cos(rad_diff)
-        v_air = v + v_hdwind
-        v_air = v_air.abs()
-    else:
-        v_air = v # Fallback if no wind data
-    
-    # Calculate Air Resistance
-    r_a = v_air.apply(R_air_boundary_layer)
-    r_total = base_rsi + r_a
-
-    # Heat Generation (Watts)
-    # Power = Metabolic_Rate * Efficiency
-    if 'power' in df.columns:
-        q_gen = df['power'].fillna(0) * (1/EFFICIENCY - 1)
-        total_gen = df['power'].fillna(0) * (1/EFFICIENCY)
-    else:
-        q_gen = pd.Series([0.0]*len(df))
-        total_gen = pd.Series([0.0]*len(df))
-
-    # --- FIX: Time Delta Calculation ---
-    # We use the 'time' column instead of the index
     if 'time' in df.columns:
         dt_series = pd.to_datetime(df['time']).diff().dt.total_seconds().fillna(1.0)
     else:
-        # Fallback if index is datetime
         try:
             dt_series = df.index.to_series().diff().dt.total_seconds().fillna(1.0)
         except AttributeError:
-            # Last resort fallback: 1 second per row
-            dt_series = pd.Series([1.0]*len(df), index=df.index)
+            dt_series = pd.Series(1.0, index=df.index)
 
-    # Convert to numpy arrays for fast looping
-    q_gen_arr = q_gen.values
-    total_gen_arr = total_gen.values
-    r_total_arr = r_total.values
-    dt_arr = dt_series.values
-    T_air = T_AIR.values
-    RH_arr = RH.values
-    v_air_arr = v_air.values
+    dt_arr, T_air, RH_arr = dt_series.to_numpy(), T_AIR.to_numpy(), RH.to_numpy()
+    v_air_arr, r_arr = v_air.to_numpy(), r_total.to_numpy()
 
-    # --- 3. INTEGRATION LOOP ---
+    # Start from the rider's resting state, not from an arbitrary 36 °C
+    t_core, t_skin = _resting_state(T_air[0], RH_arr[0], base_rsi, A, RIDER_MASS)
+
+    core_temps, skin_temps, heat_gen_list, heat_loss_list = [], [], [], []
     for i in range(len(df)):
         dt = dt_arr[i]
-        if dt > 300 or dt <= 0: dt = 1.0 # Handle pauses or errors
-
-        H = q_gen_arr[i] 
-        R = r_total_arr[i]
-        
-        # 1. Dry heat loss         
-        Q_dry = A * (t_skin - T_air[i]) / R 
-        
-        # 2. Evaporative heat loss
-        drive = max(0, t_core - 37.0)
-        potential_sweat_cooling = drive * 1000 # suitable for average users. Professionals may be up to 1500 
-        
-        # Max Evap (Lewis Relation approx). 
-        max_evap_capacity = 150 * (v_air_arr[i]**0.3) * (1 - RH_arr[i]) * A
-        Q_evap = min(potential_sweat_cooling, max_evap_capacity)
-        
-        # 3. Respiratory heat loss
-        factr = total_gen_arr[i] # Metabolic Rate (M)
-        
-        # Vapor Pressure in kPa
-        vp_kpa = calculate_vapor_pressure_kpa(T_air[i], RH_arr[i])
-        
-        # Sensible (Warming air)
-        Q_resp_sensible = 0.0014 * factr * (34 - T_air[i])
-        
-        # Latent (Humidifying air). 
-        Q_resp_latent = 0.0173 * factr * (5.87 - vp_kpa)
-        
-        Q_resp = max(0, Q_resp_sensible + Q_resp_latent)
-        
-        alpha_skin = 0.1
-        mass_skin = RIDER_MASS * alpha_skin
-        mass_core = RIDER_MASS * (1 - alpha_skin)
-
-        K_min = 5.28 * A
-        sig_vasodilatation = max(0, t_core - 36.8)
-        K_blood = 150 * A * sig_vasodilatation / (1 + sig_vasodilatation)
-
-        K_total = K_blood + K_min
-
-        Q_transfer = K_total * (t_core - t_skin)
-
-        S_core = H - Q_resp - Q_transfer
-        S_skin = Q_transfer - Q_dry - Q_evap
-
-        dT_core = S_core * dt / (mass_core * C_BODY)
-        dT_skin = S_skin * dt / (mass_skin * 3500)
-
-        t_core += dT_core
-        t_skin += dT_skin
-
+        if dt > 300 or dt <= 0:
+            dt = 1.0                                   # pauses or errors
+        t_core, t_skin, H, lost = _step(t_core, t_skin, mech[i], v_air_arr[i], T_air[i], RH_arr[i],
+                                        r_arr[i], A, RIDER_MASS, dt)
         core_temps.append(t_core)
         skin_temps.append(t_skin)
         heat_gen_list.append(H)
-        heat_loss_list.append(Q_dry + Q_evap + Q_resp)
+        heat_loss_list.append(lost)
 
-    # --- 4. ASSEMBLE RESULTS ---
     result_df = df.copy()
     result_df['core_temp'] = core_temps
     result_df['skin_temp'] = skin_temps
     result_df['heat_generated_W'] = heat_gen_list
     result_df['heat_lost_W'] = heat_loss_list
-
     return result_df

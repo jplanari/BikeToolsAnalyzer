@@ -56,14 +56,34 @@ def _density(df, ele):
     return pd.Series(rho, index=df.index)
 
 
-def _air_speed(df, v):
-    """Speed of the air relative to the rider along the road (m/s, >= 0), from the 10 m wind."""
+def _wind_components(df):
+    """(head, cross) wind at rider height, m/s: head > 0 when the wind blows from ahead, cross is its size
+    across the road. None when the ride has no wind data."""
     if not {'wind_speed', 'wind_deg', 'bearing'} <= set(df.columns):
-        return v.copy()
+        return None
     wind = df['wind_speed'].fillna(0) * WIND_HEIGHT_FACTOR
     # wind_deg is where the wind blows FROM: a wind from straight ahead has cos = 1, a head wind
-    head = wind * np.cos(np.radians(df['wind_deg'].fillna(0) - df['bearing'].fillna(0)))
-    return (v + head).abs()
+    rad = np.radians(df['wind_deg'].fillna(0) - df['bearing'].fillna(0))
+    return wind * np.cos(rad), wind * np.sin(rad)
+
+
+def _air_speed(df, v):
+    """Speed of the air relative to the rider ALONG the road (m/s, >= 0): what drags on the rider."""
+    w = _wind_components(df)
+    return v.copy() if w is None else (v + w[0]).abs()
+
+
+def apparent_air_speed(df, v=None):
+    """
+    Magnitude of the air velocity relative to the rider (m/s), including the cross wind. This is what
+    cools the skin (and, with no speed at all, is simply the wind), whereas drag only feels the part
+    along the road. v defaults to the ride's smoothed ground speed.
+    """
+    if v is None:
+        v = df['speed'].fillna(0).rolling(SPEED_SMOOTH_S, center=True, min_periods=1).mean() \
+            if 'speed' in df.columns else pd.Series(0.0, index=df.index)
+    w = _wind_components(df)
+    return v.copy() if w is None else np.sqrt((v + w[0]) ** 2 + w[1] ** 2)
 
 
 def _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss):
