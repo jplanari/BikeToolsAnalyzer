@@ -27,7 +27,7 @@ if app_mode == "Analyze Upload":
     if current_file is not None:
         process_and_display_analysis(current_file, selected_user, settings)
     else:
-        st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava**.")
+        st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
 
 elif app_mode == "Training":
     render_training_page(selected_user)

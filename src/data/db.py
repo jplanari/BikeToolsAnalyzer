@@ -151,6 +151,17 @@ def migrate_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS wahoo_auth (
+            user_id INTEGER PRIMARY KEY,
+            wahoo_user_id INTEGER,
+            wahoo_name TEXT,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS oauth_states (
             state TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -747,6 +758,77 @@ def delete_strava_auth(user_name):
     conn.execute("DELETE FROM strava_auth WHERE user_id = ?", (user['id'],))
     conn.commit()
     conn.close()
+
+# --- Wahoo authorization (same storage rules; Wahoo refresh tokens are single-use) ---
+
+def save_wahoo_auth(user_name, auth):
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = _connect()
+    conn.execute('''
+        INSERT INTO wahoo_auth (user_id, wahoo_user_id, wahoo_name, access_token, refresh_token, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            wahoo_user_id = COALESCE(excluded.wahoo_user_id, wahoo_auth.wahoo_user_id),
+            wahoo_name = COALESCE(excluded.wahoo_name, wahoo_auth.wahoo_name),
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            expires_at = excluded.expires_at
+    ''', (user['id'], auth.get('wahoo_user_id'), auth.get('wahoo_name'),
+          auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_wahoo_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM wahoo_auth WHERE user_id = ?", (user['id'],)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_wahoo_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
+    conn.commit()
+    conn.close()
+
+def wahoo_id_from_filename(filename):
+    """'wahoo_123.fit' -> 123 (rides imported through the Wahoo Cloud API)."""
+    m = re.fullmatch(r"wahoo_(\d+)\.fit", (filename or "").lower())
+    return int(m.group(1)) if m else None
+
+def get_imported_wahoo_ids(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return set()
+    conn = _connect()
+    rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'",
+                        (user['id'],)).fetchall()
+    conn.close()
+    return {i for i in (wahoo_id_from_filename(r[0]) for r in rows) if i is not None}
+
+def latest_wahoo_ride_date(user_name):
+    """Start (naive UTC) of the newest ride imported from Wahoo, or None."""
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND date_time IS NOT NULL "
+                       "AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'", (user['id'],)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return None
+    ts = pd.to_datetime(row[0], errors='coerce', utc=True)
+    return None if pd.isna(ts) else ts.tz_convert(None)
+
 
 OAUTH_STATE_TTL_S = 15 * 60
 

@@ -1,4 +1,4 @@
-"""Sidebar: navigation, user profile, data import and the Strava connection."""
+"""Sidebar: navigation, user profile, data import and the Strava / Wahoo connections."""
 import streamlit as st
 import pandas as pd
 import io
@@ -8,10 +8,15 @@ from src.data.db import (save_user,
                          get_strava_auth,
                          save_strava_auth,
                          delete_strava_auth,
+                         get_wahoo_auth,
+                         save_wahoo_auth,
+                         delete_wahoo_auth,
                          create_oauth_state,
                          consume_oauth_state)
 from src.data.cached import get_user_data
 from src.data import strava as sv
+from src.data import wahoo as wh
+from src.data import wahoo_import as wi
 from src.data.strava_import import (list_recent_rides,
                                     fetch_ride_file,
                                     import_history,
@@ -79,7 +84,7 @@ def render_sidebar():
     # 1. Initialize current_file to None by default
     current_file = None
     
-    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava"])
+    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava", "Wahoo"])
 
     if import_method == "Upload Ride":
         uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
@@ -89,6 +94,9 @@ def render_sidebar():
 
     elif import_method == "Strava":
         current_file = _render_strava_sidebar(selected_user_name, user_ftp, user_lthr)
+
+    elif import_method == "Wahoo":
+        current_file = _render_wahoo_sidebar(selected_user_name, user_ftp, user_lthr)
 
     # Settings
     st.sidebar.markdown("---")
@@ -144,6 +152,9 @@ def handle_strava_callback():
     error, scope = params.get("error"), params.get("scope")
     st.query_params.clear()  # the code is single-use; never process it twice
 
+    if state.startswith(WAHOO_STATE_PREFIX):
+        return _finish_wahoo_callback(state[len(WAHOO_STATE_PREFIX):], code, error)
+
     user_name = consume_oauth_state(state)
     if not user_name:
         st.error("Strava connection failed: the request expired or did not come from this app. Please try again.")
@@ -169,6 +180,49 @@ def handle_strava_callback():
         return
     save_strava_auth(user_name, auth)
     st.toast(f"✅ Strava connected for {user_name}")
+
+
+WAHOO_STATE_PREFIX = "wahoo."      # tells the shared redirect which provider is calling back
+
+
+def _wahoo_config():
+    """App credentials from .streamlit/secrets.toml ([wahoo] section), or None."""
+    try:
+        sec = st.secrets["wahoo"]
+        return wh.WahooConfig(
+            client_id=str(sec["client_id"]),
+            client_secret=str(sec["client_secret"]),
+            redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
+        )
+    except Exception:
+        return None
+
+
+def _finish_wahoo_callback(state, code, error):
+    user_name = consume_oauth_state(state)
+    if not user_name:
+        st.error("Wahoo connection failed: the request expired or did not come from this app. Please try again.")
+        return
+    st.session_state["current_user"] = user_name
+    if error or not code:
+        st.warning("Wahoo access was not granted.")
+        return
+    cfg = _wahoo_config()
+    if cfg is None:
+        st.error("Wahoo is not configured (see README).")
+        return
+    try:
+        auth = wh.exchange_code(cfg, code)
+    except wh.WahooError as e:
+        st.error(f"Wahoo connection failed: {e}")
+        return
+    save_wahoo_auth(user_name, auth)
+    st.toast(f"✅ Wahoo connected for {user_name}")
+
+
+def _wahoo_label(w):
+    when = (w.get("starts") or "")[:10]
+    return f"{when} · {w.get('name') or 'Ride'} · {w.get('minutes') or 0} min"
 
 
 def _activity_label(a):
@@ -282,3 +336,93 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
     # Keyed per profile so a ride is never auto-saved to the wrong rider
     current_file = st.session_state.get(f'strava_file_{user_name}', current_file)
     return current_file
+
+
+def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
+    """Returns a file-like ride (the original FIT file) to analyse, or None."""
+    cfg = _wahoo_config()
+    if cfg is None:
+        st.sidebar.warning("Wahoo isn't set up yet. Register an app at developers.wahooligan.com and add its "
+                           "`client_id` and `client_secret` to `.streamlit/secrets.toml` (see README).")
+        return None
+    if not user_name:
+        st.sidebar.info("Select or create a user profile first.")
+        return None
+
+    auth = get_wahoo_auth(user_name)
+    if not auth:
+        key = f"wahoo_oauth_state_{user_name}"
+        if key not in st.session_state:
+            st.session_state[key] = WAHOO_STATE_PREFIX + create_oauth_state(user_name)
+        st.sidebar.link_button("🔗 Connect Wahoo", wh.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption("Wahoo opens in a new tab; you'll continue there after approving.")
+        return None
+
+    st.sidebar.caption(f"Connected to Wahoo as **{auth.get('wahoo_name') or 'your account'}**")
+    usage = st.session_state.setdefault('wahoo_usage', wh.RateUsage())
+
+    try:
+        cache_key = f"wahoo_recent_{user_name}"
+        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list", key="wahoo_refresh"):
+            with st.spinner("Loading your Wahoo rides..."):
+                st.session_state[cache_key] = wi.list_recent_rides(cfg, user_name, usage=usage)
+        recent = st.session_state[cache_key]
+
+        if recent:
+            choice = st.sidebar.selectbox("Recent rides", recent, format_func=_wahoo_label)
+            if st.sidebar.button("Analyze ride", key="wahoo_analyze"):
+                with st.spinner("Downloading ride from Wahoo..."):
+                    name, payload = wi.fetch_ride_file(cfg, user_name, choice, usage=usage)
+                file_obj = io.BytesIO(payload)
+                file_obj.name = name
+                st.session_state[f'wahoo_file_{user_name}'] = file_obj
+        else:
+            st.sidebar.info("No recent cycling workouts found on Wahoo.")
+
+        if st.sidebar.button("⟳ Sync new rides", key="wahoo_sync",
+                             help="Imports workouts added to Wahoo since the last one you imported."):
+            bar = st.sidebar.progress(0.0, text="Checking Wahoo...")
+
+            def _sync_progress(done, total, name):
+                bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
+
+            res, since_dt = wi.sync_new_rides(cfg, user_name, user_ftp, progress=_sync_progress, usage=usage,
+                                              lthr=user_lthr)
+            bar.empty()
+            if res.imported == 0 and not res.failed and not res.stopped_reason:
+                st.sidebar.success(f"Up to date (checked since {since_dt:%d %b %Y}).")
+            else:
+                _show_import_result(res)
+
+        with st.sidebar.expander("📥 Import ride history"):
+            st.caption("Imports every cycling workout since the chosen date into your history. Rides already "
+                       "saved, or starting within 2 minutes of an uploaded or Strava ride, are skipped.")
+            since = st.date_input("Since", value=pd.Timestamp.today().date() - pd.Timedelta(days=90),
+                                  key="wahoo_since")
+            if st.button("Import history", key="wahoo_history"):
+                bar = st.progress(0.0, text="Listing workouts...")
+
+                def _progress(done, total, name):
+                    bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
+
+                res = wi.import_history(cfg, user_name, since, user_ftp, progress=_progress, usage=usage,
+                                        lthr=user_lthr)
+                bar.empty()
+                _show_import_result(res)
+
+    except wh.WahooAuthError as e:
+        st.sidebar.error(f"{e}")
+    except wh.WahooError as e:
+        st.sidebar.error(f"Wahoo: {e}")
+
+    if st.sidebar.button("Disconnect Wahoo", key="wahoo_disconnect"):
+        try:
+            wh.revoke(wi.get_valid_auth(cfg, user_name)["access_token"])
+        except wh.WahooError:
+            pass
+        delete_wahoo_auth(user_name)
+        for k in [f"wahoo_recent_{user_name}", f"wahoo_file_{user_name}"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    return st.session_state.get(f'wahoo_file_{user_name}')

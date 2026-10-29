@@ -96,6 +96,8 @@ BikeToolsAnalyzer/
     │   ├── strava.py         # Strava API client (OAuth, streams)
     │   ├── history.py        # Recompute stored rides
     │   ├── strava_import.py  # Single-ride and history import
+    │   ├── wahoo.py          # Wahoo Cloud API client (OAuth, workouts, FIT download)
+    │   ├── wahoo_import.py   # Wahoo single-ride, history and sync
     │   └── weather.py
     ├── physics/            # Core Science Logic
     │   ├── aerodyn.py
@@ -151,6 +153,25 @@ Notes:
 - The API does not provide the original GPX/FIT file, so imported rides are rebuilt from Strava's data streams (time, GPS, altitude, heart rate, power, cadence, temperature) and stored as `strava_<id>.json`.
 - TSS for imported rides is computed with the profile's **current** FTP.
 - Strava's API terms only allow showing an athlete's data to that athlete, so keep this as a personal tool rather than a shared dashboard.
+
+## Connecting Wahoo
+
+Rides can be synced straight from the Wahoo Cloud API (OAuth). Unlike Strava it provides the **original FIT file** recorded by your ELEMNT, so power, heart rate and cadence keep their full resolution and nothing is rebuilt from resampled streams.
+
+**One-time setup**
+1. Register an app at <https://developers.wahooligan.com> and add `http://localhost:8501/` as a callback URL. New apps start in sandbox mode (25 requests per 5 minutes, 100 per hour); a large history import simply pauses and can be run again, or you can ask Wahoo to move the app to production.
+2. Add its **Client ID** and **Client Secret** to `.streamlit/secrets.toml` (see `secrets.toml.example`):
+   ```toml
+   [wahoo]
+   client_id = "..."
+   client_secret = "..."
+   redirect_uri = "http://localhost:8501/"
+   ```
+3. Restart the app.
+
+**Usage** (sidebar → Data Import → *Wahoo*): **Connect Wahoo**, then *Recent rides → Analyze ride*, **Sync new rides**, or *Import ride history*, exactly as for Strava. Files are stored as `wahoo_<id>.fit`. A ride that starts within 2 minutes of one you already have (uploaded, or imported from Strava) is skipped, so if you imported the same rides from Strava earlier, delete those first if you want the full-resolution FIT versions instead.
+
+Notes: Wahoo does not document its workout types, so only type 0 (outdoor cycling) is imported; add other ids to `CYCLING_WORKOUT_TYPES` in `src/data/wahoo.py` if your indoor rides are skipped. Wahoo refresh tokens are single-use and are re-saved on every refresh.
 
 ## Requirements
 Python 3.8 + 
