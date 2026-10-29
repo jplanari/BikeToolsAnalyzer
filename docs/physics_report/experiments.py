@@ -80,6 +80,33 @@ R['sys'] = rows
 # no-wind-data case
 d = df0.drop(columns=['wind_speed','wind_deg','bearing']); R['no_wind_input'] = est(d) - TRUE_CDA
 
+
+# ---------------- Braking on steep descents ----------------
+# Dynamics integrated physically (1 s Euler, no wind): power 250 +- 60 W, +-7 % grades. On descents steeper than 5 %
+# the rider stops pedalling and brakes with a constant 40 N. The brake dissipation is not in the power
+# balance, so without the filter it is booked as drag.
+gb = 7.0*np.sin(2*np.pi*t/700)
+pw = 250 + 60*np.sin(2*np.pi*t/300)
+mt = MASS + BIKE; rho_b = float(ae.get_air_density(200, 18, 0.5))
+vb = np.zeros(N); vb[0] = 8.0; powb = pw.copy()
+for i in range(1, N):
+    ang = np.arctan(gb[i]/100); vi = vb[i-1]; steep = gb[i] < -ae.MAX_DESCENT_GRADE_PCT
+    p = 0.0 if steep else pw[i]; powb[i] = p
+    force = mt*ae.G*(np.sin(ang) + CRR*np.cos(ang)) + 0.5*rho_b*TRUE_CDA*vi*vi + (40.0 if steep else 0.0)
+    vn = max(vi + (p*(1-LOSS)/max(vi, 1) - force)/mt, 0.5)
+    vb[i] = vn
+dfb = base_df(vb, gb, wind=0.0).drop(columns=['wind_speed','wind_deg','bearing']); dfb['power'] = powb
+steep_b = dfb['grade_smooth'] < -ae.MAX_DESCENT_GRADE_PCT
+R['brake_steep_seconds'] = int(steep_b.sum()); R['brake_mean_speed_steep'] = float(dfb.speed[steep_b].mean())
+R['brake_filtered'] = ae.estimate_cda(dfb, MASS)['cda'] - TRUE_CDA
+_keep = ae.MAX_DESCENT_GRADE_PCT; ae.MAX_DESCENT_GRADE_PCT = 1e9           # filter switched off
+R['brake_unfiltered'] = ae.estimate_cda(dfb, MASS)['cda'] - TRUE_CDA
+ae.MAX_DESCENT_GRADE_PCT = _keep
+_b = ae._balance(dfb, MASS, ae.BIKE_MASS_KG, CRR, None, LOSS)
+_k = _b['unit_drag']; _ok = steep_b & (dfb.speed > 5)
+R['brake_weight_share_steep'] = float((_k[_ok]**2).sum() / (_k[dfb.speed > 5]**2).sum())
+R['brake_mean_residual_w'] = float((_b['p_aero'][_ok] - TRUE_CDA*_k[_ok]).mean())
+
 # steady flat ride: Crr/CdA collinearity
 dfl = base_df(np.full(N, 10.0), np.zeros(N), wind=0.0)
 dfl['power'] = forward_power(dfl)

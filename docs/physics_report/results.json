@@ -53,6 +53,12 @@
   ]
  ],
  "no_wind_input": 0.08071268081355448,
+ "brake_steep_seconds": 865,
+ "brake_mean_speed_steep": 7.556779830343075,
+ "brake_filtered": 0.0037530997383566356,
+ "brake_unfiltered": 0.04609367750696597,
+ "brake_weight_share_steep": 0.07353422269877918,
+ "brake_mean_residual_w": 305.7412726232124,
  "flat_crr_bias_per_0p001": -0.013305880492776034,
  "hill_crr_bias_per_0p001": -0.008435364283976232,
  "k_sum_sq": 2499733169.871738,

@@ -14,10 +14,10 @@ G = ae.G
 
 
 def simulate(cda=0.30, mass=78.0, crr=0.005, rho=1.225, loss=0.03, wind10=0.0, wind_from=0.0, bearing=0.0,
-             n=2400):
+             n=2400, grade_amp=0.04):
     """Rolling hills and a wobbling power, riding on bearing `bearing`, wind (10 m) blowing from `wind_from`."""
     t = np.arange(n)
-    grade = 0.04 * np.sin(2 * np.pi * t / 700) + 0.01 * np.sin(2 * np.pi * t / 130)
+    grade = grade_amp * np.sin(2 * np.pi * t / 700) + 0.01 * np.sin(2 * np.pi * t / 130)
     power = 250 + 60 * np.sin(2 * np.pi * t / 300)
     v = np.zeros(n)
     v[0] = 8
@@ -168,3 +168,25 @@ def test_wind_is_converted_to_metres_per_second(monkeypatch, unit, factor):
     assert asked["wind_speed_unit"] == "ms"                                       # the documented name
     assert out['wind_speed'].iloc[0] == pytest.approx(10.0 * factor)
     assert out['relative_humidity'].iloc[0] == pytest.approx(0.5)
+
+
+def test_braking_on_descents_is_not_booked_as_drag():
+    """Brake losses are not in the balance; on steep descents the fit must ignore the samples."""
+    df = simulate(grade_amp=0.09)
+    steep = df['grade_smooth'] < -ae.MAX_DESCENT_GRADE_PCT
+    assert steep.sum() > 100
+    braked = df.copy()
+    braked.loc[steep, 'speed'] *= 0.8                  # rider brakes: slower than the physics says
+    clean = ae.estimate_cda(df, rider_mass=70, rho=1.225)['cda']
+    assert ae.estimate_cda(braked, rider_mass=70, rho=1.225)['cda'] == pytest.approx(clean, abs=0.03)
+    series, _ = ae.calculate_CdA(braked, rider_mass=70, rho=1.225)
+    assert series[steep].isna().all()
+
+
+def test_descents_are_the_only_samples_dropped():
+    df = simulate(grade_amp=0.09)
+    b = ae._balance(df, 70, ae.BIKE_MASS_KG, ae.CRR, 1.225, ae.DRIVETRAIN_LOSS)
+    fast = b['v'] > ae.MIN_CDA_SPEED_MS
+    kept = ae._usable(df, b)
+    assert kept.sum() < fast.sum()
+    assert (df.loc[fast & ~kept, 'grade_smooth'] < -ae.MAX_DESCENT_GRADE_PCT).all()

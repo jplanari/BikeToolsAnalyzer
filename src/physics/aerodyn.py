@@ -20,6 +20,7 @@ BIKE_MASS_KG = 8.0
 CRR = 0.005
 DRIVETRAIN_LOSS = 0.03
 MIN_CDA_SPEED_MS = 5.0           # slower than this, drag is too small to tell from noise
+MAX_DESCENT_GRADE_PCT = 5.0      # descents steeper than this (grade below -5 %) are not used for CdA: braking is likely and not in the balance
 SPEED_SMOOTH_S = 5               # centred window for speed before differentiating
 # Open-Meteo gives wind at 10 m; at a rider's height (~1.5 m) it is weaker (boundary-layer profile,
 # shelter from hedges and buildings). 0.7 is a common rule of thumb for road cycling.
@@ -108,6 +109,15 @@ def _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss):
             'unit_drag': unit_drag}
 
 
+def _usable(df, b):
+    """Samples that can tell drag from noise: fast enough, and not on a steep descent where unmeasured braking
+    would be booked as drag (a descent is also where the fit weights, which grow like v^6, are largest)."""
+    ok = b['v'] > MIN_CDA_SPEED_MS
+    if 'grade_smooth' in df.columns:
+        ok &= ~(df['grade_smooth'] < -MAX_DESCENT_GRADE_PCT)
+    return ok
+
+
 def calculate_CdA(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
     """
     (cda_series, p_aero_series): per-sample CdA (m², NaN where it can't be told: slower than 5 m/s,
@@ -117,7 +127,7 @@ def calculate_CdA(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, dri
     b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
     if b is None:
         return pd.Series(dtype=float), pd.Series(dtype=float)
-    cda = (b['p_aero'] / b['unit_drag']).where(b['v'] > MIN_CDA_SPEED_MS)
+    cda = (b['p_aero'] / b['unit_drag']).where(_usable(df, b))
     cda = cda.replace([np.inf, -np.inf], np.nan)
     cda = cda.mask((cda < 0) | (cda > 1.0))
     return cda, b['p_aero']
@@ -126,15 +136,15 @@ def calculate_CdA(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, dri
 def estimate_cda(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
     """
     The ride's CdA as the least-squares fit of P_aero = CdA x (1/2 rho v_air² v) over all samples
-    faster than 5 m/s: sum(P k) / sum(k²), so fast samples (a lot of drag signal) count for more than
-    slow ones, and noise cancels instead of being clipped. Returns {'cda', 'seconds'} or None when
+    faster than 5 m/s and not on a steep descent (grade below -5 %): sum(P k) / sum(k²), so fast samples (a lot of drag signal) count
+    for more than slow ones, and noise cancels instead of being clipped. Returns {'cda', 'seconds'} or None when
     there are too few samples or the result is implausible.
     """
     b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
     if b is None:
         return None
     k = b['unit_drag']
-    ok = (b['v'] > MIN_CDA_SPEED_MS) & k.notna() & b['p_aero'].notna() & (k > 0)
+    ok = _usable(df, b) & k.notna() & b['p_aero'].notna() & (k > 0)
     if ok.sum() < 120:
         return None
     k, p = k[ok], b['p_aero'][ok]
