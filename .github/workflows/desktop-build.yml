@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -14,12 +15,19 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    - name: Linux window dependencies
-      if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y libgirepository1.0-dev libcairo2-dev gir1.2-webkit2-4.1 pkg-config
     - run: pip install -r desktop/requirements-desktop.txt
     - run: pyinstaller desktop/biketools.spec --noconfirm
     - uses: actions/upload-artifact@v4
       with:
         name: BikeToolsAnalyzer-${{ runner.os }}
         path: dist/BikeToolsAnalyzer
+    - name: Smoke test (server starts and answers)
+      shell: bash
+      run: |
+        export BIKETOOLS_DATA="$RUNNER_TEMP/btdata"
+        EXE=dist/BikeToolsAnalyzer/BikeToolsAnalyzer
+        [ -f "$EXE.exe" ] && EXE="$EXE.exe"
+        "$EXE" --server 8765 &
+        for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/_stcore/health && exit 0; sleep 2; done
+        cat "$BIKETOOLS_DATA/launcher.log" || true
+        exit 1

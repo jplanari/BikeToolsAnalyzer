@@ -6,6 +6,7 @@ Desktop launcher: starts the Streamlit server on a free local port and shows it 
 Your data lives in a per-user folder (BIKETOOLS_DATA overrides it), never next to the program, so the app can
 be updated or moved without touching the database, the ride files or the backups.
 """
+import multiprocessing
 import os
 import socket
 import subprocess
@@ -35,6 +36,14 @@ def data_dir():
     return path
 
 
+def redirect_output_to_log():
+    """A windowed (console-less) Windows/macOS build has no stdout/stderr (they are None) and Streamlit, click and
+    logging crash on them. Everything goes to launcher.log in the data folder instead."""
+    log = open(os.path.join(data_dir(), "launcher.log"), "a", buffering=1, encoding="utf-8")
+    sys.stdout = sys.stderr = log
+    return log
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -49,6 +58,8 @@ def server_command(port):
 
 def run_server(port):
     """Runs Streamlit in this process (blocking). The database and backups go to the data folder."""
+    if FROZEN or sys.stdout is None:
+        redirect_output_to_log()
     folder = data_dir()
     os.environ.setdefault("BIKETOOLS_DB", os.path.join(folder, "biketools.db"))
     os.chdir(folder)                       # backups/ and .streamlit/secrets.toml (Strava keys) live here
@@ -78,13 +89,18 @@ def wait_until_up(port, process, timeout=START_TIMEOUT_S):
 
 
 def main():
+    multiprocessing.freeze_support()
     if "--server" in sys.argv:
         return run_server(int(sys.argv[sys.argv.index("--server") + 1]))
+    if FROZEN or sys.stdout is None:
+        redirect_output_to_log()
     port = free_port()
-    server = subprocess.Popen(server_command(port))
+    log = open(os.path.join(data_dir(), "launcher.log"), "a")
+    server = subprocess.Popen(server_command(port), stdout=log, stderr=log, stdin=subprocess.DEVNULL)
     try:
         if not wait_until_up(port, server):
-            print("BikeTools Analyzer could not start its server.", file=sys.stderr)
+            print(f"BikeTools Analyzer could not start its server; see {os.path.join(data_dir(), 'launcher.log')}",
+                  file=sys.stderr)
             return 1
         url = f"http://127.0.0.1:{port}"
         try:
