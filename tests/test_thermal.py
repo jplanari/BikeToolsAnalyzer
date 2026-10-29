@@ -95,3 +95,26 @@ def test_humidity_raises_core_temperature_monotonically():
 
 def test_cool_humid_air_still_evaporates():
     assert _ride(200, 10, rh=0.9).core_temp.iloc[-1] < 37.5
+
+
+def test_energy_is_conserved():
+    """Stored heat (both nodes) equals generated minus lost heat, summed over the ride."""
+    from src.physics import thermal as th
+    out = _ride(250, 25, speed=8.0, n=1800)
+    mass, a = 70.0, th.du_bois_BSA(175, 70.0)
+    skin_m = mass * th.SKIN_MASS_FRACTION
+    d_store = (mass - skin_m) * th.C_BODY * (out.core_temp.iloc[-1] - out.core_temp.iloc[0]) \
+        + skin_m * th.C_SKIN * (out.skin_temp.iloc[-1] - out.skin_temp.iloc[0])
+    # step i integrates the heat of sample i, starting from the temperature before sample 0
+    assert a > 0
+    flow = ((out.heat_generated_W - out.heat_lost_W) * 1.0).iloc[1:].sum()
+    assert d_store == pytest.approx(flow, rel=0.02)
+
+
+def test_sparse_sampling_is_stable():
+    fine = _ride(250, 30, n=3600)
+    df = pd.DataFrame({'time': pd.date_range("2026-07-01 09:00", periods=18, freq="200s"), 'speed': 8.0,
+                       'power': 250.0, 'temp_c': 30.0, 'relative_humidity': 0.5})
+    coarse = calculate_thermal_profile(df, 70, 175, ["Summer Jersey"])
+    assert coarse.skin_temp.between(25, 42).all()
+    assert coarse.core_temp.iloc[-1] == pytest.approx(fine.core_temp.iloc[-1], abs=0.5)

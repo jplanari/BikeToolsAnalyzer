@@ -11,6 +11,17 @@ M_REST_W_PER_M2 = 58.2         # resting metabolic rate, 1 met (ISO 7730), W per
 K_MIN_W_PER_M2K = 12.6         # core-to-skin conductance at rest: tissue 5.28 + minimal skin blood flow 7.3 (Gagge)
 SWEAT_REF_SKIN_C = 33.0         # skin temperature the evaporative-capacity coefficient (150) is referred to
 MIN_AIR_SPEED_MS = 0.2          # natural convection / body movement: sweat still evaporates in still air
+H_CONV_COEFF = 8.5              # combined convective + radiative coefficient h = H_CONV_COEFF * v^H_CONV_EXP, W/m²K
+H_CONV_EXP = 0.84
+EVAP_COEFF_W_PER_M2 = 150.0     # evaporative capacity of dry air at 1 m/s over skin at SWEAT_REF_SKIN_C, W/m²
+EVAP_EXP = 0.3
+SWEAT_ONSET_CORE_C = 37.0       # core temperature at which sweating starts
+SWEAT_GAIN_W_PER_K = 1000.0     # sweat latent-heat supply per K of core temperature above onset (pros up to ~1500)
+VASO_ONSET_CORE_C = 36.8        # core temperature at which skin vasodilation starts
+K_VASO_MAX_W_PER_M2K = 150.0    # asymptotic extra core-to-skin conductance from vasodilation, W/m²K
+SKIN_MASS_FRACTION = 0.1
+C_SKIN = 3500                   # J/(kg K)
+MAX_SUBSTEP_S = 5.0             # explicit Euler is unstable above ~2x the skin time constant (~80 s)
 
 CLOTHING_CATALOG = {
     "None (Shorts only)": 0.05,
@@ -35,7 +46,7 @@ def R_air_boundary_layer(air_speed):
     """Calculate air boundary layer heat resistance."""
     # Avoid division by zero
     speed = max(0.1, air_speed)
-    return 1 / (8.5 * (speed ** 0.84))
+    return 1 / (H_CONV_COEFF * (speed ** H_CONV_EXP))
 
 def saturation_pressure_kpa(T):
     """Saturation vapour pressure (kPa) at a temperature in °C (Magnus)."""
@@ -65,25 +76,25 @@ def _step(t_core, t_skin, mech_w, v_air, T_air, RH, R, A, mass, dt):
 
     # 2. Evaporative heat loss: sweat supply (rises once the core passes 37 °C) against what the air can
     #    take up. Capacity scales with the vapour-pressure gap between the wet skin and the air, normalised
-    #    to a dry-air gap at 33 °C skin (= the old (1 - RH) when the skin is at 33 °C).
-    sweat_supply = max(0.0, t_core - 37.0) * 1000     # suitable for average users, pros up to ~1500
+    #    to a dry-air gap at 33 °C skin (reduces to the old (1 - RH) when air and skin are at the same temperature).
+    sweat_supply = max(0.0, t_core - SWEAT_ONSET_CORE_C) * SWEAT_GAIN_W_PER_K
     gap = (saturation_pressure_kpa(t_skin) - calculate_vapor_pressure_kpa(T_air, RH)) / \
         saturation_pressure_kpa(SWEAT_REF_SKIN_C)
-    max_evap = 150 * (max(v_air, MIN_AIR_SPEED_MS) ** 0.3) * max(0.0, gap) * A
+    max_evap = EVAP_COEFF_W_PER_M2 * (max(v_air, MIN_AIR_SPEED_MS) ** EVAP_EXP) * max(0.0, gap) * A
     Q_evap = min(sweat_supply, max_evap)
 
     # 3. Respiratory heat loss (ISO 7730, M in W)
     vp_kpa = calculate_vapor_pressure_kpa(T_air, RH)
     Q_resp = max(0.0, 0.0014 * M * (34 - T_air) + 0.0173 * M * (5.87 - vp_kpa))
 
-    mass_skin = mass * 0.1
-    mass_core = mass * 0.9
-    vaso = max(0.0, t_core - 36.8)
-    K_total = K_MIN_W_PER_M2K * A + 150 * A * vaso / (1 + vaso)
+    mass_skin = mass * SKIN_MASS_FRACTION
+    mass_core = mass - mass_skin
+    vaso = max(0.0, t_core - VASO_ONSET_CORE_C)
+    K_total = K_MIN_W_PER_M2K * A + K_VASO_MAX_W_PER_M2K * A * vaso / (1 + vaso)
     Q_transfer = K_total * (t_core - t_skin)
 
     t_core += (H - Q_resp - Q_transfer) * dt / (mass_core * C_BODY)
-    t_skin += (Q_transfer - Q_dry - Q_evap) * dt / (mass_skin * 3500)
+    t_skin += (Q_transfer - Q_dry - Q_evap) * dt / (mass_skin * C_SKIN)
     return t_core, t_skin, H, Q_dry + Q_evap + Q_resp
 
 
@@ -140,8 +151,10 @@ def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clo
         dt = dt_arr[i]
         if dt > 300 or dt <= 0:
             dt = 1.0                                   # pauses or errors
-        t_core, t_skin, H, lost = _step(t_core, t_skin, mech[i], v_air_arr[i], T_air[i], RH_arr[i],
-                                        r_arr[i], A, RIDER_MASS, dt)
+        n_sub = int(np.ceil(dt / MAX_SUBSTEP_S))          # keep the explicit scheme stable across long gaps
+        for _ in range(n_sub):
+            t_core, t_skin, H, lost = _step(t_core, t_skin, mech[i], v_air_arr[i], T_air[i], RH_arr[i],
+                                            r_arr[i], A, RIDER_MASS, dt / n_sub)
         core_temps.append(t_core)
         skin_temps.append(t_skin)
         heat_gen_list.append(H)
