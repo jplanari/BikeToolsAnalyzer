@@ -60,7 +60,7 @@ fig.tight_layout(); fig.savefig('figs/fig_humidity.pdf'); plt.close()
 # 6. tornado
 lab={'EFFICIENCY':'gross efficiency','EVAP_COEFF_W_PER_M2':'evaporative capacity','K_VASO_MAX_W_PER_M2K':'vasodilation conductance',
  'H_CONV_COEFF':'convective coefficient','CLOTHING':'clothing insulation','K_MIN_W_PER_M2K':'basal core–skin conductance',
- 'SWEAT_GAIN_W_PER_K':'sweat supply gain','M_REST_W_PER_M2':'resting metabolic rate'}
+ 'SWEAT_GAIN_W_PER_K':'sweat supply gain','M_REST_W_PER_M2':'resting metabolic rate','SETPOINT_GAIN_K':'exercise set-point gain'}
 fig,axs=plt.subplots(1,2,figsize=(6.4,2.9),sharey=True)
 order=sorted(lab,key=lambda k:-max(abs(x) for x in R['sens_warm'][1][k]))
 for ax,key,ttl in zip(axs,('sens_warm','sens_cool'),('(a) 220 W, 28 °C, 50 % RH','(b) 180 W, 12 °C, 70 % RH')):
