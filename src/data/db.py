@@ -162,6 +162,16 @@ def migrate_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS wahoo_sent (
+            session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
+            plan_id INTEGER NOT NULL,
+            workout_id INTEGER NOT NULL,
+            starts TEXT NOT NULL,                -- UTC ISO sent to Wahoo
+            sent_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS oauth_states (
             state TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -797,6 +807,34 @@ def delete_wahoo_auth(user_name):
         return
     conn = _connect()
     conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
+    conn.commit()
+    conn.close()
+
+def get_wahoo_sent(user_name):
+    """{planned session id: {plan_id, workout_id, starts, sent_at}} for sessions sent to Wahoo."""
+    user = get_user_data(user_name)
+    if not user:
+        return {}
+    conn = _connect()
+    rows = conn.execute("""SELECT w.session_id, w.plan_id, w.workout_id, w.starts, w.sent_at
+                           FROM wahoo_sent w JOIN planned_sessions p ON p.id = w.session_id
+                           WHERE p.user_id = ?""", (user['id'],)).fetchall()
+    conn.close()
+    return {r[0]: {'plan_id': r[1], 'workout_id': r[2], 'starts': r[3], 'sent_at': r[4]} for r in rows}
+
+def save_wahoo_sent(session_id, plan_id, workout_id, starts, sent_at):
+    conn = _connect()
+    conn.execute("""INSERT INTO wahoo_sent (session_id, plan_id, workout_id, starts, sent_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET plan_id = excluded.plan_id,
+                        workout_id = excluded.workout_id, starts = excluded.starts, sent_at = excluded.sent_at""",
+                 (int(session_id), int(plan_id), int(workout_id), starts, sent_at))
+    conn.commit()
+    conn.close()
+
+def delete_wahoo_sent(session_id):
+    conn = _connect()
+    conn.execute("DELETE FROM wahoo_sent WHERE session_id = ?", (int(session_id),))
     conn.commit()
     conn.close()
 
