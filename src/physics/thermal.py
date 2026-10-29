@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
+from src.physics.aerodyn import apparent_air_speed
+
 # Constants
 C_BODY = 3470  # Specific heat capacity [J/(kg·K)]
 EFFICIENCY = 0.23
@@ -75,30 +77,10 @@ def calculate_thermal_profile(df, rider_weight_kg=80.0, rider_height_cm=175, clo
 
     # --- 2. VECTORIZED PRE-CALCULATION ---
     
-    # Rider Speed (v)
-    # Ensure speed exists. If km/h, convert to m/s. Standard FIT/GPX parsing usually gives m/s or km/h.
-    # We will assume the dataframe has 'speed' in m/s for physics. 
-    # If your parser gives km/h, divide by 3.6 here. 
-    # Let's assume input 'speed' is m/s (standard SI).
-    if 'speed' in df.columns:
-        v = df['speed'].fillna(0)
-    else:
-        v = pd.Series([0.0]*len(df), index=df.index)
+    # Air speed over the skin (m/s): ground speed (smoothed, 1 Hz GPS speed is noisy) plus the wind at
+    # rider height, cross wind included. Same wind treatment as the drag model in physics.aerodyn.
+    v_air = apparent_air_speed(df)
 
-    # Wind Logic
-    if 'wind_speed' in df.columns and 'wind_deg' in df.columns and 'bearing' in df.columns:
-        w_speed = df['wind_speed'].fillna(0)
-        w_deg = df['wind_deg'].fillna(0)
-        ride_bearing = df['bearing'].fillna(0)
-        
-        # Calculate Apparent Wind
-        rad_diff = np.radians(w_deg - ride_bearing)
-        v_hdwind = w_speed * np.cos(rad_diff)
-        v_air = v + v_hdwind
-        v_air = v_air.abs()
-    else:
-        v_air = v # Fallback if no wind data
-    
     # Calculate Air Resistance
     r_a = v_air.apply(R_air_boundary_layer)
     r_total = base_rsi + r_a
