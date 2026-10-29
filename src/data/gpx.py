@@ -193,18 +193,27 @@ def compute_grade(df):
 
     return df
 
-def calculate_bearing(df):
+BEARING_WINDOW_S = 5
 
+
+def calculate_bearing(df, window=BEARING_WINDOW_S):
+    """
+    Direction of travel (degrees, 0 = north) from the position `window` samples behind to the one
+    `window` samples ahead. One-second steps of 5-8 m are within GPS noise, so a single step gives
+    a bearing that wanders by tens of degrees.
+    """
     if 'lat' not in df.columns or 'lon' not in df.columns:
         return pd.Series(0, index=df.index)
 
-    lat1 = np.radians(df['lat'])
-    lon1 = np.radians(df['lon'])
-    lat2 = np.radians(df['lat'].shift(-1).ffill())
-    lon2 = np.radians(df['lon'].shift(-1).ffill())
+    n = len(df)
+    idx = np.arange(n)
+    back = np.clip(idx - window, 0, max(n - 1, 0))
+    fwd = np.clip(idx + window, 0, max(n - 1, 0))
+    lat, lon = df['lat'].to_numpy(dtype=float), df['lon'].to_numpy(dtype=float)
+    lat1, lon1 = np.radians(lat[back]), np.radians(lon[back])
+    lat2, lon2 = np.radians(lat[fwd]), np.radians(lon[fwd])
 
     d_lon = lon2 - lon1
-    
     x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(d_lon)
     y = np.sin(d_lon) * np.cos(lat2)
 
@@ -214,7 +223,7 @@ def calculate_bearing(df):
     #Normalize to 0-360
     bearing_deg = (bearing_deg + 360) % 360
 
-    return bearing_deg
+    return pd.Series(bearing_deg, index=df.index)
 
 # Recording gaps up to this long are treated as "still riding" (smart
 # recording, brief sensor dropouts): power, cadence and speed are carried

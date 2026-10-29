@@ -23,7 +23,7 @@ def fetch_ride_weather(df):
             "start_date": start_str,
             "end_date": end_str,
             "hourly": ["temperature_2m", "surface_pressure", "wind_speed_10m", "wind_direction_10m", "relative_humidity_2m"],
-            "windspeed_unit": "ms",
+            "wind_speed_unit": "ms",
             }
     try:
         response = requests.get(url, params=params)
@@ -34,9 +34,12 @@ def fetch_ride_weather(df):
             return df
 
         hourly = data['hourly']
+        # Always work in m/s, whichever unit the API actually answered in
+        unit = str((data.get('hourly_units') or {}).get('wind_speed_10m', 'm/s')).lower()
+        to_ms = {'km/h': 1 / 3.6, 'mp/h': 0.44704, 'mph': 0.44704, 'kn': 0.514444}.get(unit, 1.0)
         weather_df = pd.DataFrame({
             'time': pd.to_datetime(hourly['time']),
-            'wind_speed': hourly['wind_speed_10m'],
+            'wind_speed': pd.Series(hourly['wind_speed_10m'], dtype=float) * to_ms,
             'wind_deg': hourly['wind_direction_10m'],
             'temp_c': hourly['temperature_2m'],
             'pressure': hourly['surface_pressure'],

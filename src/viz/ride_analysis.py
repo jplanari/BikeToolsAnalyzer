@@ -23,7 +23,7 @@ from src.data.db import save_ride, build_ride_metadata
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, get_avg_cda, calculate_power_components
+from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components
 from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
@@ -221,11 +221,14 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
         
         # Calculation happens automatically here using available columns
         df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
-        avg_cda = get_avg_cda(df['cda'])
+        fit = estimate_cda(df, rider_mass=settings.get('weight', 70))
         avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
-        if pd.notna(avg_cda):
-            c1, c2 = st.columns(2)        
-            c1.metric("Est. CdA", f"{avg_cda:.3f} m²" if pd.notna(avg_cda) else "N/A")
+        df.attrs['cda_est'] = fit['cda'] if fit else None          # used by the climb estimator
+        if fit:
+            c1, c2 = st.columns(2)
+            c1.metric("Est. CdA", f"{fit['cda']:.3f} m²",
+                      help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. Treat it as "
+                           "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient.")
             c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
         else:
             st.warning("Not enough stable data points (Speed > 18km/h required).")
