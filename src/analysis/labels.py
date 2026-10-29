@@ -75,7 +75,3 @@ def tid_label(low, mid, high, pi):
     if mid > low and mid > high:
         return "Threshold-focused"
     return "Non-polarized"
-
-
-def _metric(col, label, value, status, help_text):
-    col.metric(label, value, delta=status, delta_color="off", help=help_text)
