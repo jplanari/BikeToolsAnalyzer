@@ -12,8 +12,6 @@ from src.viz.plots import (plot_elevation,
                            plot_x_time,
                            plot_power_curve,
                            plot_zone_distribution,
-                           plot_climbs,
-                           plot_detailed_climb,
                            plot_power_budget,
                            plot_w_prime_balance)
 from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
@@ -27,7 +25,6 @@ from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_com
 from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
-from src.viz.climb_estimator import render_climb_estimator
 from src.viz.segment_analysis import render_segment_analysis
 
 
@@ -185,7 +182,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
-    render_segment_analysis(df, settings, lap_spans, ride_id=_thermal_ride_id(df))
+    render_segment_analysis(df, settings, lap_spans, detected_climbs, ride_id=_thermal_ride_id(df))
 
 
 def _thermal_ride_id(df):
@@ -342,42 +339,6 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
         fig = plot_zone_distribution(times, "Heart Rate Zones")
         if fig: c2.plotly_chart(fig, use_container_width=True)
 
-    _render_climb_details(df, detected_climbs, settings)
-
-
-def _render_climb_details(df, climbs, settings):
-    ride_id = f"{len(df)}_{df['time'].iloc[0]}" if 'time' in df.columns and len(df) else "0"
-    if climbs:
-        st.subheader(f"⛰️ Detected Climbs ({len(climbs)})")        
-        # 1. Overview Plot (Interactive)
-        fig_overview = plot_climbs(df, climbs)
-        st.plotly_chart(fig_overview, use_container_width=True)
-        
-        # 2. Detailed Breakdown
-        with st.expander("View Details for Each Climb"):
-            for i, c in enumerate(climbs):
-                st.markdown(f"### Climb #{i+1}: {c['type']}")
-            
-                # Metrics Row
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Length", f"{c['length_m']/1000:.2f} km")
-                c2.metric("Avg Gradient", f"{c['avg_gradient_pct']:.1f}%")
-                c3.metric("Ascent", f"{int(c['elev_gain_m'])} m")
-                
-                # Check if VAM exists (depends on your physics calc)
-                vam = c.get('vam_mph', 0) # Vertical Ascent Meters per Hour
-                c4.metric("VAM", f"{int(vam)} m/h")
-            
-            # 3. Interactive Detailed Plot
-                segment = df.loc[c['start_idx']:c['end_idx']]
-                if not segment.empty:
-                    fig_climb = plot_detailed_climb(segment)
-                    st.plotly_chart(fig_climb, use_container_width=True, key=f"climb_plot_{i}")
-                    render_climb_estimator(df, c, i, settings, ride_id)
-                
-                st.markdown("---")
-    else:
-        st.info("No significant climbs detected on this route.")
 
 
 def _render_thermal_analysis(df, user_weight, user_height, ftp=None):

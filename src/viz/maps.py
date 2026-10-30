@@ -79,3 +79,26 @@ def create_route_map(df, climbs=None):
     m.fit_bounds(m.get_bounds())
 
     return m
+
+
+def create_segment_map(df, i0, i1):
+    """Route in blue with the selected stretch (rows i0..i1) in red, start/end markers, zoomed to the stretch."""
+    ok = df[['lat', 'lon']].notna().all(axis=1) & (df['lat'] != 0) if {'lat', 'lon'} <= set(df.columns) else None
+    if ok is None or not ok.any():
+        return None
+    route = df[ok]
+    seg = df.iloc[i0:i1 + 1]
+    seg = seg[ok.iloc[i0:i1 + 1]]
+    m = folium.Map(location=[route['lat'].mean(), route['lon'].mean()], zoom_start=12, tiles="OpenStreetMap")
+    stride = max(1, len(route) // 1000)
+    folium.PolyLine(route[['lat', 'lon']].values[::stride].tolist(), color="#3388ff", weight=4, opacity=0.6).add_to(m)
+    if len(seg) >= 2:
+        folium.PolyLine(seg[['lat', 'lon']].values[::max(1, len(seg) // 1000)].tolist(), color="#d62728", weight=6,
+                        opacity=0.95).add_to(m)
+        for row, color, label in ((seg.iloc[0], "green", "Start"), (seg.iloc[-1], "black", "End")):
+            folium.CircleMarker([row['lat'], row['lon']], radius=6, color=color, fill=True, fill_opacity=1,
+                                tooltip=label).add_to(m)
+        m.fit_bounds([[seg['lat'].min(), seg['lon'].min()], [seg['lat'].max(), seg['lon'].max()]], padding=(30, 30))
+    else:
+        m.fit_bounds([[route['lat'].min(), route['lon'].min()], [route['lat'].max(), route['lon'].max()]])
+    return m
