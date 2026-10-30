@@ -3,7 +3,7 @@ Strava import workflows (single ride and history since a date), built on the
 API client in src/data/strava.py and the shared ride pipeline. No Streamlit.
 """
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -33,6 +33,13 @@ def list_recent_rides(cfg, user_name, limit=30, usage=None):
     auth = get_valid_auth(cfg, user_name)
     acts = sv.list_activities(auth['access_token'], per_page=min(200, limit * 2), usage=usage)
     return [a for a in acts if sv.is_cycling(a) and not a.get("manual")][:limit]
+
+
+def list_rides_between(cfg, user_name, start, end, usage=None):
+    """Cycling rides from the start date to the end date, both included, newest first."""
+    auth = get_valid_auth(cfg, user_name)
+    day_after = _utc_midnight(end) + timedelta(days=1)
+    return list(reversed(list_cycling_since(auth, start, usage, until=day_after)))
 
 
 def fetch_ride_file(cfg, user_name, activity, usage=None):
@@ -70,8 +77,14 @@ def _is_near(ts, others, tol_s):
     return ts is not None and any(abs((ts - o).total_seconds()) <= tol_s for o in others)
 
 
-def list_cycling_since(auth, since, usage=None):
-    """All non-manual cycling activities since `since` (date/datetime), oldest first."""
+def _utc_midnight(d):
+    if isinstance(d, datetime):
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
+def list_cycling_since(auth, since, usage=None, until=None):
+    """All non-manual cycling activities since `since` (date/datetime), oldest first; with `until`, only those before it."""
     if isinstance(since, datetime):
         after = since if since.tzinfo else since.replace(tzinfo=timezone.utc)
     else:
@@ -79,6 +92,7 @@ def list_cycling_since(auth, since, usage=None):
     acts, page = [], 1
     while True:
         batch = sv.list_activities(auth['access_token'], after=after.timestamp(),
+                                   before=_utc_midnight(until).timestamp() if until else None,
                                    page=page, per_page=200, usage=usage)
         if not batch:
             break

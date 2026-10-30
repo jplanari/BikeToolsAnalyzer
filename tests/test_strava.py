@@ -308,3 +308,16 @@ def test_first_sync_looks_back_30_days(connected, fake_strava, monkeypatch):
     res, since = si.sync_new_rides(CFG, "Rider", ftp=250, now=now)
     assert since == now - pd.Timedelta(days=30) and res.found == 0
     assert db.latest_strava_ride_date("Rider") is None
+
+
+def test_rides_between_asks_for_the_whole_end_day_and_lists_newest_first(connected, monkeypatch):
+    seen = {}
+
+    def spy(token, after=None, before=None, page=1, per_page=200, usage=None):
+        seen.update(after=pd.Timestamp(after, unit="s"), before=pd.Timestamp(before, unit="s"))
+        return [activity(1, "2026-09-02T07:00:00Z"), activity(2, "2026-09-10T07:00:00Z")]
+
+    monkeypatch.setattr(sv, "list_activities", spy)
+    got = si.list_rides_between(CFG, "Rider", date(2026, 9, 1), date(2026, 9, 10))
+    assert [a["id"] for a in got] == [2, 1]
+    assert seen["after"] == pd.Timestamp("2026-09-01") and seen["before"] == pd.Timestamp("2026-09-11")

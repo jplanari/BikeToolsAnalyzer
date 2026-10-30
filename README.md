@@ -179,6 +179,8 @@ Rides can be synced straight from the Wahoo Cloud API (OAuth). Unlike Strava it 
    ```
 3. Restart the app.
 
+**Any ride, not just the recent ones:** under the ride list, **🔎 Find a ride by date** (Strava and Wahoo) lists every ride between two dates; pick one and *Analyze ride*. **Clear** returns to the recent list.
+
 **Usage** (sidebar → Data Import → *Wahoo*): **Connect Wahoo**, then *Recent rides → Analyze ride*, **Sync new rides**, or *Import ride history*, exactly as for Strava. Files are stored as `wahoo_<id>.fit`. A ride that starts within 2 minutes of one you already have (uploaded, or imported from Strava) is skipped, so if you imported the same rides from Strava earlier, delete those first if you want the full-resolution FIT versions instead.
 
 **Sending planned sessions to your ELEMNT.** Sessions built from intervals on the Training page get a **📲 Send to Wahoo** button (once Wahoo is connected). It creates a workout plan (fixed-power steps with a ±3 % band, repeats for your reps, rest only between repeats) and schedules it on the session's date at the start time you choose, so it appears in the Wahoo app and on the head unit. **↻ Update on Wahoo** resends changes, **Remove from Wahoo** (or deleting the session) takes it off. Wahoo only delivers sessions from today to 6 days ahead, and quick TSS entries have no steps, so they can't be sent. This needs the `plans_read`, `plans_write` and `workouts_write` scopes; if you connected before, disconnect and connect again. Optionally set `timezone = "Europe/Madrid"` in `[wahoo]` (default: this computer's zone).

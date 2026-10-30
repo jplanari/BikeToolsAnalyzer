@@ -30,12 +30,15 @@ def _start_utc(workout):
     return None if pd.isna(ts) else ts.tz_convert(None)
 
 
-def list_cycling_since(auth, since, usage=None):
-    """All cycling workouts that started on/after `since` (date/datetime), oldest first.
+def list_cycling_since(auth, since, usage=None, until=None):
+    """All cycling workouts that started on/after `since` (date/datetime), oldest first; with `until`, before it.
     The list endpoint has no date filter, so pages are read newest-first until one is entirely older."""
     after = pd.Timestamp(since)
     if after.tzinfo is not None:
         after = after.tz_convert('UTC').tz_localize(None)
+    before = None if until is None else pd.Timestamp(until)
+    if before is not None and before.tzinfo is not None:
+        before = before.tz_convert('UTC').tz_localize(None)
     found, page = [], 1
     while True:
         data = wh.list_workouts(auth['access_token'], page=page, usage=usage)
@@ -44,7 +47,7 @@ def list_cycling_since(auth, since, usage=None):
             break
         starts = [_start_utc(w) for w in batch]
         found.extend(w for w, s in zip(batch, starts)
-                     if s is not None and s >= after and wh.is_cycling(w) and not wh.is_planned_only(w))
+                     if s is not None and s >= after and (before is None or s < before) and wh.is_cycling(w) and not wh.is_planned_only(w))
         newest_first = str(data.get('order', 'descending')).lower().startswith('desc')
         if len(batch) < data.get('per_page', wh.PER_PAGE):
             break
@@ -52,6 +55,13 @@ def list_cycling_since(auth, since, usage=None):
             break
         page += 1
     return sorted(found, key=lambda w: w.get('starts') or '')
+
+
+def list_rides_between(cfg, user_name, start, end, usage=None):
+    """Cycling workouts from the start date to the end date, both included, newest first."""
+    auth = get_valid_auth(cfg, user_name)
+    day_after = pd.Timestamp(end).normalize() + pd.Timedelta(days=1)
+    return list(reversed(list_cycling_since(auth, start, usage, until=day_after)))
 
 
 def list_recent_rides(cfg, user_name, limit=30, usage=None):
