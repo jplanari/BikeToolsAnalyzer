@@ -239,10 +239,16 @@ def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db,
     _no_errors(at)
     section = next(r for r in at.radio if r.label == "Section")
     assert section.options[0] == "📊 Summary" and "📐 Segments" in section.options
-    assert "Performance Metrics" in _texts(at.subheader)
-    assert not at.get("plotly_chart")                                      # charts only when their section is open
+    assert "🗺️ Route" not in section.options                              # the route lives in the Summary
+    assert {"Performance Metrics", "Route"} <= {s.value for s in at.subheader}
+    assert "Power Curve" not in _texts(at.subheader)                       # other sections' charts are not built
     section.set_value("⚡ Power").run()
     _no_errors(at)
-    assert at.get("plotly_chart")
+    assert "Power Curve" in _texts(at.subheader) and at.get("plotly_chart")
+    section.set_value("📈 Time series").run()
+    _no_errors(at)
+    assert at.get("plotly_chart") and "Channels over the elevation profile" in [m.label for m in at.multiselect]
+    next(r for r in at.radio if r.label == "Layout").set_value("Stacked").run()
+    _no_errors(at)
     next(b for b in at.button if b.key == "back_to_gallery").click().run()
     assert "Last 7 days" in {m.label for m in at.metric}

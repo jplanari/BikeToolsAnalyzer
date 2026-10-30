@@ -27,6 +27,7 @@ from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.segment_analysis import render_segment_analysis
 from src.viz.sections import section_picker, remembered
+from src.viz import timeseries as ts
 
 
 @st.cache_data(show_spinner=False)
@@ -132,7 +133,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
                      user_name):
     ride_id = _thermal_ride_id(df)
     has_power = 'power' in df.columns and df['power'].notna().any()
-    sections = ["📊 Summary", "🗺️ Route", "📈 Time series", "⚡ Power"]
+    sections = ["📊 Summary", "📈 Time series", "⚡ Power"]
     if has_power and 'speed' in df.columns:
         sections.append("💨 Aero")
     if has_power:
@@ -141,10 +142,8 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     section = section_picker(sections, key=f"ride_section_{ride_id}")
 
     if section == "📊 Summary":
-        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df)
+        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs)
         _render_report_expander(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, user_name)
-    elif section == "🗺️ Route":
-        _render_route(df, climbs)
     elif section == "📈 Time series":
         _render_time_series(df)
     elif section == "⚡ Power":
@@ -158,7 +157,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
         render_segment_analysis(df, settings, lap_spans, climbs, ride_id=ride_id)
 
 
-def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df):
+def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs):
     duration_s = summary['duration_s']
     avg_speed = summary['avg_speed_kph']
     avg_power = summary['avg_power']
@@ -213,6 +212,7 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df):
         st.caption("🧹 Removed impossible sensor readings before scoring: " + ", ".join(parts) + " samples.")
 
     st.markdown("---")
+    _render_route(df, climbs)
 
     if laps_df is not None:
         # Extract laps and show summary
@@ -291,36 +291,42 @@ def _ensure_cda(df, settings):
 
 
 def _render_route(df, detected_climbs):
-    st.subheader("Route Map")
+    st.subheader("Route")
     map_obj = create_route_map(df, detected_climbs)
-    if map_obj: st_folium(map_obj, width=1000, height=500, returned_objects=[], key="route_map")
-    else: st.warning("No GPS coordinates found.")
-
-    st.subheader("Elevation Profile")
-    show_centered(plot_elevation(df))
+    if map_obj is None:
+        st.warning("No GPS coordinates found.")
+        show_centered(plot_elevation(df))
+        return
+    left, right = st.columns([3, 2])
+    with left:
+        try:
+            st_folium(map_obj, height=420, use_container_width=True, returned_objects=[], key="route_map")
+        except TypeError:                                    # older streamlit-folium
+            st_folium(map_obj, width=700, height=420, returned_objects=[], key="route_map")
+    right.plotly_chart(plot_elevation(df), use_container_width=True)
 
 
 def _render_time_series(df):
-    st.subheader("Speed")
-    show_centered(plot_x_time(df, 'speed_kmh', 'Speed (km/h)'))
-
-    st.subheader("Power")
-    if 'power' not in df.columns:
-        st.info("No power data available.")
-    else:
-        show_centered(plot_x_time(df, 'power', 'Power (W)'))
-
-    st.subheader("Cadence")
-    if 'cadence' in df.columns:
-        show_centered(plot_x_time(df, 'cadence', 'Cadence (rpm)'))
-    else:
-        st.info("No cadence data available.")
-
-    st.subheader("Heart Rate")
-    if 'hr' in df.columns:
-        show_centered(plot_x_time(df, 'hr', 'Heart Rate (bpm)'))
-    else:
-        st.info("No heart rate data available.")
+    st.subheader("Time series")
+    channels = ts.available(df)
+    if not channels:
+        st.info("This ride has no power, heart rate, speed or cadence data.")
+        return
+    default = [c for c in ("Power",) if c in channels] or channels[:1]
+    a, b, c, d = st.columns([3, 1, 1, 1])
+    with a:
+        chosen = remembered(st.multiselect, "ts_channels", default, "Channels over the elevation profile",
+                            options=channels, max_selections=5)
+    with b:
+        smoothing = remembered(st.selectbox, "ts_smoothing", "5 s", "Smoothing", list(ts.SMOOTHING))
+    with c:
+        x_mode = remembered(st.radio, "ts_x", "Distance", "X axis", ts.X_AXES)
+    with d:
+        layout = remembered(st.radio, "ts_layout", "Overlay", "Layout", ts.LAYOUTS,
+                            help="Overlay: all channels on one chart, each with its own colour-matched axis. "
+                                 "Stacked: one row per channel, shared x axis.")
+    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels], x_mode, layout, smoothing),
+                    use_container_width=True, key="ts_chart")
 
 
 def _render_aero(df, settings, p_comps):
