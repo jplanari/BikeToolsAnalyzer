@@ -244,6 +244,13 @@ def test_wahoo_source_without_credentials_explains_the_setup(seeded_db):
     assert "Wahoo isn't set up yet" in _texts(at.sidebar.warning)
 
 
+def test_polar_source_without_credentials_explains_the_setup(seeded_db):
+    at = _app()
+    _widget(at.sidebar.radio, "Source").set_value("Polar").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Polar isn't set up yet" in _texts(at.sidebar.warning)
+
+
 def test_looks_can_be_changed_and_navigation_is_a_top_bar(seeded_db):
     at = _app()
     _no_errors(at)

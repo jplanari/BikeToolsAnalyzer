@@ -11,6 +11,8 @@ from src.data.db import (save_user,
                          get_wahoo_auth,
                          save_wahoo_auth,
                          delete_wahoo_auth,
+                         get_polar_auth,
+                         delete_polar_auth,
                          create_oauth_state,
                          consume_oauth_state,
                          data_stamp)
@@ -20,6 +22,8 @@ from src.data.cached import get_user_data
 from src.data import strava as sv
 from src.data import wahoo as wh
 from src.data import wahoo_import as wi
+from src.data import polar as pl
+from src.data import polar_import as pi
 from src.data.strava_import import (list_recent_rides,
                                     list_rides_between,
                                     fetch_ride_file,
@@ -110,7 +114,7 @@ def render_sidebar():
     # 1. Initialize current_file to None by default
     current_file = None
     
-    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava", "Wahoo"])
+    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava", "Wahoo", "Polar"])
 
     if import_method == "Upload Ride":
         uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
@@ -123,6 +127,9 @@ def render_sidebar():
 
     elif import_method == "Wahoo":
         current_file = _render_wahoo_sidebar(selected_user_name, user_ftp, user_lthr)
+
+    elif import_method == "Polar":
+        current_file = _render_polar_sidebar(selected_user_name, user_ftp, user_lthr)
 
     # Every section of the ride analysis is always shown; only the profile values are passed on
     settings = {
@@ -173,6 +180,8 @@ def handle_strava_callback():
 
     if state.startswith(WAHOO_STATE_PREFIX):
         return _finish_wahoo_callback(state[len(WAHOO_STATE_PREFIX):], code, error)
+    if state.startswith(POLAR_STATE_PREFIX):
+        return _finish_polar_callback(state[len(POLAR_STATE_PREFIX):], code, error)
 
     user_name = consume_oauth_state(state)
     if not user_name:
@@ -238,6 +247,116 @@ def _finish_wahoo_callback(state, code, error):
         return
     save_wahoo_auth(user_name, auth)
     st.toast(f"✅ Wahoo connected for {user_name}")
+
+
+POLAR_STATE_PREFIX = "polar."
+
+
+def _polar_config():
+    """App credentials from .streamlit/secrets.toml ([polar] section), or None."""
+    try:
+        sec = st.secrets["polar"]
+        return pl.PolarConfig(client_id=str(sec["client_id"]), client_secret=str(sec["client_secret"]),
+                              redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")))
+    except Exception:
+        return None
+
+
+def _finish_polar_callback(state, code, error):
+    user_name = consume_oauth_state(state)
+    if not user_name:
+        st.error("Polar connection failed: the request expired or did not come from this app. Please try again.")
+        return
+    st.session_state["current_user"] = user_name
+    if error or not code:
+        st.warning("Polar access was not granted.")
+        return
+    cfg = _polar_config()
+    if cfg is None:
+        st.error("Polar is not configured (see README).")
+        return
+    try:
+        pi.connect(cfg, user_name, code)
+    except pl.PolarError as e:
+        st.error(f"Polar connection failed: {e}")
+        return
+    st.toast(f"✅ Polar connected for {user_name}")
+
+
+def _polar_label(e):
+    when = (e.get("start_time") or "")[:10]
+    km = float(e.get("distance") or 0) / 1000
+    return f"{when} · {(e.get('detailed_sport_info') or e.get('sport') or 'Ride').replace('_', ' ').title()} · {km:.0f} km · {pl.duration_minutes(e)} min"
+
+
+def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
+    """Returns a file-like ride (the FIT file Polar Flow holds) to analyse, or None."""
+    cfg = _polar_config()
+    if cfg is None:
+        st.sidebar.warning("Polar isn't set up yet. Register a client at admin.polaraccesslink.com and add its "
+                           "`client_id` and `client_secret` to `.streamlit/secrets.toml` (see README).")
+        return None
+    if not user_name:
+        st.sidebar.info("Select or create a user profile first.")
+        return None
+
+    auth = get_polar_auth(user_name)
+    if not auth:
+        key = f"polar_oauth_state_{user_name}"
+        if key not in st.session_state:
+            st.session_state[key] = POLAR_STATE_PREFIX + create_oauth_state(user_name)
+        st.sidebar.link_button("🔗 Connect Polar", pl.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption("Polar opens in a new tab; you'll continue there after approving.")
+        return None
+
+    st.sidebar.caption("Connected to **Polar Flow**")
+    st.sidebar.caption(f"Polar only shares the last {pl.WINDOW_DAYS} days, and only rides recorded after you "
+                       "connected: sync at least once a month.")
+    try:
+        cache_key = f"polar_recent_{user_name}"
+        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list", key="polar_refresh"):
+            with st.spinner("Loading your Polar rides..."):
+                st.session_state[cache_key] = pi.list_recent_rides(user_name)
+        rides = st.session_state[cache_key]
+
+        if rides:
+            choice = st.sidebar.selectbox("Recent rides", rides, format_func=_polar_label)
+            if st.sidebar.button("Analyze ride", key="polar_analyze"):
+                with st.spinner("Downloading ride from Polar..."):
+                    name, payload = pi.fetch_ride_file(user_name, choice)
+                file_obj = io.BytesIO(payload)
+                file_obj.name = name
+                st.session_state[f'polar_file_{user_name}'] = file_obj
+        else:
+            st.sidebar.info("No cycling rides found on Polar in the last 30 days.")
+
+        if st.sidebar.button("⟳ Sync new rides", key="polar_sync",
+                             help="Imports the rides Polar lists that are not in your history yet."):
+            bar = st.sidebar.progress(0.0, text="Checking Polar...")
+
+            def _sync_progress(done, total, name):
+                bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
+
+            res = pi.sync_new_rides(user_name, user_ftp, progress=_sync_progress, lthr=user_lthr)
+            bar.empty()
+            if res.imported == 0 and not res.failed and not res.stopped_reason:
+                st.sidebar.success("Up to date.")
+            else:
+                _show_import_result(res)
+
+    except pl.PolarAuthError as e:
+        st.sidebar.error(f"{e}")
+    except pl.PolarError as e:
+        st.sidebar.error(f"Polar: {e}")
+
+    if st.sidebar.button("Disconnect Polar", key="polar_disconnect"):
+        pl.deregister_user(auth["access_token"], auth.get("polar_user_id"))
+        delete_polar_auth(user_name)
+        for k in [f"polar_recent_{user_name}", f"polar_file_{user_name}"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    return st.session_state.get(f'polar_file_{user_name}')
 
 
 def _wahoo_label(w):
