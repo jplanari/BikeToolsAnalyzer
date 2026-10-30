@@ -13,6 +13,7 @@ from src.data.db import (save_user,
                          delete_wahoo_auth,
                          create_oauth_state,
                          consume_oauth_state)
+from src.viz import theme
 from src.data.cached import get_user_data
 from src.data import strava as sv
 from src.data import wahoo as wh
@@ -32,9 +33,12 @@ def render_sidebar():
     user_lthr = 170
     user_height = 175
 
-    st.sidebar.header("Navigation")
-    
-    app_mode = st.sidebar.radio("Go to", ["Analyze Upload", "Training", "User Corner"])
+    pages = ["Analyze Upload", "Training", "User Corner"]
+    if theme.current_nav() == "Top bar":
+        app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
+    else:
+        st.sidebar.header("Navigation")
+        app_mode = st.sidebar.radio("Go to", pages)
 
     st.sidebar.markdown("---")
     st.sidebar.header("👤 User Profile")
@@ -57,9 +61,12 @@ def render_sidebar():
                     user_height = u_data['height']
 
 
-            if st.button("Delete User", type="primary"):
-                delete_user(selected_user_name)
-                st.rerun()
+            with st.popover("Delete user"):
+                st.warning(f"This removes **{selected_user_name}** with all their rides, records and plans. "
+                           "It cannot be undone.")
+                if st.button(f"Yes, delete {selected_user_name}", type="primary", key="confirm_delete_user"):
+                    delete_user(selected_user_name)
+                    st.rerun()
         else:
             st.info("No users found. Create one!")
 
@@ -106,6 +113,9 @@ def render_sidebar():
         'weight': user_weight,
         'height': user_height
     }
+
+    st.sidebar.markdown("---")
+    theme.appearance_controls()
 
     # RETURN 'current_file' (which works for both logic paths)
     return app_mode, selected_user_name, current_file, settings

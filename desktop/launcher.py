@@ -8,6 +8,7 @@ be updated or moved without touching the database, the ride files or the backups
 """
 import multiprocessing
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -67,6 +68,15 @@ def choose_port():
             return free_port()
 
 
+def install_theme(folder):
+    """Streamlit reads .streamlit/config.toml from the working directory, which is the data folder here: copy the
+    app's theme there on every start (secrets.toml next to it is not touched)."""
+    src = os.path.join(ROOT, ".streamlit", "config.toml")
+    if os.path.exists(src):
+        os.makedirs(os.path.join(folder, ".streamlit"), exist_ok=True)
+        shutil.copyfile(src, os.path.join(folder, ".streamlit", "config.toml"))
+
+
 def server_command(port):
     """Command that runs this launcher as the server process (same executable when frozen)."""
     base = [sys.executable] if FROZEN else [sys.executable, os.path.abspath(__file__)]
@@ -82,6 +92,7 @@ def run_server(port):
     os.chdir(folder)                       # backups/ and .streamlit/secrets.toml (Strava keys) live here
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
+    install_theme(folder)
     from streamlit import config
     from streamlit.web import bootstrap
     options = {

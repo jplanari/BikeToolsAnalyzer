@@ -205,3 +205,25 @@ def test_wahoo_source_without_credentials_explains_the_setup(seeded_db):
     _widget(at.sidebar.radio, "Source").set_value("Wahoo").run()
     assert not at.exception, [e.value for e in at.exception]
     assert "Wahoo isn't set up yet" in _texts(at.sidebar.warning)
+
+
+def test_looks_and_navigation_placement_can_be_changed(seeded_db):
+    at = _app()
+    _no_errors(at)
+    for look in ("Compact", "Classic", "Dashboard"):
+        _widget(at.sidebar.selectbox, "Look").set_value(look).run()
+        _no_errors(at)
+    _widget(at.sidebar.radio, "Navigation").set_value("Top bar").run()
+    _no_errors(at)
+    assert not [r for r in at.sidebar.radio if r.label == "Go to"]          # moved out of the sidebar
+    _widget(at.radio, "Go to").set_value("Training").run()
+    _no_errors(at)
+    assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= {m.label for m in at.metric}
+
+
+def test_deleting_a_user_needs_confirmation(seeded_db):
+    at = _app()
+    assert not [b for b in at.sidebar.button if b.label == "Delete User"]    # no one-click delete any more
+    assert db.get_user_data("Rider")
+    at.button(key="confirm_delete_user").click().run()
+    assert not db.get_user_data("Rider")

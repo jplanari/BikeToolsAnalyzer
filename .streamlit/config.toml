@@ -1,0 +1,21 @@
+# BikeTools Analyzer look: one accent colour, rounded corners, a colour-blind-safe chart palette.
+# Streamlit follows the system's light/dark setting (Settings menu → Theme to choose).
+[theme]
+primaryColor = "#FF5A1F"
+baseRadius = "0.75rem"
+font = "sans serif"
+showSidebarBorder = false
+chartCategoricalColors = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#56B4E9", "#CC79A7", "#F0E442", "#999999"]
+
+[theme.light]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F4F6"
+textColor = "#1B1F24"
+
+[theme.dark]
+backgroundColor = "#0F1419"
+secondaryBackgroundColor = "#1A2029"
+textColor = "#E8EAED"
+
+[browser]
+gatherUsageStats = false

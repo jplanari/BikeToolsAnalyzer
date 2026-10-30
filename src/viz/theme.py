@@ -1,0 +1,125 @@
+"""
+Looks for the app. A look is a small CSS pack layered on Streamlit's own theme (.streamlit/config.toml), written
+with colours derived from the text colour (currentColor) so it works in light and dark mode alike.
+
+  Classic    Streamlit's default widgets, untouched.
+  Dashboard  Metric cards with an accent edge, pill-style selectors, rounded panels, roomier spacing.
+  Compact    The same cards, tighter: more on a small laptop screen.
+
+Navigation can sit in the sidebar (default) or as a bar at the top of the page.
+"""
+import streamlit as st
+
+LOOKS = ["Dashboard", "Compact", "Classic"]
+NAV_PLACES = ["Sidebar", "Top bar"]
+DEFAULT_LOOK, DEFAULT_NAV = "Dashboard", "Sidebar"
+ACCENT = "#FF5A1F"                              # same as primaryColor in .streamlit/config.toml
+
+_EDGE = "color-mix(in srgb, currentColor 14%, transparent)"
+_FILL = "color-mix(in srgb, currentColor 5%, transparent)"
+
+_CARDS = f"""
+[data-testid="stMetric"] {{
+  background: {_FILL}; border: 1px solid {_EDGE}; border-left: 4px solid {ACCENT};
+  border-radius: 12px; padding: .65rem .9rem;
+}}
+[data-testid="stMetricLabel"] p {{ font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; opacity: .72; }}
+[data-testid="stMetricValue"] {{ font-weight: 650; }}
+[data-testid="stExpander"] {{ border: 1px solid {_EDGE}; border-radius: 12px; }}
+[data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: 12px; }}
+.stButton > button, .stDownloadButton > button, [data-testid="stLinkButton"] a {{ border-radius: 10px; }}
+[data-testid="stDataFrame"] {{ border-radius: 10px; overflow: hidden; }}
+[data-testid="stSidebar"] [data-testid="stMetric"] {{ border-left-width: 3px; }}
+/* selectors in the page body (sections, periods, navigation) look like pills */
+[data-testid="stMain"] [data-testid="stRadio"] [role="radiogroup"] {{ gap: .4rem; flex-wrap: wrap; }}
+[data-testid="stMain"] [data-testid="stRadio"] label {{
+  border: 1px solid {_EDGE}; border-radius: 999px; padding: .2rem .85rem; background: {_FILL}; cursor: pointer;
+}}
+[data-testid="stMain"] [data-testid="stRadio"] label > div:first-child {{ display: none; }}
+[data-testid="stMain"] [data-testid="stRadio"] label:has(input:checked) {{
+  background: {ACCENT}; border-color: {ACCENT}; color: #fff;
+}}
+[data-testid="stMain"] [data-testid="stRadio"] label:has(input:checked) p {{ color: #fff; font-weight: 600; }}
+.bt-header {{ display: flex; align-items: baseline; gap: .8rem; margin: 0 0 .6rem; }}
+.bt-header h1 {{ margin: 0; padding: 0; font-size: 1.9rem; letter-spacing: -.02em; }}
+.bt-header span {{ opacity: .6; font-size: .9rem; }}
+"""
+
+_DASHBOARD = _CARDS + """
+[data-testid="stMainBlockContainer"] { padding-top: 2.2rem; max-width: 1500px; }
+h2 { margin-top: 1.4rem; padding-bottom: .25rem; border-bottom: 2px solid """ + ACCENT + """; display: inline-block; }
+footer { visibility: hidden; }
+"""
+
+_COMPACT = _CARDS + """
+[data-testid="stMainBlockContainer"] { padding-top: 1rem; padding-bottom: 2rem; max-width: 1700px; }
+[data-testid="stMetric"] { padding: .4rem .65rem; }
+[data-testid="stMetricValue"] { font-size: 1.3rem; }
+[data-testid="stVerticalBlock"] { gap: .6rem; }
+h2 { font-size: 1.35rem; margin-top: .8rem; } h3 { font-size: 1.1rem; }
+.bt-header h1 { font-size: 1.4rem; }
+footer { visibility: hidden; }
+"""
+
+CSS = {"Dashboard": _DASHBOARD, "Compact": _COMPACT, "Classic": ""}
+
+
+def css_for(look):
+    return CSS.get(look, "")
+
+
+def _query_value(name, allowed, default):
+    try:
+        v = st.query_params.get(name)
+    except Exception:                       # query params are not available everywhere (older Streamlit, tests)
+        v = None
+    return v if v in allowed else default
+
+
+def current_look():
+    """The chosen look: this session's widget value, else the ?look= of the address (so a bookmark keeps it)."""
+    return st.session_state.get("look") or _query_value("look", LOOKS, DEFAULT_LOOK)
+
+
+def current_nav():
+    return st.session_state.get("nav_place") or _query_value("nav", NAV_PLACES, DEFAULT_NAV)
+
+
+def apply_look():
+    css = css_for(current_look())
+    if css:
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
+
+def appearance_controls():
+    """Sidebar box to switch look and navigation placement; the choice is also kept in the page address."""
+    with st.sidebar.expander("🎨 Appearance"):
+        look = st.selectbox("Look", LOOKS, index=LOOKS.index(current_look()), key="look",
+                            help="Dashboard: cards and pills. Compact: denser. Classic: Streamlit's default.")
+        nav = st.radio("Navigation", NAV_PLACES, index=NAV_PLACES.index(current_nav()), key="nav_place",
+                       horizontal=True)
+        st.caption("Light/dark follows your system; change it in ⋮ → Settings.")
+    try:
+        st.query_params["look"], st.query_params["nav"] = look, nav
+    except Exception:
+        pass
+
+
+def page_header(subtitle=""):
+    st.markdown(f'<div class="bt-header"><h1>🚴 BikeTools Analyzer</h1><span>{subtitle}</span></div>',
+                unsafe_allow_html=True)
+
+
+def welcome():
+    """What to do first, when no ride is open."""
+    st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
+    steps = [("1 · Profile", "Create your profile in the sidebar (FTP, LTHR, weight, height). Zones, TSS and "
+                             "W/kg use it."),
+             ("2 · Choose a ride", "Upload a GPX/FIT file, or connect Strava or Wahoo and pick any ride, "
+                                   "also by date."),
+             ("3 · Explore", "Summary, power curve, CdA, thermal model, and the segment analysis for any stretch, "
+                             "lap or climb. Then export the ride as a PDF.")]
+    for col, (title, text) in zip(st.columns(3), steps):
+        with col.container(border=True):
+            st.markdown(f"**{title}**")
+            st.caption(text)

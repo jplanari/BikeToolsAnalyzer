@@ -3,13 +3,15 @@ from src.data.db import init_db
 from src.viz.dashboard import (render_sidebar, process_and_display_analysis, render_history,
                                render_user_corner, handle_strava_callback)
 from src.viz.training_page import render_training_page
+from src.viz import theme
 
 # Initialize Database
 init_db()
 
 # Page Config
-st.set_page_config(page_title="BikeTools Analyzer", layout="wide")
-st.title("🚴 BikeTools Analysis v1.4")
+st.set_page_config(page_title="BikeTools Analyzer", page_icon="🚴", layout="wide")
+theme.apply_look()
+theme.page_header("v1.4")
 
 # Initialize Session State
 if 'history_file' not in st.session_state:
@@ -27,7 +29,7 @@ if app_mode == "Analyze Upload":
     if current_file is not None:
         process_and_display_analysis(current_file, selected_user, settings)
     else:
-        st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
+        theme.welcome()
 
 elif app_mode == "Training":
     render_training_page(selected_user)

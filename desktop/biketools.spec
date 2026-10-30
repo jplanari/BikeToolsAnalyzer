@@ -5,7 +5,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 # PyInstaller resolves relative paths against the spec's folder (SPECPATH), so anchor everything to the repo root
 ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
-datas, binaries, hiddenimports = [(os.path.join(ROOT, 'app.py'), '.'), (os.path.join(ROOT, 'src'), 'src')], [], []
+datas, binaries, hiddenimports = [(os.path.join(ROOT, 'app.py'), '.'), (os.path.join(ROOT, 'src'), 'src'),
+                                    (os.path.join(ROOT, '.streamlit', 'config.toml'), '.streamlit')], [], []
 for pkg in ('streamlit', 'streamlit_folium', 'folium', 'plotly', 'fitparse', 'gpxpy', 'geographiclib',
             'matplotlib', 'altair'):
     d, b, h = collect_all(pkg)
