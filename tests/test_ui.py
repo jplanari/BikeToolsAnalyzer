@@ -69,7 +69,7 @@ def _widget(elements, label):
 
 
 def _go(at, page):
-    _widget(at.sidebar.radio, "Go to").set_value(page).run()
+    _widget(at.radio, "Go to").set_value(page).run()
     return at
 
 
@@ -207,15 +207,14 @@ def test_wahoo_source_without_credentials_explains_the_setup(seeded_db):
     assert "Wahoo isn't set up yet" in _texts(at.sidebar.warning)
 
 
-def test_looks_and_navigation_placement_can_be_changed(seeded_db):
+def test_looks_can_be_changed_and_navigation_is_a_top_bar(seeded_db):
     at = _app()
     _no_errors(at)
-    for look in ("Compact", "Classic", "Dashboard"):
+    assert not [r for r in at.sidebar.radio if r.label == "Go to"]          # navigation is not in the sidebar
+    for look in ("Dashboard", "Classic", "Compact"):
         _widget(at.sidebar.selectbox, "Look").set_value(look).run()
         _no_errors(at)
-    _widget(at.sidebar.radio, "Navigation").set_value("Top bar").run()
-    _no_errors(at)
-    assert not [r for r in at.sidebar.radio if r.label == "Go to"]          # moved out of the sidebar
+    assert not [r for r in at.sidebar.radio if r.label == "Navigation"]      # no placement choice any more
     _widget(at.radio, "Go to").set_value("Training").run()
     _no_errors(at)
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= {m.label for m in at.metric}
@@ -227,3 +226,28 @@ def test_deleting_a_user_needs_confirmation(seeded_db):
     assert db.get_user_data("Rider")
     at.button(key="confirm_delete_user").click().run()
     assert not db.get_user_data("Rider")
+
+
+def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db, monkeypatch):
+    import src.viz.ride_analysis as ra
+    monkeypatch.setattr(ra, "fetch_ride_weather", lambda df: df)          # no network in tests
+    at = _app()
+    _no_errors(at)
+    assert "Last 7 days" in {m.label for m in at.metric}
+    next(b for b in at.button if b.label == "Open ride").click().run()
+    _no_errors(at)
+    section = next(r for r in at.radio if r.label == "Section")
+    assert section.options[0] == "📊 Summary" and "📐 Segments" in section.options
+    assert "🗺️ Route" not in section.options                              # the route lives in the Summary
+    assert {"Performance Metrics", "Route"} <= {s.value for s in at.subheader}
+    assert "Power Curve" not in _texts(at.subheader)                       # other sections' charts are not built
+    section.set_value("⚡ Power").run()
+    _no_errors(at)
+    assert "Power Curve" in _texts(at.subheader) and at.get("plotly_chart")
+    section.set_value("📈 Time series").run()
+    _no_errors(at)
+    assert at.get("plotly_chart") and "Channels under the elevation profile" in [m.label for m in at.multiselect]
+    assert not [s for s in at.selectbox if s.label == "Smoothing"]            # always 5 s
+    assert not [r for r in at.radio if r.label in ("Layout", "X axis")]
+    next(b for b in at.button if b.key == "back_to_gallery").click().run()
+    assert "Last 7 days" in {m.label for m in at.metric}

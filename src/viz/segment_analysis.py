@@ -11,6 +11,7 @@ from src.viz.climb_estimator import render_climb_estimator
 from src.viz.formatting import format_duration
 from src.viz.maps import create_segment_map
 from src.viz.plots import plot_detailed_climb
+from src.viz.sections import remembered
 
 MIN_ESTIMATOR_LENGTH_M = 300
 MIN_ESTIMATOR_GRADE_PCT = 1.0
@@ -89,11 +90,6 @@ def _lap_table(df, spans, ftp, weight):
                            'Cadence': "{:.0f}"}, na_rep="–")
 
 
-# A fragment reruns on its own when a slider moves, instead of the whole ride page (older Streamlit: plain function)
-_fragment = getattr(st, "fragment", lambda func: func)
-
-
-@_fragment
 def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride_id="0"):
     """
     lap_time_spans: DataFrame(start, elapsed_s) from the FIT file, or None (not a FIT file).
@@ -110,7 +106,7 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         st.caption("No laps could be matched to this ride" + (f" ({n} lap record(s) in the file)." if n else
                    ": the file has no laps (the whole ride is one)."))
     modes = ["Custom selection"] + (["Lap"] if laps else []) + (["Climb"] if climb_spans else [])
-    mode = st.radio("Analyse", modes, horizontal=True, key=f"seg_mode_{ride_id}")
+    mode = remembered(st.radio, f"seg_mode_{ride_id}", modes[0], "Analyse", modes, horizontal=True)
 
     chosen = None                                   # the detected climb when one is picked
     if mode == "Lap":
@@ -118,24 +114,26 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         for label, i0, i1 in laps:
             s = sg.segment_stats(df, i0, i1)
             label_of[label] = f"{label} · {_fmt(s.get('dist_km'), '.1f', ' km')} · {_time(s.get('elapsed_s'))}"
-        pick = st.selectbox("Lap", [l for l, *_ in laps], format_func=label_of.get, key=f"seg_lap_{ride_id}")
+        pick = remembered(st.selectbox, f"seg_lap_{ride_id}", laps[0][0], "Lap", [l for l, *_ in laps],
+                          format_func=label_of.get)
         _, i0, i1 = next(x for x in laps if x[0] == pick)
     elif mode == "Climb":
         label_of = {}
         for label, i0, i1, c in climb_spans:
             label_of[label] = (f"{label} · {c['type']} · {c['length_m'] / 1000:.1f} km · "
                                f"{c['avg_gradient_pct']:.1f} %")
-        pick = st.selectbox("Climb", [x[0] for x in climb_spans], format_func=label_of.get, key=f"seg_climb_{ride_id}")
+        pick = remembered(st.selectbox, f"seg_climb_{ride_id}", climb_spans[0][0], "Climb",
+                          [x[0] for x in climb_spans], format_func=label_of.get)
         _, i0, i1, chosen = next(x for x in climb_spans if x[0] == pick)
     elif 'dist_m' in df.columns and df['dist_m'].notna().any():
         total_km = float(df['dist_m'].max()) / 1000.0
-        a, b = st.slider("Distance range (km)", 0.0, round(total_km, 1), (0.0, round(min(total_km, 5.0), 1)),
-                         step=0.1, key=f"seg_range_{ride_id}")
+        a, b = remembered(st.slider, f"seg_range_{ride_id}", (0.0, round(min(total_km, 5.0), 1)),
+                          "Distance range (km)", 0.0, round(total_km, 1), step=0.1)
         i0, i1 = sg.span_by_distance(df, a * 1000.0, b * 1000.0)
     else:
         minutes = len(df) / 60.0
-        a, b = st.slider("Time range (min)", 0.0, round(minutes, 1), (0.0, round(min(minutes, 10.0), 1)),
-                         step=0.5, key=f"seg_range_{ride_id}")
+        a, b = remembered(st.slider, f"seg_range_{ride_id}", (0.0, round(min(minutes, 10.0), 1)),
+                          "Time range (min)", 0.0, round(minutes, 1), step=0.5)
         i0, i1 = sg._clip(df, int(a * 60), int(b * 60))
 
     if i1 - i0 < 5:

@@ -34,11 +34,7 @@ def render_sidebar():
     user_height = 175
 
     pages = ["Analyze Upload", "Training", "User Corner"]
-    if theme.current_nav() == "Top bar":
-        app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
-    else:
-        st.sidebar.header("Navigation")
-        app_mode = st.sidebar.radio("Go to", pages)
+    app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
 
     st.sidebar.markdown("---")
     st.sidebar.header("👤 User Profile")

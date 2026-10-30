@@ -4,6 +4,7 @@ from src.viz.dashboard import (render_sidebar, process_and_display_analysis, ren
                                render_user_corner, handle_strava_callback)
 from src.viz.training_page import render_training_page
 from src.viz import theme
+from src.viz.gallery import render_gallery
 
 # Initialize Database
 init_db()
@@ -26,10 +27,16 @@ app_mode, selected_user, current_file, settings = render_sidebar()
 
 # --- 2. MAIN PAGE LOGIC ---
 if app_mode == "Analyze Upload":
-    if current_file is not None:
-        process_and_display_analysis(current_file, selected_user, settings)
+    opened = current_file if current_file is not None else st.session_state.get("gallery_file")
+    if opened is not None:
+        if current_file is None and st.button("← All rides", key="back_to_gallery"):
+            st.session_state["gallery_file"] = None
+            st.rerun()
+        else:
+            process_and_display_analysis(opened, selected_user, settings)
     else:
-        theme.welcome()
+        theme.welcome(compact=bool(selected_user))
+        render_gallery(selected_user)
 
 elif app_mode == "Training":
     render_training_page(selected_user)

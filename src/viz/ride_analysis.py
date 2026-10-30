@@ -17,7 +17,8 @@ from src.viz.plots import (plot_elevation,
 from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
-from src.data.db import save_ride, build_ride_metadata
+from src.data.db import save_ride, build_ride_metadata, get_ride_start_times
+from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
@@ -26,6 +27,8 @@ from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.segment_analysis import render_segment_analysis
+from src.viz.sections import section_picker, remembered
+from src.viz import timeseries as ts
 
 
 @st.cache_data(show_spinner=False)
@@ -117,7 +120,53 @@ def process_and_display_analysis(file_obj, user_name, settings):
     # Detect Climbs
     detected_climbs = climbs
 
-    # Dashboard
+    _render_sections(df, summary, settings, file_obj.name, total_dist, total_ascent, detected_climbs, laps_df,
+                     lap_spans, p_comps, user_name)
+
+
+# Only the chosen section is drawn (and its charts built); a fragment, so switching section does not re-run the
+# analysis above. Older Streamlit: a plain function.
+_fragment = getattr(st, "fragment", lambda func: func)
+
+
+@_fragment
+def _render_sections(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, lap_spans, p_comps,
+                     user_name):
+    ride_id = _thermal_ride_id(df)
+    has_power = 'power' in df.columns and df['power'].notna().any()
+    sections = ["📊 Summary", "📈 Time series", "⚡ Power"]
+    if has_power and 'speed' in df.columns:
+        sections.append("💨 Aero")
+    if has_power:
+        sections.append("🔥 Thermal")
+    sections.append("📐 Segments")
+    section = section_picker(sections, key=f"ride_section_{ride_id}")
+
+    if section == "📊 Summary":
+        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs)
+        _render_report_expander(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, user_name)
+    elif section == "📈 Time series":
+        _render_time_series(df)
+    elif section == "⚡ Power":
+        _render_power(df, settings, summary['power_curve'], user_name)
+    elif section == "💨 Aero":
+        _render_aero(df, settings, p_comps)
+    elif section == "🔥 Thermal":
+        _render_thermal_analysis(df, settings['weight'], settings['height'], settings.get('ftp'))
+    else:
+        _ensure_cda(df, settings)                       # the climb estimator starts from the ride's CdA
+        render_segment_analysis(df, settings, lap_spans, climbs, ride_id=ride_id)
+
+
+def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs):
+    duration_s = summary['duration_s']
+    avg_speed = summary['avg_speed_kph']
+    avg_power = summary['avg_power']
+    norm_power = summary['norm_power']
+    ride_if = summary['if']
+    ride_tss = summary['tss']
+    ride_kj = summary['kj']
+
     st.subheader("Ride Summary")
     
     # Display Weather Badge if data exists
@@ -164,6 +213,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
         st.caption("🧹 Removed impossible sensor readings before scoring: " + ", ".join(parts) + " samples.")
 
     st.markdown("---")
+    _render_route(df, climbs)
 
     if laps_df is not None:
         # Extract laps and show summary
@@ -171,18 +221,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
         if not laps_df.empty:
             with st.expander("⏱️ Laps / Intervals"):
                 st.dataframe(laps_df)
-    
-    # --- NEW: THERMAL SECTION ---
-    # Only show if we have power data, as the model depends on it
-    if 'power' in df.columns:
-        _render_thermal_analysis(df, settings['weight'], settings['height'], settings.get('ftp'))    
-
-    _render_report_expander(df, summary, settings, file_obj.name, total_dist, total_ascent, detected_climbs,
-                            laps_df, user_name)
-
-    # Visualizations
-    _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
-    render_segment_analysis(df, settings, lap_spans, detected_climbs, ride_id=_thermal_ride_id(df))
 
 
 def _thermal_ride_id(df):
@@ -219,6 +257,15 @@ def _render_report_expander(df, summary, settings, filename, total_dist, total_a
                 st.caption("The thermal chart is left out: run the thermal simulation above first, then create the report again.")
 
 
+def _already_in_history(user_name, stats):
+    """True when a saved ride starts within a couple of minutes of this one: the same ride from another source
+    (Strava vs Wahoo vs an upload) must not be counted twice in the training load."""
+    start = pd.to_datetime(stats.get('date'), errors='coerce', utc=True)
+    if pd.isna(start):
+        return False
+    return _is_near(start.tz_convert(None), get_ride_start_times(user_name), DUPLICATE_START_TOLERANCE_S)
+
+
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
     """Helper to handle database saving logic."""
     stats = build_ride_metadata(df, dist, ele, summary['avg_speed_kph'], summary['norm_power'],
@@ -231,7 +278,10 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
         
     file_hash = hashlib.md5(file_bytes).hexdigest()
     
-    if file_hash not in st.session_state['saved_hashes']:
+    if file_hash not in st.session_state['saved_hashes'] and _already_in_history(user_name, stats):
+        st.session_state['saved_hashes'].add(file_hash)
+        st.toast("Already in your history (same start time): not saved twice.")
+    elif file_hash not in st.session_state['saved_hashes']:
         success, msg = save_ride(user_name, filename, file_bytes, stats, power_curve_dict)
         if success:
             st.toast(f"✅ Saved to History: {filename}")
@@ -242,61 +292,66 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
             st.error(f"Save Error: {msg}")
 
 
-def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name):
+def _ensure_cda(df, settings):
+    """CdA per sample, its aerodynamic power and the ride's overall CdA fit, attached to df (used by the Aero
+    section and as the starting point of the climb estimator). Returns the fit or None."""
+    if 'power' not in df.columns or 'speed' not in df.columns:
+        return None
+    df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
+    fit = estimate_cda(df, rider_mass=settings.get('weight', 70))
+    df.attrs['cda_est'] = fit['cda'] if fit else None
+    return fit
 
-    st.subheader("Route Map")
+
+def _render_route(df, detected_climbs):
+    st.subheader("Route")
     map_obj = create_route_map(df, detected_climbs)
-    if map_obj: st_folium(map_obj, width=1000, height=500)
-    else: st.warning("No GPS coordinates found.")
+    if map_obj is None:
+        st.warning("No GPS coordinates found.")
+        show_centered(plot_elevation(df))
+        return
+    left, right = st.columns([3, 2])
+    with left:
+        try:
+            st_folium(map_obj, height=420, use_container_width=True, returned_objects=[], key="route_map")
+        except TypeError:                                    # older streamlit-folium
+            st_folium(map_obj, width=700, height=420, returned_objects=[], key="route_map")
+    right.plotly_chart(plot_elevation(df), use_container_width=True)
 
-    st.subheader("Elevation Profile")
-    show_centered(plot_elevation(df))
 
-    # --- CdA SECTION ---
-    if 'power' in df.columns and 'speed' in df.columns:
-        st.subheader("💨 Aerodynamic Analysis & Power Budget")
-        
-        # Calculation happens automatically here using available columns
-        df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
-        fit = estimate_cda(df, rider_mass=settings.get('weight', 70))
-        avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
-        df.attrs['cda_est'] = fit['cda'] if fit else None          # used by the climb estimator
-        if fit:
-            c1, c2 = st.columns(2)
-            c1.metric("Est. CdA", f"{fit['cda']:.3f} m²",
-                      help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. Treat it as "
-                           "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient.")
-            c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
-        else:
-            st.warning("Not enough stable data points (Speed > 18km/h required).")
+def _render_time_series(df):
+    st.subheader("Time series")
+    channels = ts.available(df)
+    if not channels:
+        st.info("This ride has no power, heart rate, speed or cadence data.")
+        return
+    default = [c for c in ("Power",) if c in channels] or channels[:1]
+    chosen = remembered(st.multiselect, "ts_channels", default, "Channels under the elevation profile",
+                        options=channels, max_selections=6)
+    st.caption(f"Smoothed with a {ts.SMOOTHING_S} s moving average. Drag or scroll to zoom along the route "
+               "(the vertical scales stay whole), double-click to reset.")
+    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels]),
+                    use_container_width=True, key="ts_chart", config=ts.PLOT_CONFIG)
 
-        st.markdown("**Power Budget: Where did your watts go?**")
-        with st.spinner("Calculating power components..."):
-            df['p_grav'], df['p_roll'], df['p_accel']  = p_comps
-            if not df.empty:
-                fig_budget = plot_power_budget(df)
-                show_centered(fig_budget)
-                
-    st.subheader("Speed")
-    show_centered(plot_x_time(df, 'speed_kmh', 'Speed (km/h)'))
 
-    st.subheader("Power")
-    if 'power' not in df.columns:
-        st.info("No power data available.")
+def _render_aero(df, settings, p_comps):
+    st.subheader("💨 Aerodynamic Analysis & Power Budget")
+    fit = _ensure_cda(df, settings)
+    avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
+    if fit:
+        c1, c2 = st.columns(2)
+        c1.metric("Est. CdA", f"{fit['cda']:.3f} m²",
+                  help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. Treat it as "
+                       "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient.")
+        c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
     else:
-        show_centered(plot_x_time(df, 'power', 'Power (W)'))
+        st.warning("Not enough stable data points (Speed > 18km/h required).")
 
-    st.subheader("Cadence")
-    if 'cadence' in df.columns:
-        show_centered(plot_x_time(df, 'cadence', 'Cadence (rpm)'))
-    else:
-        st.info("No cadence data available.")
-
-    st.subheader("Heart Rate")
-    if 'hr' in df.columns:
-        show_centered(plot_x_time(df, 'hr', 'Heart Rate (bpm)'))
-    else:
-        st.info("No heart rate data available.")
+    st.markdown("**Power Budget: Where did your watts go?**")
+    with st.spinner("Calculating power components..."):
+        df['p_grav'], df['p_roll'], df['p_accel'] = p_comps
+        if not df.empty:
+            show_centered(plot_power_budget(df))
 
     st.subheader("CdA")
     if 'cda' in df.columns:
@@ -304,9 +359,11 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
     else:
         st.info("No CdA data available.")
 
+
+def _render_power(df, settings, current_curve, user_name):
     st.subheader("W' Balance")
     if 'w_prime_balance' in df.columns:
-        show_centered(plot_w_prime_balance(df,settings['w_prime_cap']))
+        show_centered(plot_w_prime_balance(df, settings['w_prime_cap']))
     else:
         st.info("No W' Balance data available.")
 
@@ -328,17 +385,16 @@ def _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_na
         times = time_in_zones(df['power'], zones)
         fig = plot_zone_distribution(times, "Power Zones")
         if fig: c1.plotly_chart(fig, use_container_width=True)
-        
+
     active_lthr = settings['lthr']
     if not active_lthr and 'hr' in df.columns:
-         est, _ = estimate_hr_threshold(df['hr'])
-         active_lthr = est
-        
+        est, _ = estimate_hr_threshold(df['hr'])
+        active_lthr = est
+
     if 'hr' in df.columns and active_lthr:
         times = time_in_hr_zones(df['hr'], active_lthr)
         fig = plot_zone_distribution(times, "Heart Rate Zones")
         if fig: c2.plotly_chart(fig, use_container_width=True)
-
 
 
 def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
@@ -353,12 +409,9 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
     with st.expander("⚙️ Configure Thermal Model", expanded=False):
         # Clothing Selector
         default_kit = ["Summer Jersey", "None (Shorts only)"]
-        selected_clothing = st.multiselect(
-            "Select Clothing Layers Worn:",
-            options=list(CLOTHING_CATALOG.keys()),
-            default=[k for k in default_kit if k in CLOTHING_CATALOG],
-            key="thermal_clothing_multiselect"
-        )
+        selected_clothing = remembered(
+            st.multiselect, "thermal_clothing_multiselect", [k for k in default_kit if k in CLOTHING_CATALOG],
+            "Select Clothing Layers Worn:", options=list(CLOTHING_CATALOG.keys()))
         
         total_clo = sum([CLOTHING_CATALOG[item] for item in selected_clothing])
         st.caption(f"Total Insulation: **{total_clo:.2f} Clo**")
