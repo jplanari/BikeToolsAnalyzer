@@ -15,6 +15,8 @@ from src.data.db import (save_user,
                          consume_oauth_state,
                          data_stamp)
 from src.viz import theme
+from src.data.upload import expand_upload, UPLOAD_TYPES
+from src.data.upload_import import import_activities
 from src.data.thresholds import backfill_hr20, refresh_auto_thresholds
 from src.data.cached import get_user_data
 from src.data import strava as sv
@@ -113,10 +115,11 @@ def render_sidebar():
     import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava", "Wahoo"])
 
     if import_method == "Upload Ride":
-        uploaded_file = st.sidebar.file_uploader("Upload file ride", type=["gpx", "fit"])
-        # If user uploaded a file, assign it to current_file
-        if uploaded_file is not None:
-            current_file = uploaded_file
+        uploaded = st.sidebar.file_uploader(
+            "Upload rides", type=UPLOAD_TYPES, accept_multiple_files=True,
+            help="FIT, GPX or TCX files from Garmin, Hammerhead, Magene, Wahoo, Zwift and others, or a zip / gz of "
+                 "them (Garmin's bulk export works). One file opens for analysis; several are imported to your history.")
+        current_file = _render_upload(uploaded, selected_user_name, user_ftp, user_lthr)
 
     elif import_method == "Strava":
         current_file = _render_strava_sidebar(selected_user_name, user_ftp, user_lthr)
@@ -279,13 +282,51 @@ def _search_by_date(provider, user_name, search):
     return found["rides"]
 
 
+def _render_upload(uploaded, user_name, ftp, lthr):
+    """One ride: returned for analysis. Several (or a zip of them): an import button that saves them all."""
+    if not uploaded:
+        return None
+    activities, notes = [], []
+    for f in uploaded:
+        found, n = expand_upload(f.name, f.getvalue())
+        activities.extend(found)
+        notes.extend(n)
+    for n in notes[:5]:
+        st.sidebar.warning(n)
+    if len(notes) > 5:
+        st.sidebar.caption(f"…and {len(notes) - 5} more files skipped.")
+    if not activities:
+        return None
+    if len(activities) == 1:
+        file_obj = io.BytesIO(activities[0].data)
+        file_obj.name = activities[0].name
+        return file_obj
+
+    if not user_name:
+        st.sidebar.info("Select or create a user profile first.")
+        return None
+    signature = tuple((f.name, f.size) for f in uploaded)
+    st.sidebar.info(f"{len(activities)} rides found.")
+    if st.sidebar.button(f"Import {len(activities)} rides to history", key="bulk_import", type="primary"):
+        bar = st.sidebar.progress(0.0, text="Importing…")
+        res = import_activities(user_name, activities, ftp, lthr,
+                                progress=lambda done, total, name: bar.progress(done / total if total else 1.0,
+                                                                                text=f"{done}/{total} {name}"))
+        bar.empty()
+        st.session_state["upload_import_result"] = (signature, res)
+    done = st.session_state.get("upload_import_result")
+    if done and done[0] == signature:
+        _show_import_result(done[1])
+    return None
+
+
 def _show_import_result(res):
     """Summary of an ImportResult in the sidebar."""
     st.sidebar.success(f"Imported {res.imported} of {res.found} rides.")
     skipped = []
     if res.already_imported: skipped.append(f"{res.already_imported} already imported")
     if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
-    if res.no_data: skipped.append(f"{res.no_data} without recorded data")
+    if res.no_data: skipped.append(f"{res.no_data} without recorded data or not cycling")
     if res.not_completed: skipped.append(f"{res.not_completed} planned but not ridden")
     if skipped:
         st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")

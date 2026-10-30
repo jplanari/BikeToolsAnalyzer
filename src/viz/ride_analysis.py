@@ -80,8 +80,8 @@ def process_and_display_analysis(file_obj, user_name, settings):
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
-            laps_df = get_fit_laps(file_bytes) if ride_kind(filename) == "fit" else None
-            lap_spans = get_fit_lap_spans(file_bytes) if ride_kind(filename) == "fit" else None
+            laps_df = get_fit_laps(file_bytes) if ride_kind(filename, file_bytes) == "fit" else None
+            lap_spans = get_fit_lap_spans(file_bytes) if ride_kind(filename, file_bytes) == "fit" else None
 
             # Physics prep + automatic weather fetch (df unchanged if it fails)
             df['bearing'] = calculate_bearing(df)
