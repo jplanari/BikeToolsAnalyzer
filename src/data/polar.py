@@ -49,7 +49,9 @@ class PolarConfig:
 # --- OAuth -----------------------------------------------------------------
 
 def authorize_url(cfg, state):
-    params = {"response_type": "code", "client_id": cfg.client_id, "redirect_uri": cfg.redirect_uri, "state": state}
+    params = {"response_type": "code", "client_id": cfg.client_id, "state": state}
+    if cfg.redirect_uri:                       # empty: Polar uses the client's default redirect URL
+        params["redirect_uri"] = cfg.redirect_uri
     return f"{AUTHORIZE_URL}?{urlencode(params)}"
 
 
@@ -57,7 +59,8 @@ def exchange_code(cfg, code):
     """Swap the one-time code for a token. Returns {'access_token', 'polar_user_id'}; the rider still has to be registered."""
     try:
         r = requests.post(TOKEN_URL, auth=(cfg.client_id, cfg.client_secret),
-                          data={"grant_type": "authorization_code", "code": code, "redirect_uri": cfg.redirect_uri},
+                          data={"grant_type": "authorization_code", "code": code,
+                                **({"redirect_uri": cfg.redirect_uri} if cfg.redirect_uri else {})},
                           headers={"Accept": "application/json"}, timeout=TIMEOUT_S)
     except requests.RequestException as e:
         raise PolarError(f"Could not reach Polar: {e}") from e

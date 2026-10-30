@@ -61,6 +61,16 @@ def test_authorize_url():
     assert "response_type=code" in url and "client_id=cid" in url and "state=polar.xyz" in url
 
 
+def test_empty_redirect_uri_is_left_out_so_polar_uses_the_registered_default(monkeypatch):
+    cfg = pl.PolarConfig("cid", "secret", "")
+    assert "redirect_uri" not in pl.authorize_url(cfg, "polar.x")
+    seen = {}
+    monkeypatch.setattr(pl.requests, "post", lambda url, auth=None, data=None, **k: seen.update(data) or
+                        FakeResponse(payload={"access_token": "A", "x_user_id": 1}))
+    pl.exchange_code(cfg, "c")
+    assert "redirect_uri" not in seen
+
+
 def test_exchange_code_uses_basic_auth_and_returns_the_user_id(monkeypatch):
     seen = {}
 
