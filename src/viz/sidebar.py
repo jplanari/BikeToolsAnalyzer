@@ -18,6 +18,7 @@ from src.data import strava as sv
 from src.data import wahoo as wh
 from src.data import wahoo_import as wi
 from src.data.strava_import import (list_recent_rides,
+                                    list_rides_between,
                                     fetch_ride_file,
                                     import_history,
                                     sync_new_rides)
@@ -222,6 +223,34 @@ def _activity_label(a):
     return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
 
 
+def _search_by_date(provider, user_name, search):
+    """
+    'Find a ride by date' box under the recent-rides list: any ride in a date range, not only the latest ones.
+    search(start_date, end_date) -> rides, newest first. Returns the found rides (possibly empty) while a search is
+    active, None otherwise; the result is kept in the session so the list survives reruns.
+    """
+    key = f"{provider}_search_{user_name}"
+    with st.sidebar.expander("🔎 Find a ride by date"):
+        today = pd.Timestamp.today().date()
+        start = st.date_input("From", today - pd.Timedelta(days=90), max_value=today, key=f"{key}_from")
+        end = st.date_input("To", today, max_value=today, key=f"{key}_to")
+        c1, c2 = st.columns(2)
+        if c1.button("Search", key=f"{key}_go"):
+            if start > end:
+                st.warning("'From' is after 'To'.")
+            else:
+                with st.spinner("Searching..."):
+                    st.session_state[key] = {"rides": search(start, end), "range": (start, end)}
+        if c2.button("Clear", key=f"{key}_clear"):
+            st.session_state.pop(key, None)
+    found = st.session_state.get(key)
+    if found is None:
+        return None
+    a, b = found["range"]
+    st.sidebar.caption(f"Showing {len(found['rides'])} ride(s) from {a:%d %b %Y} to {b:%d %b %Y}.")
+    return found["rides"]
+
+
 def _show_import_result(res):
     """Summary of an ImportResult in the sidebar."""
     st.sidebar.success(f"Imported {res.imported} of {res.found} rides.")
@@ -270,9 +299,13 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
             with st.spinner("Loading your Strava rides..."):
                 st.session_state[cache_key] = list_recent_rides(cfg, user_name, usage=usage)
         recent = st.session_state[cache_key]
+        found = _search_by_date("strava", user_name,
+                                lambda a, b: list_rides_between(cfg, user_name, a, b, usage=usage))
+        rides = recent if found is None else found
 
-        if recent:
-            choice = st.sidebar.selectbox("Recent rides", recent, format_func=_activity_label)
+        if rides:
+            choice = st.sidebar.selectbox("Recent rides" if found is None else "Rides found", rides,
+                                          format_func=_activity_label)
             if st.sidebar.button("Analyze ride"):
                 with st.spinner("Downloading ride from Strava..."):
                     name, payload = fetch_ride_file(cfg, user_name, choice, usage=usage)
@@ -280,7 +313,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
                 file_obj.name = name
                 st.session_state[f'strava_file_{user_name}'] = file_obj
         else:
-            st.sidebar.info("No recent rides found on Strava.")
+            st.sidebar.info("No recent rides found on Strava." if found is None else "No rides in that period.")
 
         if st.sidebar.button("⟳ Sync new rides", help="Imports rides added to Strava since the last one "
                              "you imported (a few days of overlap catch late uploads)."):
@@ -359,9 +392,13 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
             with st.spinner("Loading your Wahoo rides..."):
                 st.session_state[cache_key] = wi.list_recent_rides(cfg, user_name, usage=usage)
         recent = st.session_state[cache_key]
+        found = _search_by_date("wahoo", user_name,
+                                lambda a, b: wi.list_rides_between(cfg, user_name, a, b, usage=usage))
+        rides = recent if found is None else found
 
-        if recent:
-            choice = st.sidebar.selectbox("Recent rides", recent, format_func=_wahoo_label)
+        if rides:
+            choice = st.sidebar.selectbox("Recent rides" if found is None else "Rides found", rides,
+                                          format_func=_wahoo_label)
             if st.sidebar.button("Analyze ride", key="wahoo_analyze"):
                 with st.spinner("Downloading ride from Wahoo..."):
                     name, payload = wi.fetch_ride_file(cfg, user_name, choice, usage=usage)
@@ -369,7 +406,8 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
                 file_obj.name = name
                 st.session_state[f'wahoo_file_{user_name}'] = file_obj
         else:
-            st.sidebar.info("No recent cycling workouts found on Wahoo.")
+            st.sidebar.info("No recent cycling workouts found on Wahoo." if found is None
+                            else "No rides in that period.")
 
         if st.sidebar.button("⟳ Sync new rides", key="wahoo_sync",
                              help="Imports workouts added to Wahoo since the last one you imported."):

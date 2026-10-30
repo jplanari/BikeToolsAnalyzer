@@ -219,3 +219,12 @@ def test_recent_list_hides_planned_workouts_that_were_never_ridden(connected, mo
     got = wi.list_recent_rides(CFG, "Rider")
     assert [w["id"] for w in got] == [32, 33]
     assert asked == [31, 32]                      # only plan-linked entries cost a request
+
+
+def test_rides_between_keeps_only_the_range_newest_first(connected, monkeypatch):
+    ws = [workout(1, "2026-10-30T07:00:00Z"), workout(2, "2026-09-10T18:00:00Z"),
+          workout(3, "2026-09-02T07:00:00Z"), workout(4, "2026-08-20T07:00:00Z")]
+    monkeypatch.setattr(wh, "list_workouts", lambda tok, page=1, per_page=100, usage=None: {
+        "workouts": ws if page == 1 else [], "per_page": 100, "order": "descending"})
+    got = wi.list_rides_between(CFG, "Rider", date(2026, 9, 1), date(2026, 9, 10))
+    assert [w["id"] for w in got] == [2, 3]                     # the end day counts in full (18:00), others excluded
