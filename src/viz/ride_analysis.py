@@ -6,7 +6,7 @@ import hashlib
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from src.data.gpx import calculate_bearing
-from src.data.fit import get_fit_laps
+from src.data.fit import get_fit_laps, get_fit_lap_spans
 from src.data.pipeline import prepare_ride, summarize_ride, ride_kind, metrics_for_storage
 from src.viz.plots import (plot_elevation,
                            plot_x_time,
@@ -28,6 +28,7 @@ from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.climb_estimator import render_climb_estimator
+from src.viz.segment_analysis import render_segment_analysis
 
 
 @st.cache_data(show_spinner=False)
@@ -79,6 +80,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
         try:
             df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
             laps_df = get_fit_laps(file_bytes) if ride_kind(filename) == "fit" else None
+            lap_spans = get_fit_lap_spans(file_bytes) if ride_kind(filename) == "fit" else None
 
             # Physics prep + automatic weather fetch (df unchanged if it fails)
             df['bearing'] = calculate_bearing(df)
@@ -183,6 +185,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
     # Visualizations
     _render_plots(df, settings, detected_climbs, current_curve, p_comps, user_name)
+    render_segment_analysis(df, settings, lap_spans, ride_id=_thermal_ride_id(df))
 
 
 def _thermal_ride_id(df):
