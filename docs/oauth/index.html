@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>BikeTools Analyzer sign-in</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 1rem; color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } a { color: #8ab4ff; } }
+  code { word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Returning to BikeTools Analyzer…</h1>
+<p id="msg">Sending you back to the app running on this computer.</p>
+<noscript><p>JavaScript is needed to forward you. Open <a href="http://localhost:8501/">http://localhost:8501/</a> and
+append the part of this address that starts with <code>?</code>.</p></noscript>
+<script>
+  // Wahoo only accepts an https callback. This static page is that callback: it hands the query string
+  // (?code=...&state=...) to the app on this very computer and does nothing else. The code is useless without
+  // the client secret, which never leaves your machine. The target is fixed on purpose (no open redirect).
+  var target = "http://localhost:8501/" + window.location.search;
+  document.getElementById("msg").innerHTML =
+    'If nothing happens, make sure BikeTools Analyzer is running and <a id="go">continue here</a>.';
+  document.getElementById("go").href = target;
+  window.location.replace(target);
+</script>
+</body>
+</html>

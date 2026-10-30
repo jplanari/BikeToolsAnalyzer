@@ -25,10 +25,20 @@ It creates *BikeTools Analyzer* on the Desktop and in the Start menu (Windows), 
 application menu and `~/Desktop` (Linux; some desktops ask once to "Allow launching"). The shortcut points at the
 folder where the app is now, so run the command again if you move it. From source: `python desktop/launcher.py --install-shortcut`.
 
-**Strava / Wahoo sign-in.** The desktop app listens on port **8501** (set `BIKETOOLS_PORT` to change it), the same address
-the web version uses, so the `redirect_uri = "http://localhost:8501/"` and the callback URL already registered with
-Strava/Wahoo keep working: copy your existing `secrets.toml` as it is. Close the web version first (both cannot use 8501);
-if the port is busy the app starts on another one and the sign-in will not work.
+**Strava / Wahoo sign-in.** The desktop app listens on port **8501** (set `BIKETOOLS_PORT` to change it), so
+`redirect_uri = "http://localhost:8501/"` works for **Strava** as it is (callback domain `localhost`).
+
+**Wahoo only accepts an https callback**, which a local app cannot offer without a certificate warning. The repo therefore
+includes a static forwarding page, `docs/oauth/index.html`, that receives the redirect on https and sends the browser on to
+`http://localhost:8501/` with the same `?code=…&state=…`. One-time setup:
+
+1. GitHub → repository *Settings → Pages* → source *Deploy from a branch*, branch `main`, folder `/docs`.
+2. In the Wahoo developer portal add this callback URL: `https://jplanari.github.io/BikeToolsAnalyzer/oauth/`
+3. In `secrets.toml`, section `[wahoo]`: `redirect_uri = "https://jplanari.github.io/BikeToolsAnalyzer/oauth/"`
+
+(Replace the user and repository name if you fork it.) The page sees only the one-time code, which is useless without the
+client secret that stays in your `secrets.toml`; the forwarding target is fixed to localhost:8501. The app must be
+running when you finish the sign-in. Publishing `/docs` also publishes the physics report that lives there.
 
 **Your data** is kept per user, not inside the app: `%APPDATA%\BikeToolsAnalyzer` (Windows),
 `~/Library/Application Support/BikeToolsAnalyzer` (macOS), `~/.local/share/BikeToolsAnalyzer` (Linux); set

@@ -109,3 +109,9 @@ def test_oauth_port_is_used_when_free_and_replaced_when_busy(monkeypatch):
     with socket.socket() as busy:
         busy.bind(("127.0.0.1", port))
         assert launcher.choose_port() != port
+
+
+def test_oauth_forwarding_page_targets_only_localhost():
+    html = open(os.path.join(ROOT, "docs", "oauth", "index.html"), encoding="utf-8").read()
+    assert 'var target = "http://localhost:8501/" + window.location.search;' in html
+    assert "location.replace(target)" in html.replace("window.", "")
