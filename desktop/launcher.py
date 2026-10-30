@@ -50,6 +50,23 @@ def free_port():
         return s.getsockname()[1]
 
 
+DEFAULT_PORT = 8501        # the redirect URI registered with Strava/Wahoo is http://localhost:8501/
+
+
+def choose_port():
+    """The port OAuth callbacks (Strava/Wahoo redirect_uri) expect: BIKETOOLS_PORT or 8501, so existing secrets.toml and
+    app registrations keep working. Only when it is taken (e.g. the web version is running) a free one is used."""
+    wanted = int(os.environ.get("BIKETOOLS_PORT") or DEFAULT_PORT)
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", wanted))
+            return wanted
+        except OSError:
+            print(f"Port {wanted} is busy; using another one: Strava/Wahoo sign-in will not work this time.",
+                  file=sys.stderr)
+            return free_port()
+
+
 def server_command(port):
     """Command that runs this launcher as the server process (same executable when frozen)."""
     base = [sys.executable] if FROZEN else [sys.executable, os.path.abspath(__file__)]
@@ -202,7 +219,7 @@ def main():
         return run_server(int(sys.argv[sys.argv.index("--server") + 1]))
     if FROZEN or sys.stdout is None:
         redirect_output_to_log()
-    port = free_port()
+    port = choose_port()
     log = open(os.path.join(data_dir(), "launcher.log"), "a")
     server = subprocess.Popen(server_command(port), stdout=log, stderr=log, stdin=subprocess.DEVNULL)
     try:

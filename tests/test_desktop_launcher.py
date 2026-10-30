@@ -100,3 +100,12 @@ def test_install_shortcut_writes_a_desktop_entry(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     made = launcher.install_shortcut()
     assert made and all(os.path.exists(p) and os.access(p, os.X_OK) for p in made)
+
+
+def test_oauth_port_is_used_when_free_and_replaced_when_busy(monkeypatch):
+    port = launcher.free_port()
+    monkeypatch.setenv("BIKETOOLS_PORT", str(port))
+    assert launcher.choose_port() == port
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", port))
+        assert launcher.choose_port() != port

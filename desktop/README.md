@@ -25,6 +25,11 @@ It creates *BikeTools Analyzer* on the Desktop and in the Start menu (Windows), 
 application menu and `~/Desktop` (Linux; some desktops ask once to "Allow launching"). The shortcut points at the
 folder where the app is now, so run the command again if you move it. From source: `python desktop/launcher.py --install-shortcut`.
 
+**Strava / Wahoo sign-in.** The desktop app listens on port **8501** (set `BIKETOOLS_PORT` to change it), the same address
+the web version uses, so the `redirect_uri = "http://localhost:8501/"` and the callback URL already registered with
+Strava/Wahoo keep working: copy your existing `secrets.toml` as it is. Close the web version first (both cannot use 8501);
+if the port is busy the app starts on another one and the sign-in will not work.
+
 **Your data** is kept per user, not inside the app: `%APPDATA%\BikeToolsAnalyzer` (Windows),
 `~/Library/Application Support/BikeToolsAnalyzer` (macOS), `~/.local/share/BikeToolsAnalyzer` (Linux); set
 `BIKETOOLS_DATA` to use another folder. It holds `biketools.db` and `backups/`. For Strava/Wahoo keys put
