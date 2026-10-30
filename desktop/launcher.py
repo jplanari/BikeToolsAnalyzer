@@ -92,6 +92,75 @@ def wait_until_up(port, process, timeout=START_TIMEOUT_S):
     return False
 
 
+def target_command():
+    """What a shortcut has to run: the frozen executable, or this script with the current Python."""
+    return [sys.executable] if FROZEN else [sys.executable, os.path.abspath(__file__)]
+
+
+def linux_desktop_entry(command):
+    quoted = " ".join('"%s"' % c.replace('"', '\\"') for c in command)
+    return ("[Desktop Entry]\nType=Application\nName=BikeTools Analyzer\nComment=Cycling ride analysis\n"
+            f"Exec={quoted}\nTerminal=false\nCategories=Sports;Utility;\nStartupWMClass=BikeToolsAnalyzer\n")
+
+
+def macos_app_files(command):
+    """Contents of a minimal .app bundle that starts the program: {relative path: (text, executable)}."""
+    script = "#!/bin/bash\nexec " + " ".join("'%s'" % c.replace("'", "'\\''") for c in command) + "\n"
+    plist = ('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+             "<key>CFBundleName</key><string>BikeTools Analyzer</string>"
+             "<key>CFBundleExecutable</key><string>run</string>"
+             "<key>CFBundleIdentifier</key><string>com.biketools.analyzer</string>"
+             "<key>CFBundlePackageType</key><string>APPL</string></dict></plist>\n")
+    return {"Contents/MacOS/run": (script, True), "Contents/Info.plist": (plist, False)}
+
+
+def install_shortcut():
+    """Creates a desktop / application-menu shortcut. Returns the paths created."""
+    command, made = target_command(), []
+    if sys.platform == "win32":
+        exe = command[0]
+        args = subprocess.list2cmdline(command[1:])
+        ps = ("$s=New-Object -ComObject WScript.Shell;"
+              "foreach($d in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Programs'))){"
+              "$l=$s.CreateShortcut((Join-Path $d 'BikeTools Analyzer.lnk'));"
+              f"$l.TargetPath='{exe}';$l.Arguments='{args}';$l.WorkingDirectory='{os.path.dirname(exe)}';$l.Save()}}")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True)
+        made = ["Desktop and Start menu: BikeTools Analyzer.lnk"]
+    elif sys.platform == "darwin":
+        app = os.path.expanduser("~/Applications/BikeTools Analyzer.app")
+        for rel, (text, executable) in macos_app_files(command).items():
+            path = os.path.join(app, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write(text)
+            if executable:
+                os.chmod(path, 0o755)
+        made = [app]
+    else:
+        entry = linux_desktop_entry(command)
+        folders = [os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "applications")]
+        desktop = os.path.expanduser("~/Desktop")
+        if os.path.isdir(desktop):
+            folders.append(desktop)
+        for folder in folders:
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "biketools-analyzer.desktop")
+            with open(path, "w") as fh:
+                fh.write(entry)
+            os.chmod(path, 0o755)               # some desktops ask once to "Allow launching" on the icon
+            made.append(path)
+    return made
+
+
+def tell(message):
+    """A windowed Windows build has no console: show a message box there, print elsewhere."""
+    if sys.platform == "win32" and (FROZEN or sys.stdout is None):
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, message, "BikeTools Analyzer", 0x40)
+    else:
+        print(message)
+
+
 def open_window(url):
     """Shows the app in a native window. False when that is not possible (pywebview missing, or no GTK/Qt/WebView2
     on this machine): the caller then uses the browser instead of giving up."""
@@ -107,6 +176,13 @@ def open_window(url):
 
 def main():
     multiprocessing.freeze_support()
+    if "--install-shortcut" in sys.argv:
+        try:
+            tell("Shortcut created:\n" + "\n".join(install_shortcut()))
+            return 0
+        except Exception as e:
+            tell(f"Could not create the shortcut: {e}")
+            return 1
     if "--server" in sys.argv:
         return run_server(int(sys.argv[sys.argv.index("--server") + 1]))
     if FROZEN or sys.stdout is None:

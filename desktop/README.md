@@ -14,6 +14,14 @@ Build the standalone app for the OS you are on (PyInstaller cannot cross-compile
 The *Desktop build* GitHub workflow does this for Windows, macOS and Linux (Actions → Desktop build → Run
 workflow, or push a `v*` tag) and attaches the three zips.
 
+**Shortcut on the desktop / app menu.** After building (or unzipping the downloaded build), run once:
+
+    dist/BikeToolsAnalyzer/BikeToolsAnalyzer --install-shortcut        (Windows: BikeToolsAnalyzer.exe)
+
+It creates *BikeTools Analyzer* on the Desktop and in the Start menu (Windows), in `~/Applications` (macOS), or in the
+application menu and `~/Desktop` (Linux; some desktops ask once to "Allow launching"). The shortcut points at the
+folder where the app is now, so run the command again if you move it. From source: `python desktop/launcher.py --install-shortcut`.
+
 **Your data** is kept per user, not inside the app: `%APPDATA%\BikeToolsAnalyzer` (Windows),
 `~/Library/Application Support/BikeToolsAnalyzer` (macOS), `~/.local/share/BikeToolsAnalyzer` (Linux); set
 `BIKETOOLS_DATA` to use another folder. It holds `biketools.db` and `backups/`. For Strava/Wahoo keys put

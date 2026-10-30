@@ -83,3 +83,23 @@ def test_window_closed_normally_is_not_a_failure(monkeypatch):
     fake.start = lambda: None
     monkeypatch.setitem(sys.modules, "webview", fake)
     assert launcher.open_window("http://127.0.0.1:1") is True
+
+
+def test_linux_entry_runs_the_command_and_has_no_terminal():
+    e = launcher.linux_desktop_entry(["/opt/My App/BikeToolsAnalyzer"])
+    assert e.startswith("[Desktop Entry]") and 'Exec="/opt/My App/BikeToolsAnalyzer"' in e and "Terminal=false" in e
+
+
+def test_macos_bundle_has_an_executable_launcher_and_a_plist():
+    files = launcher.macos_app_files(["/Apps/it's/BikeToolsAnalyzer"])
+    script, executable = files["Contents/MacOS/run"]
+    assert executable and script.startswith("#!/bin/bash") and "exec '/Apps/it'\\''s/BikeToolsAnalyzer'" in script
+    assert "CFBundleExecutable" in files["Contents/Info.plist"][0]
+
+
+@pytest.mark.skipif(sys.platform in ("win32", "darwin"), reason="Linux desktop entry")
+def test_install_shortcut_writes_a_desktop_entry(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    made = launcher.install_shortcut()
+    assert made and all(os.path.exists(p) and os.access(p, os.X_OK) for p in made)
