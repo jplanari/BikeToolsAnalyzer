@@ -22,6 +22,11 @@ A standalone version with its own window (no terminal, no Python install) can be
 - **Intensity:** weekly/monthly easy / moderate / hard distribution (power or HR) and the polarization index.
 - **PDF report:** the "📄 PDF report" box at the top builds a 6-page A4 report (summary and load chart, volume and ramp, power profile and CP, durability and records, intensity, recent rides and planned sessions) for the period you pick.
 
+📐 Segment analysis (bottom of the ride page)
+
+- Pick any stretch of the ride with a distance slider, or choose a **lap** (FIT files), and get the numbers a whole ride gets: time, distance, ascent, gradient, VAM, average speed, average power and W/kg, normalized power, IF, TSS, work, VI, average HR, EF and average cadence (while pedalling), with the power / HR / speed / cadence traces of that stretch.
+- Stretches of 300 m or more get their gradient profile and, if they average 1 % or more, the same performance estimator as climbs. *Compare all laps* tabulates every lap side by side.
+
 ⛰️ Climb performance estimator (Analyze Upload → Detected Climbs → View Details)
 
 - For each detected climb, change **system weight, CdA, rolling resistance, air density and power** and see the time it would take, or ask for the **power needed for a target time**. A steady-state model on the climb's gradient profile (no wind); the *as ridden* line applies it to your actual power so you can see how close it gets, and a small table shows what −1 kg, −0.01 m² CdA, −0.001 Crr and +10 W are worth.

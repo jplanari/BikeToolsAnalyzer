@@ -178,3 +178,22 @@ def get_fit_laps(file_bytes):
     
     return final_df
 
+
+
+@st.cache_data(show_spinner=False)
+def get_fit_lap_spans(file_bytes):
+    """Start time and elapsed seconds of each lap (naive UTC, like the ride's 'time' column), in file order."""
+    try:
+        fitfile = fitparse.FitFile(io.BytesIO(file_bytes))
+        rows = []
+        for lap in fitfile.get_messages("lap"):
+            d = {f.name: f.value for f in lap}
+            start = d.get('start_time')
+            secs = d.get('total_elapsed_time') or d.get('total_timer_time')
+            if start is not None and secs:
+                rows.append({'start': pd.Timestamp(start).tz_localize(None) if pd.Timestamp(start).tzinfo else pd.Timestamp(start),
+                             'elapsed_s': float(secs)})
+    except Exception as e:
+        print(f"FIT lap parse error: {e}")
+        return pd.DataFrame(columns=['start', 'elapsed_s'])
+    return pd.DataFrame(rows, columns=['start', 'elapsed_s'])
