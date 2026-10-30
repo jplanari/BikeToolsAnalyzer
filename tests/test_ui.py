@@ -102,6 +102,16 @@ def test_first_profile_form_creates_the_user_and_shows_the_gallery_hint(empty_db
     assert "Upload a GPX/FIT" in _texts(at.info)
 
 
+def test_first_profile_needs_only_a_name_and_explains_ftp_and_lthr(empty_db):
+    at = _app()
+    assert "What are FTP and LTHR?" in [e.label for e in at.expander]
+    at.text_input(key="first_profile_name").set_value("Bea")
+    next(b for b in at.button if b.label == "Create profile").click().run()
+    _no_errors(at)
+    user = db.get_user_data("Bea")
+    assert user["ftp"] == 200 and user["lthr"] == 170                       # empty fields fall back to the defaults
+
+
 def test_training_page(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)
