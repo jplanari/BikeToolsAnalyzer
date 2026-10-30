@@ -2,7 +2,7 @@
 
 BikeTools Analyzer as a program with its own window: no terminal, no Python on the target machine.
 
-Run from source (uses pywebview if installed, otherwise your browser):
+Run from source (native window through pywebview; Qt on Linux; falls back to your browser if no window can open):
 
     pip install -r desktop/requirements-desktop.txt
     python desktop/launcher.py
