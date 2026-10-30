@@ -75,6 +75,13 @@ def build_figure(df, series):
         fig.update_yaxes(title_text=f"{label} ({unit})", row=r, col=1)
         r += 1
     fig.update_xaxes(title_text=x_title, row=max(rows, 1), col=1)
-    fig.update_layout(height=140 * max(rows, 1) + 120, showlegend=False, hovermode="x unified",
+    fig.update_yaxes(fixedrange=True)                     # zoom and pan only along the route: every channel keeps its full range
+    fig.update_layout(height=140 * max(rows, 1) + 120, showlegend=False, hovermode="x unified", dragmode="zoom",
                       margin=dict(l=10, r=10, t=30, b=10))
     return fig
+
+
+# Plotly toolbar for the chart: drag a box (or use the wheel) to zoom along the route, double-click to reset;
+# the selection tools have nothing to select here.
+PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False,
+               "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]}

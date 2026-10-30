@@ -63,3 +63,11 @@ def test_long_rides_are_thinned_and_odd_input_is_tolerated():
     no_ele = ts.build_figure(ride(ele=1), ["Power"])
     assert [t.name for t in no_ele.data] == ["Power"]
     assert len(ts.build_figure(ride(), []).data) == 1                              # only the base
+
+
+def test_zoom_is_along_the_route_only():
+    fig = ts.build_figure(ride(), ["Power", "Heart rate"])
+    y_axes = [fig.layout[k] for k in fig.layout if k.startswith("yaxis")]
+    assert len(y_axes) == 3 and all(a.fixedrange is True for a in y_axes)   # elevation + 2 channels cannot be zoomed
+    assert not fig.layout.xaxis.fixedrange and fig.layout.dragmode == "zoom"
+    assert ts.PLOT_CONFIG["scrollZoom"] is True

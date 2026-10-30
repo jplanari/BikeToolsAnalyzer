@@ -328,9 +328,10 @@ def _render_time_series(df):
     default = [c for c in ("Power",) if c in channels] or channels[:1]
     chosen = remembered(st.multiselect, "ts_channels", default, "Channels under the elevation profile",
                         options=channels, max_selections=6)
-    st.caption(f"Smoothed with a {ts.SMOOTHING_S} s moving average.")
+    st.caption(f"Smoothed with a {ts.SMOOTHING_S} s moving average. Drag or scroll to zoom along the route "
+               "(the vertical scales stay whole), double-click to reset.")
     st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels]),
-                    use_container_width=True, key="ts_chart")
+                    use_container_width=True, key="ts_chart", config=ts.PLOT_CONFIG)
 
 
 def _render_aero(df, settings, p_comps):
