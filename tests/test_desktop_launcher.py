@@ -62,3 +62,24 @@ def test_server_mode_serves_the_app(tmp_path):
     finally:
         p.terminate()
         p.wait(10)
+
+
+def test_window_failure_falls_back_instead_of_crashing(monkeypatch):
+    import types
+    fake = types.ModuleType("webview")
+    fake.create_window = lambda *a, **k: None
+
+    def start():
+        raise RuntimeError("You must have either QT or GTK")
+    fake.start = start
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    assert launcher.open_window("http://127.0.0.1:1") is False
+
+
+def test_window_closed_normally_is_not_a_failure(monkeypatch):
+    import types
+    fake = types.ModuleType("webview")
+    fake.create_window = lambda *a, **k: None
+    fake.start = lambda: None
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    assert launcher.open_window("http://127.0.0.1:1") is True

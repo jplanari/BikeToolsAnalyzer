@@ -92,6 +92,19 @@ def wait_until_up(port, process, timeout=START_TIMEOUT_S):
     return False
 
 
+def open_window(url):
+    """Shows the app in a native window. False when that is not possible (pywebview missing, or no GTK/Qt/WebView2
+    on this machine): the caller then uses the browser instead of giving up."""
+    try:
+        import webview
+        webview.create_window("BikeTools Analyzer", url, width=1400, height=900)
+        webview.start()                     # returns when the window is closed
+        return True
+    except Exception as e:                  # ImportError, webview.errors.WebViewException, ...
+        print(f"No native window ({type(e).__name__}: {e}); using the browser.", file=sys.stderr)
+        return False
+
+
 def main():
     multiprocessing.freeze_support()
     if "--server" in sys.argv:
@@ -107,15 +120,10 @@ def main():
                   file=sys.stderr)
             return 1
         url = f"http://127.0.0.1:{port}"
-        try:
-            import webview
-        except ImportError:
+        if not open_window(url):
             webbrowser.open(url)
-            print(f"BikeTools Analyzer is running at {url} (Ctrl+C to quit)")
+            print(f"BikeTools Analyzer is running at {url} (Ctrl+C or close this program to quit)")
             server.wait()
-        else:
-            webview.create_window("BikeTools Analyzer", url, width=1400, height=900)
-            webview.start()                 # returns when the window is closed
     except KeyboardInterrupt:
         pass
     finally:
