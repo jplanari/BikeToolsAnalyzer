@@ -202,6 +202,25 @@ Wahoo only accepts an **https** callback, which a local app cannot offer without
 
 Notes: Wahoo does not document its workout types, so only type 0 (outdoor cycling) is imported; add other ids to `CYCLING_WORKOUT_TYPES` in `src/data/wahoo.py` if your indoor rides are skipped. Wahoo refresh tokens are single-use and are re-saved on every refresh.
 
+## Connecting Polar
+
+Rides can be read from Polar Flow through the Polar AccessLink API (OAuth). The FIT file Polar holds is stored, so rides are analysed like an uploaded file.
+
+**What Polar allows (read this first):** AccessLink only lists exercises uploaded to Flow in the **last 30 days**, and only those recorded **after the rider connected**. There is no history import: connect, then press **Sync new rides** at least once a month (the same rides are never imported twice, and a ride already saved from Strava, Wahoo or an upload is skipped).
+
+**One-time setup**
+1. Create a Polar Flow account, then register a client at <https://admin.polaraccesslink.com> and add `http://localhost:8501/` as its redirect URL. If Polar does not accept an http address, use the https forwarding page described under *Connecting Wahoo* instead.
+2. Add the **Client ID** and **Client Secret** to `.streamlit/secrets.toml` (see `secrets.toml.example`):
+   ```toml
+   [polar]
+   client_id = "..."
+   client_secret = "..."
+   redirect_uri = "http://localhost:8501/"
+   ```
+3. Restart the app.
+
+**Usage** (sidebar → Data Import → *Polar*): **Connect Polar**, then *Recent rides → Analyze ride* or **Sync new rides**. **Disconnect Polar** removes the rider from your app and revokes the token. Files are stored as `polar_<id>.fit`.
+
 ## Requirements
 Python 3.8 + 
 ```

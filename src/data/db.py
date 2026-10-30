@@ -170,6 +170,14 @@ def migrate_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS polar_auth (
+            user_id INTEGER PRIMARY KEY,
+            polar_user_id TEXT,
+            access_token TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS wahoo_sent (
             session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
             plan_id INTEGER NOT NULL,
@@ -879,6 +887,55 @@ def delete_wahoo_auth(user_name):
     conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
     conn.commit()
     conn.close()
+
+# --- Polar authorization (tokens do not expire; stored like the other providers') ---
+
+def save_polar_auth(user_name, auth):
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = _connect()
+    conn.execute('''
+        INSERT INTO polar_auth (user_id, polar_user_id, access_token) VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET polar_user_id = excluded.polar_user_id, access_token = excluded.access_token
+    ''', (user['id'], auth.get('polar_user_id'), auth['access_token']))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_polar_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM polar_auth WHERE user_id = ?", (user['id'],)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_polar_auth(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("DELETE FROM polar_auth WHERE user_id = ?", (user['id'],))
+    conn.commit()
+    conn.close()
+
+def polar_id_from_filename(filename):
+    """'polar_aB3x9.fit' -> 'aB3x9' (rides imported through Polar AccessLink)."""
+    m = re.fullmatch(r"polar_([A-Za-z0-9]+)\.fit", filename or "")
+    return m.group(1) if m else None
+
+def get_imported_polar_ids(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return set()
+    conn = _connect()
+    rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\'",
+                        (user['id'],)).fetchall()
+    conn.close()
+    return {i for i in (polar_id_from_filename(r[0]) for r in rows) if i is not None}
 
 def get_wahoo_sent(user_name):
     """{planned session id: {plan_id, workout_id, starts, sent_at}} for sessions sent to Wahoo."""
