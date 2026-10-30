@@ -116,11 +116,12 @@ DEFAULT_FTP, DEFAULT_LTHR = 200, 170
 FTP_HELP = ("**FTP (functional threshold power)** is the highest power, in watts, you could hold for about an "
             "hour. It sets your power zones and the TSS / IF of every ride. Quick estimate: 95 % of your best "
             "20-minute power. If unsure, leave it empty: the app starts from "
-            f"{DEFAULT_FTP} W and will suggest a better value once it sees your hard rides.")
+            f"{DEFAULT_FTP} W and then estimates it from your rides (best 20 minutes) as soon as it has some.")
 LTHR_HELP = ("**LTHR (lactate threshold heart rate)** is the average heart rate, in bpm, you can sustain for "
              "about an hour of hard effort. It sets your heart-rate zones and the HR-based load for rides "
              "without a power meter. Quick estimate: your average HR over the last 20 minutes of a 30-minute "
-             f"all-out effort. If unsure, leave it empty: the app starts from {DEFAULT_LTHR} bpm.")
+             f"all-out effort. If unsure, leave it empty: the app starts from {DEFAULT_LTHR} bpm and then estimates it "
+             "from the best 20-minute heart rate in your rides.")
 
 
 def _first_profile():
@@ -135,16 +136,16 @@ def _first_profile():
         name = st.text_input("Name", key="first_profile_name")
         c1, c2, c3, c4 = st.columns(4)
         ftp = c1.number_input("FTP (Watts) · optional", value=None, min_value=1, step=5, key="first_profile_ftp",
-                              placeholder=f"{DEFAULT_FTP} if empty", help=FTP_HELP)
+                              placeholder="estimated from your rides", help=FTP_HELP)
         lthr = c2.number_input("LTHR (bpm) · optional", value=None, min_value=1, step=1, key="first_profile_lthr",
-                               placeholder=f"{DEFAULT_LTHR} if empty", help=LTHR_HELP)
+                               placeholder="estimated from your rides", help=LTHR_HELP)
         weight = c3.number_input("Weight (kg)", value=70.0)
         height = c4.number_input("Height (cm)", value=175)
         if st.form_submit_button("Create profile", type="primary"):
             if not name.strip():
                 st.error("Enter a name first.")
             else:
-                ok, msg = save_user(name.strip(), int(ftp or DEFAULT_FTP), int(lthr or DEFAULT_LTHR), weight, height)
+                ok, msg = save_user(name.strip(), int(ftp) if ftp else None, int(lthr) if lthr else None, weight, height)
                 if ok:
                     st.rerun()
                 else:

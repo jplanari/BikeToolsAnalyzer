@@ -44,6 +44,13 @@ def migrate_db():
     except sqlite3.OperationalError:
         pass
 
+    # 1 = FTP / LTHR were left empty and follow the rider's data (see src/data/thresholds.py)
+    for col in ("ftp_auto", "lthr_auto"):
+        try:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
     try:
         c.execute("ALTER TABLE rides ADD COLUMN strava_activity_id INTEGER")
     except sqlite3.OperationalError:
@@ -55,7 +62,8 @@ def migrate_db():
                      ("ftp_at_ride", "INTEGER"), ("lthr_at_ride", "INTEGER"),
                      ("vi", "REAL"), ("ef", "REAL"), ("decoupling_pct", "REAL"),
                      ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0"),
-                     ("hrr60_bpm", "REAL"), ("hrr_efforts", "INTEGER")]:
+                     ("hrr60_bpm", "REAL"), ("hrr_efforts", "INTEGER"),
+                     ("hr20_bpm", "REAL")]:          # best 20-min mean HR; NULL = not computed yet, 0 = no HR data
         try:
             c.execute(f"ALTER TABLE rides ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
@@ -243,12 +251,17 @@ def init_db():
     migrate_db()
     _move_ride_files()
 
-def save_user(name, ftp, lthr, weight, height=175.0):
+DEFAULT_FTP, DEFAULT_LTHR = 200, 170
+
+def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0):
+    """ftp / lthr None: stored as the defaults but flagged to be estimated from the rider's rides."""
     conn = _connect()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO users (name, ftp, lthr, weight, height) VALUES (?, ?, ?, ?, ?)", 
-                  (name, ftp, lthr, weight, height))
+        c.execute("""INSERT INTO users (name, ftp, lthr, weight, height, ftp_auto, lthr_auto)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (name, DEFAULT_FTP if ftp is None else ftp, DEFAULT_LTHR if lthr is None else lthr,
+                   weight, height, int(ftp is None), int(lthr is None)))
         conn.commit()
         return True, "User saved successfully!"
     except sqlite3.IntegrityError:
@@ -258,10 +271,66 @@ def save_user(name, ftp, lthr, weight, height=175.0):
     finally:
         conn.close()
 
+def set_user_thresholds(user_name, ftp=None, lthr=None, auto_ftp=None, auto_lthr=None):
+    """
+    Sets FTP and/or LTHR by hand (which stops them following the data), or switches them back to
+    "estimate from my rides" with auto_ftp / auto_lthr=True (the value stays until the next estimate).
+    """
+    conn = _connect()
+    if ftp is not None:
+        conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
+    if lthr is not None:
+        conn.execute("UPDATE users SET lthr = ?, lthr_auto = 0 WHERE name = ?", (int(round(lthr)), user_name))
+    if auto_ftp:
+        conn.execute("UPDATE users SET ftp_auto = 1 WHERE name = ?", (user_name,))
+    if auto_lthr:
+        conn.execute("UPDATE users SET lthr_auto = 1 WHERE name = ?", (user_name,))
+    conn.commit()
+    conn.close()
+
+def set_auto_thresholds(user_name, ftp=None, lthr=None):
+    """Stores an estimate without turning the 'estimated' flag off."""
+    conn = _connect()
+    if ftp is not None:
+        conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
+    if lthr is not None:
+        conn.execute("UPDATE users SET lthr = ? WHERE name = ?", (int(round(lthr)), user_name))
+    conn.commit()
+    conn.close()
+
+def get_hr20(user_name, start=None):
+    """Best-20-minute mean HR of each ride (> 0 only), newest rides last: list of (date, bpm)."""
+    user = get_user_data(user_name)
+    if not user:
+        return []
+    where, params = _date_filter(start, None)
+    conn = _connect()
+    rows = conn.execute(f"""SELECT date_time, hr20_bpm FROM rides r WHERE user_id = ? AND hr20_bpm > 0{where}
+                            ORDER BY date_time""", [user['id'], *params]).fetchall()
+    conn.close()
+    return [(r[0], r[1]) for r in rows]
+
+def get_rides_without_hr20(user_name, limit=25):
+    """(id, filename) of the newest rides whose best-20-min HR was never computed."""
+    user = get_user_data(user_name)
+    if not user:
+        return []
+    conn = _connect()
+    rows = conn.execute("""SELECT id, filename FROM rides WHERE user_id = ? AND hr20_bpm IS NULL
+                           ORDER BY date_time DESC LIMIT ?""", (user['id'], limit)).fetchall()
+    conn.close()
+    return [(r[0], r[1]) for r in rows]
+
+def set_ride_hr20(ride_id, bpm):
+    conn = _connect()
+    conn.execute("UPDATE rides SET hr20_bpm = ? WHERE id = ?", (float(bpm or 0.0), ride_id))
+    conn.commit()
+    conn.close()
+
 def update_user_ftp(user_name, ftp):
     """Sets the FTP only. Rides already saved keep the FTP they were scored with."""
     conn = _connect()
-    conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
+    conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
     conn.commit()
     conn.close()
 
@@ -276,7 +345,7 @@ def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     if update_ftp:
         c.execute('''
             UPDATE users 
-            SET cp = ?, w_prime = ?, ftp = ? 
+            SET cp = ?, w_prime = ?, ftp = ?, ftp_auto = 0 
             WHERE name = ?
         ''', (cp, w_prime, cp, user_name))
     else:
@@ -506,12 +575,13 @@ def _metrics_fields(metrics):
         'hist': metrics.get('hist') or {},
         'fatigued': metrics.get('fatigued') or {},
         'hrr60_bpm': _opt_float(metrics.get('hrr60')),
+        'hr20_bpm': _opt_float(metrics.get('hr20')),
         'hrr_efforts': _opt_int(metrics.get('hrr_efforts')),
         'metrics_version': METRICS_VERSION,
     }
 
 _METRIC_COLUMNS = ['duration_s', 'moving_s', 'kj', 'ftp_at_ride', 'lthr_at_ride', 'vi', 'ef',
-                   'decoupling_pct', 'tss_source', 'hrr60_bpm', 'hrr_efforts', 'metrics_version']
+                   'decoupling_pct', 'tss_source', 'hrr60_bpm', 'hrr_efforts', 'hr20_bpm', 'metrics_version']
 
 def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     """Power records and zone times for one ride (caller deletes old ones)."""

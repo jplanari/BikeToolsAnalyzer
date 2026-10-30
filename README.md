@@ -55,7 +55,7 @@ A standalone version with its own window (no terminal, no Python install) can be
 
 - Interactive Maps: Folium-based route maps with highlighted climb segments.
 - Local Database: Uses SQLite (bikethools.db) to store ride history and user profiles locally. Original ride files are kept compressed in their own table, and the database is copied to `backups/` (newest 3 kept) before "Update ride history" and before the one-time file migration.
-- User Profiles: Manage multiple rider profiles with specific FTP, Weight, and LTHR settings.
+- User Profiles: Manage multiple rider profiles with FTP, Weight and LTHR settings. FTP and LTHR are optional: left empty they are estimated from your rides (95 % of the best 20-minute power / heart rate over the last 90 days) and keep following your data until you set them by hand in the User Corner.
 
 ## Installation
 Clone the repository: 

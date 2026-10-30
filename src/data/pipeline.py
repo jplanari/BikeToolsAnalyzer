@@ -14,6 +14,7 @@ from src.data.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
 from src.analysis import ride_metrics as rm
 from src.analysis import durability
+from src.analysis.hr import estimate_hr_threshold
 
 MOVING_THRESHOLD_MS = 2.0
 
@@ -113,6 +114,7 @@ def summarize_ride(df, ftp, lthr=None):
         'hist': rm.joint_histograms(df, is_moving),
         'hrr60': hrr60,
         'hrr_efforts': hrr_n,
+        'hr20': float(estimate_hr_threshold(hr)[1] or 0.0) if has_hr else 0.0,
         'ftp': ftp,
         'lthr': lthr,
         'cleaned': dict(df.attrs.get('cleaned') or {}),
@@ -122,7 +124,7 @@ def summarize_ride(df, ftp, lthr=None):
 def metrics_for_storage(summary):
     """The per-ride columns that build_ride_metadata() adds to the metadata."""
     keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
-            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'fatigued']
+            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'hr20', 'fatigued']
     out = {k: summary.get(k) for k in keys}
     out['ftp_at_ride'] = summary.get('ftp') or None
     out['lthr_at_ride'] = summary.get('lthr') or None

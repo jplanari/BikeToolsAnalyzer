@@ -12,8 +12,10 @@ from src.data.db import (save_user,
                          save_wahoo_auth,
                          delete_wahoo_auth,
                          create_oauth_state,
-                         consume_oauth_state)
+                         consume_oauth_state,
+                         data_stamp)
 from src.viz import theme
+from src.data.thresholds import backfill_hr20, refresh_auto_thresholds
 from src.data.cached import get_user_data
 from src.data import strava as sv
 from src.data import wahoo as wh
@@ -23,6 +25,22 @@ from src.data.strava_import import (list_recent_rides,
                                     fetch_ride_file,
                                     import_history,
                                     sync_new_rides)
+
+
+def _follow_the_data(user_name):
+    """FTP / LTHR left empty are re-estimated from the rider's rides (old rides get their HR peak once)."""
+    user = get_user_data(user_name)
+    if not user or not (user.get('ftp_auto') or user.get('lthr_auto')):
+        return
+    stamp_key = f"thresholds_stamp_{user_name}"
+    if st.session_state.get(stamp_key) == data_stamp():          # nothing was saved since the last estimate
+        return
+    if user.get('lthr_auto') and not st.session_state.get(f"hr20_done_{user_name}"):
+        with st.spinner("Estimating LTHR from your rides…"):
+            if backfill_hr20(user_name) == 0:
+                st.session_state[f"hr20_done_{user_name}"] = True     # nothing left to read: stop looking
+    refresh_auto_thresholds(user_name)
+    st.session_state[stamp_key] = data_stamp()
 
 
 def render_sidebar():
@@ -49,6 +67,7 @@ def render_sidebar():
         if users:
             selected_user_name = st.selectbox("Current User", users, key="current_user")
             if selected_user_name:
+                _follow_the_data(selected_user_name)
                 u_data = get_user_data(selected_user_name)
                 if u_data:
                     user_ftp = u_data['ftp']
@@ -69,13 +88,16 @@ def render_sidebar():
     with tab_create:
         with st.form("user_form"):
             new_name = st.text_input("Name")
-            new_ftp = st.number_input("FTP (Watts)", value=200)
-            new_lthr = st.number_input("LTHR (bpm)", value=170)
+            new_ftp = st.number_input("FTP (Watts) · optional", value=None, min_value=1, step=5,
+                                      placeholder="estimated from your rides", help=theme.FTP_HELP)
+            new_lthr = st.number_input("LTHR (bpm) · optional", value=None, min_value=1, step=1,
+                                       placeholder="estimated from your rides", help=theme.LTHR_HELP)
             new_weight = st.number_input("Weight (kg)", value=70.0)
             new_height = st.number_input("Height (cm)", value=175)
             submitted = st.form_submit_button("Save User")
             if submitted and new_name:
-                success, msg = save_user(new_name, new_ftp, new_lthr, new_weight, new_height)
+                success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
+                                          int(new_lthr) if new_lthr else None, new_weight, new_height)
                 if success:
                     st.success(msg)
                     st.rerun()
