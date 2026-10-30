@@ -1,4 +1,7 @@
 # Extra packages to build the desktop app (see desktop/README.md)
 -r ../requirements.txt
-pywebview>=5,<6
+# native window: WebView2/WebKit on Windows/macOS; on Linux the Qt backend, which installs from pip alone
+# (no system GTK packages). If it cannot start, the app opens in the browser instead.
+pywebview>=5,<6; sys_platform != "linux"
+pywebview[qt]>=5,<6; sys_platform == "linux"
 pyinstaller>=6,<7
