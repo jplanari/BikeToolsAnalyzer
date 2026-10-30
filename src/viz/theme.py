@@ -10,9 +10,9 @@ Navigation can sit in the sidebar (default) or as a bar at the top of the page.
 """
 import streamlit as st
 
-LOOKS = ["Dashboard", "Compact", "Classic"]
+LOOKS = ["Compact", "Dashboard", "Classic"]
 NAV_PLACES = ["Sidebar", "Top bar"]
-DEFAULT_LOOK, DEFAULT_NAV = "Dashboard", "Sidebar"
+DEFAULT_LOOK, DEFAULT_NAV = "Compact", "Sidebar"
 ACCENT = "#FF5A1F"                              # same as primaryColor in .streamlit/config.toml
 
 _EDGE = "color-mix(in srgb, currentColor 14%, transparent)"
@@ -110,9 +110,11 @@ def page_header(subtitle=""):
                 unsafe_allow_html=True)
 
 
-def welcome():
-    """What to do first, when no ride is open."""
+def welcome(compact=False):
+    """What to do first, when no ride is open. compact: a profile exists, so only the one-line hint."""
     st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
+    if compact:
+        return
     steps = [("1 · Profile", "Create your profile in the sidebar (FTP, LTHR, weight, height). Zones, TSS and "
                              "W/kg use it."),
              ("2 · Choose a ride", "Upload a GPX/FIT file, or connect Strava or Wahoo and pick any ride, "

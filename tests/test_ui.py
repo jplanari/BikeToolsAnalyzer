@@ -227,3 +227,22 @@ def test_deleting_a_user_needs_confirmation(seeded_db):
     assert db.get_user_data("Rider")
     at.button(key="confirm_delete_user").click().run()
     assert not db.get_user_data("Rider")
+
+
+def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db, monkeypatch):
+    import src.viz.ride_analysis as ra
+    monkeypatch.setattr(ra, "fetch_ride_weather", lambda df: df)          # no network in tests
+    at = _app()
+    _no_errors(at)
+    assert "Last 7 days" in {m.label for m in at.metric}
+    next(b for b in at.button if b.label == "Open ride").click().run()
+    _no_errors(at)
+    section = next(r for r in at.radio if r.label == "Section")
+    assert section.options[0] == "📊 Summary" and "📐 Segments" in section.options
+    assert "Performance Metrics" in _texts(at.subheader)
+    assert not at.get("plotly_chart")                                      # charts only when their section is open
+    section.set_value("⚡ Power").run()
+    _no_errors(at)
+    assert at.get("plotly_chart")
+    next(b for b in at.button if b.key == "back_to_gallery").click().run()
+    assert "Last 7 days" in {m.label for m in at.metric}
