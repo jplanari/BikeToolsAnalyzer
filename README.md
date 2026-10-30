@@ -174,15 +174,21 @@ Notes:
 Rides can be synced straight from the Wahoo Cloud API (OAuth). Unlike Strava it provides the **original FIT file** recorded by your ELEMNT, so power, heart rate and cadence keep their full resolution and nothing is rebuilt from resampled streams.
 
 **One-time setup**
-1. Register an app at <https://developers.wahooligan.com> and add `http://localhost:8501/` as a callback URL. New apps start in sandbox mode (25 requests per 5 minutes, 100 per hour); a large history import simply pauses and can be run again, or you can ask Wahoo to move the app to production.
-2. Add its **Client ID** and **Client Secret** to `.streamlit/secrets.toml` (see `secrets.toml.example`):
+
+Wahoo only accepts an **https** callback, which a local app cannot offer without a certificate warning (this applies to the desktop app and to `streamlit run` alike). The repo therefore includes a static forwarding page, `docs/oauth/index.html`, that receives the redirect on https and sends the browser on to `http://localhost:8501/` with the same `?code=…&state=…`:
+
+1. GitHub → repository *Settings → Pages* → source *Deploy from a branch*, branch `main`, folder `/docs`.
+2. Register an app at <https://developers.wahooligan.com> and add this callback URL: `https://jplanari.github.io/BikeToolsAnalyzer/oauth/`. New apps start in sandbox mode (25 requests per 5 minutes, 100 per hour); a large history import simply pauses and can be run again, or you can ask Wahoo to move the app to production.
+3. Add its **Client ID** and **Client Secret** to `.streamlit/secrets.toml` (see `secrets.toml.example`; for the desktop app see `desktop/README.md`):
    ```toml
    [wahoo]
    client_id = "..."
    client_secret = "..."
-   redirect_uri = "http://localhost:8501/"
+   redirect_uri = "https://jplanari.github.io/BikeToolsAnalyzer/oauth/"
    ```
-3. Restart the app.
+4. Restart the app. It must be running on port **8501** when you finish the sign-in.
+
+(Replace the user and repository name if you fork it.) The forwarding page sees only the one-time code, which is useless without the client secret that stays in your `secrets.toml`; its target is fixed to localhost:8501. Publishing `/docs` also publishes the physics report that lives there. **Strava** keeps `redirect_uri = "http://localhost:8501/"` (callback domain `localhost`).
 
 **Any ride, not just the recent ones:** under the ride list, **🔎 Find a ride by date** (Strava and Wahoo) lists every ride between two dates; pick one and *Analyze ride*. **Clear** returns to the recent list.
 
