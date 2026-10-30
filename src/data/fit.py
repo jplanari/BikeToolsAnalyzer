@@ -180,20 +180,45 @@ def get_fit_laps(file_bytes):
 
 
 
+def _naive(ts):
+    ts = pd.Timestamp(ts)
+    return ts.tz_convert("UTC").tz_localize(None) if ts.tzinfo is not None else ts
+
+
+def lap_spans_from_messages(laps):
+    """
+    laps: list of dicts of lap-message fields, in file order. Each lap's start is its start_time; when a device
+    leaves that out, the lap's end timestamp minus its length, or else where the previous lap ended.
+    Returns DataFrame(start, elapsed_s).
+    """
+    rows, prev_end = [], None
+    for d in laps:
+        secs = d.get('total_elapsed_time') or d.get('total_timer_time')
+        if not secs:
+            continue
+        secs = float(secs)
+        if d.get('start_time') is not None:
+            start = _naive(d['start_time'])
+        elif d.get('timestamp') is not None:
+            start = _naive(d['timestamp']) - pd.Timedelta(seconds=secs)
+        elif prev_end is not None:
+            start = prev_end
+        else:
+            continue
+        rows.append({'start': start, 'elapsed_s': secs})
+        prev_end = start + pd.Timedelta(seconds=secs)
+    return pd.DataFrame(rows, columns=['start', 'elapsed_s'])
+
+
 @st.cache_data(show_spinner=False)
 def get_fit_lap_spans(file_bytes):
     """Start time and elapsed seconds of each lap (naive UTC, like the ride's 'time' column), in file order."""
     try:
         fitfile = fitparse.FitFile(io.BytesIO(file_bytes))
-        rows = []
-        for lap in fitfile.get_messages("lap"):
-            d = {f.name: f.value for f in lap}
-            start = d.get('start_time')
-            secs = d.get('total_elapsed_time') or d.get('total_timer_time')
-            if start is not None and secs:
-                rows.append({'start': pd.Timestamp(start).tz_localize(None) if pd.Timestamp(start).tzinfo else pd.Timestamp(start),
-                             'elapsed_s': float(secs)})
+        laps = [{f.name: f.value for f in lap} for lap in fitfile.get_messages("lap")]
+        spans = lap_spans_from_messages(laps)
+        spans.attrs['lap_messages'] = len(laps)
+        return spans
     except Exception as e:
         print(f"FIT lap parse error: {e}")
         return pd.DataFrame(columns=['start', 'elapsed_s'])
-    return pd.DataFrame(rows, columns=['start', 'elapsed_s'])

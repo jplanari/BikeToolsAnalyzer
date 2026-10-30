@@ -3,11 +3,13 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_folium import st_folium
 from plotly.subplots import make_subplots
 
 from src.analysis import segments as sg
 from src.viz.climb_estimator import render_climb_estimator
 from src.viz.formatting import format_duration
+from src.viz.maps import create_segment_map
 from src.viz.plots import plot_detailed_climb
 
 MIN_ESTIMATOR_LENGTH_M = 300
@@ -55,26 +57,28 @@ def _channels(df, i0, i1):
 
 
 def _metrics(s):
-    r1 = st.columns(5)
-    r1[0].metric("Time", _time(s.get('elapsed_s')), help="Elapsed; moving " + _time(s.get('moving_s')))
-    r1[1].metric("Distance", _fmt(s.get('dist_km'), ".2f", " km"))
-    r1[2].metric("Ascent", _fmt(s.get('ascent_m'), ".0f", " m"), help=f"Descent {_fmt(s.get('descent_m'), '.0f', ' m')}")
-    r1[3].metric("Avg gradient", _fmt(s.get('avg_grade_pct'), ".1f", " %"))
-    r1[4].metric("VAM", _fmt(s.get('vam_m_h'), ".0f", " m/h"))
-    r2 = st.columns(5)
-    r2[0].metric("Avg speed", _fmt(s.get('avg_speed_kph'), ".1f", " km/h"))
-    r2[1].metric("Avg power", _fmt(s.get('avg_power'), ".0f", " W"),
-                 help=f"{_fmt(s.get('w_per_kg'), '.2f', ' W/kg')} · max {_fmt(s.get('max_power'), '.0f', ' W')}")
-    r2[2].metric("Normalized power", _fmt(s.get('norm_power'), ".0f", " W"),
-                 help="Needs at least 30 s of power data.")
-    r2[3].metric("Avg HR", _fmt(s.get('avg_hr'), ".0f", " bpm"), help=f"max {_fmt(s.get('max_hr'), '.0f', ' bpm')}")
-    r2[4].metric("Avg cadence", _fmt(s.get('avg_cadence'), ".0f", " rpm"), help="While pedalling.")
-    r3 = st.columns(5)
-    r3[0].metric("Intensity factor", _fmt(s.get('if'), ".2f"))
-    r3[1].metric("TSS", _fmt(s.get('tss'), ".0f"))
-    r3[2].metric("Work", _fmt(s.get('kj'), ".0f", " kJ"))
-    r3[3].metric("Variability index", _fmt(s.get('vi'), ".2f"))
-    r3[4].metric("Efficiency factor", _fmt(s.get('ef'), ".2f"), help="Normalized power / average HR.")
+    cells = [
+        ("Time", _time(s.get('elapsed_s')), "Elapsed; moving " + _time(s.get('moving_s'))),
+        ("Distance", _fmt(s.get('dist_km'), ".2f", " km"), None),
+        ("Ascent", _fmt(s.get('ascent_m'), ".0f", " m"), f"Descent {_fmt(s.get('descent_m'), '.0f', ' m')}"),
+        ("Avg gradient", _fmt(s.get('avg_grade_pct'), ".1f", " %"), None),
+        ("VAM", _fmt(s.get('vam_m_h'), ".0f", " m/h"), None),
+        ("Avg speed", _fmt(s.get('avg_speed_kph'), ".1f", " km/h"), f"max {_fmt(s.get('max_speed_kph'), '.1f', ' km/h')}"),
+        ("Avg power", _fmt(s.get('avg_power'), ".0f", " W"),
+         f"{_fmt(s.get('w_per_kg'), '.2f', ' W/kg')} · max {_fmt(s.get('max_power'), '.0f', ' W')}"),
+        ("Normalized power", _fmt(s.get('norm_power'), ".0f", " W"), "Needs at least 30 s of power data."),
+        ("Avg HR", _fmt(s.get('avg_hr'), ".0f", " bpm"), f"max {_fmt(s.get('max_hr'), '.0f', ' bpm')}"),
+        ("Avg cadence", _fmt(s.get('avg_cadence'), ".0f", " rpm"), "While pedalling."),
+        ("Intensity factor", _fmt(s.get('if'), ".2f"), None),
+        ("TSS", _fmt(s.get('tss'), ".0f"), None),
+        ("Work", _fmt(s.get('kj'), ".0f", " kJ"), None),
+        ("Variability index", _fmt(s.get('vi'), ".2f"), None),
+        ("Efficiency factor", _fmt(s.get('ef'), ".2f"), "Normalized power / average HR."),
+    ]
+    for r in range(0, len(cells), 3):
+        cols = st.columns(3)
+        for col, (label, value, help_) in zip(cols, cells[r:r + 3]):
+            col.metric(label, value, help=help_)
 
 
 def _lap_table(df, spans, ftp, weight):
@@ -90,16 +94,25 @@ _fragment = getattr(st, "fragment", lambda func: func)
 
 
 @_fragment
-def render_segment_analysis(df, settings, lap_time_spans=None, ride_id="0"):
-    """lap_time_spans: DataFrame(start, elapsed_s) from the FIT file, or None."""
+def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride_id="0"):
+    """
+    lap_time_spans: DataFrame(start, elapsed_s) from the FIT file, or None (not a FIT file).
+    climbs: detect_climbs() output. Both appear as ready-made selections next to the free range.
+    """
     if len(df) < 30 or 'ele' not in df.columns:
         return
     st.subheader("📐 Segment analysis")
     ftp, weight = settings.get('ftp'), settings.get('weight')
     laps = sg.lap_spans(df, lap_time_spans)
-    modes = ["Custom selection"] + (["Lap"] if laps else [])
+    climb_spans = sg.climb_spans(df, climbs)
+    if lap_time_spans is not None and not laps:
+        n = lap_time_spans.attrs.get('lap_messages', len(lap_time_spans))
+        st.caption("No laps could be matched to this ride" + (f" ({n} lap record(s) in the file)." if n else
+                   ": the file has no laps (the whole ride is one)."))
+    modes = ["Custom selection"] + (["Lap"] if laps else []) + (["Climb"] if climb_spans else [])
     mode = st.radio("Analyse", modes, horizontal=True, key=f"seg_mode_{ride_id}")
 
+    chosen = None                                   # the detected climb when one is picked
     if mode == "Lap":
         label_of = {}
         for label, i0, i1 in laps:
@@ -107,6 +120,13 @@ def render_segment_analysis(df, settings, lap_time_spans=None, ride_id="0"):
             label_of[label] = f"{label} · {_fmt(s.get('dist_km'), '.1f', ' km')} · {_time(s.get('elapsed_s'))}"
         pick = st.selectbox("Lap", [l for l, *_ in laps], format_func=label_of.get, key=f"seg_lap_{ride_id}")
         _, i0, i1 = next(x for x in laps if x[0] == pick)
+    elif mode == "Climb":
+        label_of = {}
+        for label, i0, i1, c in climb_spans:
+            label_of[label] = (f"{label} · {c['type']} · {c['length_m'] / 1000:.1f} km · "
+                               f"{c['avg_gradient_pct']:.1f} %")
+        pick = st.selectbox("Climb", [x[0] for x in climb_spans], format_func=label_of.get, key=f"seg_climb_{ride_id}")
+        _, i0, i1, chosen = next(x for x in climb_spans if x[0] == pick)
     elif 'dist_m' in df.columns and df['dist_m'].notna().any():
         total_km = float(df['dist_m'].max()) / 1000.0
         a, b = st.slider("Distance range (km)", 0.0, round(total_km, 1), (0.0, round(min(total_km, 5.0), 1)),
@@ -123,14 +143,28 @@ def render_segment_analysis(df, settings, lap_time_spans=None, ride_id="0"):
         return
     st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}")
     stats = sg.segment_stats(df, i0, i1, ftp, weight)
-    _metrics(stats)
+
+    seg_map = create_segment_map(df, i0, i1)
+    if seg_map is not None:
+        left, right = st.columns([2, 3])
+        with left:
+            try:
+                st_folium(seg_map, height=520, use_container_width=True, returned_objects=[],
+                          key=f"seg_map_{ride_id}")
+            except TypeError:                                # older streamlit-folium without use_container_width
+                st_folium(seg_map, width=480, height=520, returned_objects=[], key=f"seg_map_{ride_id}")
+        with right:
+            _metrics(stats)
+    else:
+        _metrics(stats)
+
     fig = _channels(df, i0, i1)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True, key=f"seg_ch_{ride_id}_{i0}_{i1}")
 
-    climb = sg.as_climb(df, i0, i1)
+    climb = chosen or sg.as_climb(df, i0, i1)
     if climb['length_m'] >= MIN_ESTIMATOR_LENGTH_M and 'dist_m' in df.columns:
-        with st.expander("Gradient profile and performance estimator"):
+        with st.expander("Gradient profile and performance estimator", expanded=chosen is not None):
             st.plotly_chart(plot_detailed_climb(df.iloc[i0:i1 + 1]), use_container_width=True,
                             key=f"seg_prof_{ride_id}_{i0}_{i1}")
             if climb['avg_gradient_pct'] >= MIN_ESTIMATOR_GRADE_PCT:
@@ -141,3 +175,7 @@ def render_segment_analysis(df, settings, lap_time_spans=None, ride_id="0"):
     if laps:
         with st.expander("Compare all laps"):
             st.dataframe(_lap_table(df, laps, ftp, weight), use_container_width=True, hide_index=True)
+    if climb_spans:
+        with st.expander("Compare all climbs"):
+            st.dataframe(_lap_table(df, [(l, a, b) for l, a, b, _ in climb_spans], ftp, weight),
+                         use_container_width=True, hide_index=True)

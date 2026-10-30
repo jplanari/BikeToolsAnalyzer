@@ -140,6 +140,18 @@ def lap_spans(df, spans):
     return out
 
 
+def climb_spans(df, climbs):
+    """[(label, i0, i1, climb)] for detected climbs (their start_idx/end_idx are index labels of df)."""
+    out = []
+    for n, c in enumerate(climbs or [], 1):
+        try:
+            i0, i1 = int(df.index.get_loc(c['start_idx'])), int(df.index.get_loc(c['end_idx']))
+        except KeyError:
+            continue
+        out.append((f"Climb {n}", i0, max(i0, i1), c))
+    return out
+
+
 def stats_table(df, spans, ftp=None, weight=None):
     """One row per span (label, i0, i1), for comparing laps."""
     rows = []

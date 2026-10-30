@@ -104,5 +104,40 @@ def test_selection_behaves_like_a_detected_climb():
 
 
 def test_ride_page_wiring_imports():
+    pytest.importorskip("streamlit_folium")
     import src.viz.segment_analysis as ui           # the UI module and its helpers load
     assert ui._fmt(None, ".1f") == "n/a" and ui._fmt(3.14159, ".1f", " m") == "3.1 m"
+
+
+def test_detected_climbs_become_selectable_spans():
+    df = ride()
+    climbs = [{'start_idx': 100, 'end_idx': 250, 'length_m': 1200, 'type': 'Cat 4', 'avg_gradient_pct': 5.0}]
+    spans = sg.climb_spans(df, climbs)
+    assert spans[0][:3] == ("Climb 1", 100, 250) and spans[0][3] is climbs[0]
+    assert sg.climb_spans(df, [{'start_idx': 9999, 'end_idx': 99999}]) == [] and sg.climb_spans(df, None) == []
+
+
+def test_lap_times_survive_missing_start_times():
+    pytest.importorskip("fitparse")
+    from src.data.fit import lap_spans_from_messages
+    ts = pd.Timestamp("2026-10-01 08:10:00")
+    spans = lap_spans_from_messages([
+        {'start_time': pd.Timestamp("2026-10-01 08:00:00"), 'total_elapsed_time': 300.0},
+        {'timestamp': ts, 'total_timer_time': 300.0},                    # only its end time
+        {'total_elapsed_time': 120.0},                                   # nothing: follows the previous lap
+        {'total_elapsed_time': 0}])                                      # empty lap: skipped
+    assert list(spans['start']) == [pd.Timestamp("2026-10-01 08:00:00"), pd.Timestamp("2026-10-01 08:05:00"),
+                                    ts]
+    assert list(spans['elapsed_s']) == [300.0, 300.0, 120.0]
+    laps = sg.lap_spans(ride(n=800), spans)
+    assert [l[0] for l in laps] == ["Lap 1", "Lap 2", "Lap 3"] and laps[0][1:] == (0, 299)
+
+
+def test_segment_map_highlights_the_selection():
+    pytest.importorskip("folium")
+    from src.viz.maps import create_segment_map
+    df = ride(lat=41 + np.arange(600) * 1e-5, lon=2.0 + np.arange(600) * 1e-5)
+    m = create_segment_map(df, 100, 300)
+    html = m.get_root().render()
+    assert "#d62728" in html and "Start" in html and "End" in html
+    assert create_segment_map(ride(), 0, 10) is None                    # no GPS

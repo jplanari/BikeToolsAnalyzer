@@ -24,10 +24,10 @@ A standalone version with its own window (no terminal, no Python install) can be
 
 📐 Segment analysis (bottom of the ride page)
 
-- Pick any stretch of the ride with a distance slider, or choose a **lap** (FIT files), and get the numbers a whole ride gets: time, distance, ascent, gradient, VAM, average speed, average power and W/kg, normalized power, IF, TSS, work, VI, average HR, EF and average cadence (while pedalling), with the power / HR / speed / cadence traces of that stretch.
-- Stretches of 300 m or more get their gradient profile and, if they average 1 % or more, the same performance estimator as climbs. *Compare all laps* tabulates every lap side by side.
+- Pick any stretch of the ride with a distance slider, a **lap** (FIT files) or a **detected climb**, see it on the map next to its numbers, and get the numbers a whole ride gets: time, distance, ascent, gradient, VAM, average speed, average power and W/kg, normalized power, IF, TSS, work, VI, average HR, EF and average cadence (while pedalling), with the power / HR / speed / cadence traces of that stretch.
+- Stretches of 300 m or more get their gradient profile and, if they average 1 % or more, the same performance estimator as climbs. *Compare all laps* and *Compare all climbs* tabulate them side by side.
 
-⛰️ Climb performance estimator (Analyze Upload → Detected Climbs → View Details)
+⛰️ Climb performance estimator (Analyze Upload → Segment analysis → *Climb*)
 
 - For each detected climb, change **system weight, CdA, rolling resistance, air density and power** and see the time it would take, or ask for the **power needed for a target time**. A steady-state model on the climb's gradient profile (no wind); the *as ridden* line applies it to your actual power so you can see how close it gets, and a small table shows what −1 kg, −0.01 m² CdA, −0.001 Crr and +10 W are worth.
 
