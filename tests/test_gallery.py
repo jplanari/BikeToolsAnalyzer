@@ -40,3 +40,19 @@ def test_last_seven_days_strip():
     s = g.week_summary(rides(), today='2026-10-29')
     assert s['rides'] == 2 and s['hours'] == pytest.approx(2.5) and s['tss'] == pytest.approx(150)
     assert g.week_summary([], today='2026-10-29') == {'rides': 0, 'hours': 0.0, 'tss': 0.0}
+
+
+def test_the_same_ride_from_two_sources_appears_once():
+    dup = [
+        {'id': 1, 'filename': 'strava_5.json', 'date_time': '2026-10-28T12:38:01', 'moving_s': 7000, 'tss': 99},
+        {'id': 2, 'filename': 'wahoo_9.fit', 'date_time': '2026-10-28T12:38:20', 'moving_s': 7000, 'tss': 99},
+        {'id': 3, 'filename': 'other.fit', 'date_time': '2026-10-27T08:00:00', 'moving_s': 3000, 'tss': 40},
+    ]
+    kept = g.collapse_duplicates(dup)
+    assert sorted(r['id'] for r in kept) == [2, 3]                  # the recorder's FIT file beats Strava's copy
+    shown, total = g.filter_rides(dup)
+    assert total == 2 and [r['id'] for r in shown] == [2, 3]
+    assert g.week_summary(dup, today='2026-10-29')['rides'] == 2    # and it is not counted twice either
+    assert g.collapse_duplicates([dup[0], {**dup[0], 'id': 8, 'filename': 'x.gpx'}])[0]['filename'] == 'x.gpx'
+    far = {**dup[1], 'id': 4, 'date_time': '2026-10-28T15:00:00'}
+    assert len(g.collapse_duplicates([dup[0], far])) == 2            # different start times are different rides

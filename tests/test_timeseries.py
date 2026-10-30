@@ -48,15 +48,12 @@ def test_time_axis_only_when_there_is_no_distance():
     assert fig.layout.xaxis2.title.text == "Time (min)" and max(fig.data[1].x) == pytest.approx(1199 / 60)
 
 
-def test_default_smoothing_is_five_seconds():
-    import inspect
-    assert inspect.signature(ts.build_figure).parameters["smoothing"].default == "5 s"
-
-
-def test_smoothing_flattens_the_channel():
-    raw = ts.build_figure(ride(), ["Power"], smoothing="None").data[1].y
-    smooth = ts.build_figure(ride(), ["Power"], smoothing="30 s").data[1].y
-    assert np.std(smooth) < np.std(raw)
+def test_smoothing_is_a_fixed_five_second_average():
+    assert ts.SMOOTHING_S == 5
+    df = ride()
+    df['power'] = np.where(np.arange(len(df)) % 2, 400.0, 0.0)          # alternating every second
+    y = ts.build_figure(df, ["Power"]).data[1].y
+    assert np.std(y[10:-10]) < 100                                       # the 5 s average removes most of the +-200 W swing
 
 
 def test_long_rides_are_thinned_and_odd_input_is_tolerated():

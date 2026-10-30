@@ -6,13 +6,12 @@ with colours derived from the text colour (currentColor) so it works in light an
   Dashboard  Metric cards with an accent edge, pill-style selectors, rounded panels, roomier spacing.
   Compact    The same cards, tighter: more on a small laptop screen.
 
-Navigation can sit in the sidebar (default) or as a bar at the top of the page.
+Navigation is a bar at the top of the page.
 """
 import streamlit as st
 
 LOOKS = ["Compact", "Dashboard", "Classic"]
-NAV_PLACES = ["Sidebar", "Top bar"]
-DEFAULT_LOOK, DEFAULT_NAV = "Compact", "Sidebar"
+DEFAULT_LOOK = "Compact"
 ACCENT = "#FF5A1F"                              # same as primaryColor in .streamlit/config.toml
 
 _EDGE = "color-mix(in srgb, currentColor 14%, transparent)"
@@ -81,10 +80,6 @@ def current_look():
     return st.session_state.get("look") or _query_value("look", LOOKS, DEFAULT_LOOK)
 
 
-def current_nav():
-    return st.session_state.get("nav_place") or _query_value("nav", NAV_PLACES, DEFAULT_NAV)
-
-
 def apply_look():
     css = css_for(current_look())
     if css:
@@ -92,15 +87,13 @@ def apply_look():
 
 
 def appearance_controls():
-    """Sidebar box to switch look and navigation placement; the choice is also kept in the page address."""
+    """Sidebar box to switch look; the choice is also kept in the page address."""
     with st.sidebar.expander("🎨 Appearance"):
         look = st.selectbox("Look", LOOKS, index=LOOKS.index(current_look()), key="look",
-                            help="Dashboard: cards and pills. Compact: denser. Classic: Streamlit's default.")
-        nav = st.radio("Navigation", NAV_PLACES, index=NAV_PLACES.index(current_nav()), key="nav_place",
-                       horizontal=True)
+                            help="Compact: dense cards. Dashboard: roomier. Classic: Streamlit's default.")
         st.caption("Light/dark follows your system; change it in ⋮ → Settings.")
     try:
-        st.query_params["look"], st.query_params["nav"] = look, nav
+        st.query_params["look"] = look
     except Exception:
         pass
 

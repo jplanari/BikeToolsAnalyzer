@@ -13,7 +13,7 @@ CHANNELS = {
     "Gradient": ("grade_smooth", "%", "#E69F00"),
     "W′ balance": ("w_prime_balance", "J", "#56B4E9"),
 }
-SMOOTHING = {"None": 1, "5 s": 5, "10 s": 10, "30 s": 30}
+SMOOTHING_S = 5                  # moving-average window, seconds (samples at 1 Hz)
 MAX_POINTS = 3000
 BASE_FILL = "rgba(128,128,128,0.25)"
 BASE_LINE = "rgba(128,128,128,0.7)"
@@ -47,12 +47,11 @@ def _smooth(s, window):
     return s.rolling(window, min_periods=1, center=True).mean() if window > 1 else s
 
 
-def build_figure(df, series, smoothing="5 s"):
+def build_figure(df, series):
     """
     series: labels from CHANNELS. One row per channel under the elevation profile, all sharing the distance axis
     (time when the file has no distance), so hovering anywhere shows every channel at that point of the route.
     """
-    window = SMOOTHING.get(smoothing, 1)
     x, x_title = _x(df)
     series = [s for s in series if s in CHANNELS and CHANNELS[s][0] in df.columns]
     has_ele = 'ele' in df.columns and df['ele'].notna().any()
@@ -70,7 +69,7 @@ def build_figure(df, series, smoothing="5 s"):
         r += 1
     for label in series:
         col, unit, color = CHANNELS[label]
-        lx, ly = _thin(x, _smooth(df[col], window))
+        lx, ly = _thin(x, _smooth(df[col], SMOOTHING_S))
         fig.add_trace(go.Scatter(x=lx, y=ly, mode='lines', name=label, line=dict(color=color, width=1.6),
                                  hovertemplate="%{y:.1f} " + unit), row=r, col=1)
         fig.update_yaxes(title_text=f"{label} ({unit})", row=r, col=1)

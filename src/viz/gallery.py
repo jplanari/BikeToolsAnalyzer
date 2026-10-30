@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from src.data.cached import get_user_rides
+from src.data.strava_import import DUPLICATE_START_TOLERANCE_S
 from src.data.db import get_ride_file
 from src.viz.formatting import format_duration
 
@@ -26,11 +27,32 @@ def _when(row):
     return None if pd.isna(ts) else ts
 
 
+def _source_rank(filename):
+    """Which copy of the same ride to keep: the recorder's FIT file first, then other uploads, Strava's rebuilt
+    streams last (lower rank wins)."""
+    name = (filename or "").lower()
+    return 2 if name.endswith(".json") else (0 if name.endswith(".fit") else 1)
+
+
+def collapse_duplicates(rides, tolerance_s=DUPLICATE_START_TOLERANCE_S):
+    """The same ride saved from two sources (Strava and Wahoo, or an upload) starts at the same moment: keep one."""
+    dated = sorted((r for r in rides if _when(r) is not None), key=_when)
+    undated = [r for r in rides if _when(r) is None]
+    kept = []
+    for r in dated:
+        if kept and abs((_when(r) - _when(kept[-1])).total_seconds()) <= tolerance_s:
+            if _source_rank(r.get("filename")) < _source_rank(kept[-1].get("filename")):
+                kept[-1] = r
+        else:
+            kept.append(r)
+    return kept + undated
+
+
 def filter_rides(rides, query="", limit=PAGE_SIZE):
     """Newest first; keeps rides whose title or date contains every word of `query`. Returns (shown, total_matching)."""
     words = (query or "").lower().split()
     out = []
-    for r in sorted(rides, key=lambda r: str(r.get("date_time") or ""), reverse=True):
+    for r in sorted(collapse_duplicates(rides), key=lambda r: str(r.get("date_time") or ""), reverse=True):
         ts = _when(r)
         hay = f"{ride_title(r.get('filename'))} {ts:%d %b %Y %A %B}".lower() if ts is not None \
             else ride_title(r.get('filename')).lower()
@@ -43,7 +65,7 @@ def week_summary(rides, today=None):
     """Rides, hours and TSS of the last 7 days (today included)."""
     today = pd.Timestamp(today or pd.Timestamp.today()).normalize()
     n, secs, tss = 0, 0.0, 0.0
-    for r in rides:
+    for r in collapse_duplicates(rides):
         ts = _when(r)
         if ts is not None and today - pd.Timedelta(days=6) <= ts.normalize() <= today:
             n += 1
@@ -58,17 +80,13 @@ def _num(v, spec, unit=""):
 
 def _card(r):
     ts = _when(r)
+    moving = r.get("moving_s")
     with st.container(border=True):
         st.markdown(f"**{ride_title(r.get('filename'))}**")
         st.caption(f"{ts:%a %d %b %Y · %H:%M}" if ts is not None else "date unknown")
-        a, b, c = st.columns(3)
-        a.metric("Distance", _num(r.get("distance_km"), ".1f", " km"))
-        b.metric("Ascent", _num(r.get("elevation_m"), ".0f", " m"))
-        moving = r.get("moving_s")
-        c.metric("Time", format_duration(int(moving)) if moving is not None and not pd.isna(moving) else "–")
-        d, e, _ = st.columns(3)
-        d.metric("NP", _num(r.get("norm_power"), ".0f", " W"))
-        e.metric("TSS", _num(r.get("tss"), ".0f"))
+        t = format_duration(int(moving)) if moving is not None and not pd.isna(moving) else "–"
+        st.markdown(f"{_num(r.get('distance_km'), '.1f', ' km')} · ↑ {_num(r.get('elevation_m'), '.0f', ' m')} · {t}")
+        st.caption(f"NP {_num(r.get('norm_power'), '.0f', ' W')} · TSS {_num(r.get('tss'), '.0f')}")
         if st.button("Open ride", key=f"open_ride_{r['id']}", use_container_width=True):
             name, content = get_ride_file(int(r["id"]))
             if content is None:

@@ -17,7 +17,8 @@ from src.viz.plots import (plot_elevation,
 from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
-from src.data.db import save_ride, build_ride_metadata
+from src.data.db import save_ride, build_ride_metadata, get_ride_start_times
+from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
@@ -256,6 +257,15 @@ def _render_report_expander(df, summary, settings, filename, total_dist, total_a
                 st.caption("The thermal chart is left out: run the thermal simulation above first, then create the report again.")
 
 
+def _already_in_history(user_name, stats):
+    """True when a saved ride starts within a couple of minutes of this one: the same ride from another source
+    (Strava vs Wahoo vs an upload) must not be counted twice in the training load."""
+    start = pd.to_datetime(stats.get('date'), errors='coerce', utc=True)
+    if pd.isna(start):
+        return False
+    return _is_near(start.tz_convert(None), get_ride_start_times(user_name), DUPLICATE_START_TOLERANCE_S)
+
+
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
     """Helper to handle database saving logic."""
     stats = build_ride_metadata(df, dist, ele, summary['avg_speed_kph'], summary['norm_power'],
@@ -268,7 +278,10 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
         
     file_hash = hashlib.md5(file_bytes).hexdigest()
     
-    if file_hash not in st.session_state['saved_hashes']:
+    if file_hash not in st.session_state['saved_hashes'] and _already_in_history(user_name, stats):
+        st.session_state['saved_hashes'].add(file_hash)
+        st.toast("Already in your history (same start time): not saved twice.")
+    elif file_hash not in st.session_state['saved_hashes']:
         success, msg = save_ride(user_name, filename, file_bytes, stats, power_curve_dict)
         if success:
             st.toast(f"✅ Saved to History: {filename}")
@@ -313,13 +326,10 @@ def _render_time_series(df):
         st.info("This ride has no power, heart rate, speed or cadence data.")
         return
     default = [c for c in ("Power",) if c in channels] or channels[:1]
-    a, b = st.columns([4, 1])
-    with a:
-        chosen = remembered(st.multiselect, "ts_channels", default, "Channels under the elevation profile",
-                            options=channels, max_selections=6)
-    with b:
-        smoothing = remembered(st.selectbox, "ts_smoothing", "5 s", "Smoothing", list(ts.SMOOTHING))
-    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels], smoothing),
+    chosen = remembered(st.multiselect, "ts_channels", default, "Channels under the elevation profile",
+                        options=channels, max_selections=6)
+    st.caption(f"Smoothed with a {ts.SMOOTHING_S} s moving average.")
+    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels]),
                     use_container_width=True, key="ts_chart")
 
 
