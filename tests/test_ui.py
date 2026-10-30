@@ -87,9 +87,19 @@ def _texts(elements):
 def test_every_page_loads_with_no_users(empty_db):
     at = _app()
     _no_errors(at)
-    assert "Upload a GPX/FIT" in _texts(at.info)
+    assert "create your profile" in _texts(at.subheader)           # no user: the welcome page is only the form
+    assert not at.info or "Upload a GPX/FIT" not in _texts(at.info)
     for page in ("Training", "User Corner", "Analyze Upload"):
         _no_errors(_go(at, page))
+
+
+def test_first_profile_form_creates_the_user_and_shows_the_gallery_hint(empty_db):
+    at = _app()
+    at.text_input(key="first_profile_name").set_value("Ana")
+    next(b for b in at.button if b.label == "Create profile").click().run()
+    _no_errors(at)
+    assert db.get_user_data("Ana")
+    assert "Upload a GPX/FIT" in _texts(at.info)
 
 
 def test_training_page(seeded_db):

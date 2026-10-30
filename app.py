@@ -35,8 +35,9 @@ if app_mode == "Analyze Upload":
         else:
             process_and_display_analysis(opened, selected_user, settings)
     else:
-        theme.welcome(compact=bool(selected_user))
-        render_gallery(selected_user)
+        theme.welcome(has_user=bool(selected_user))
+        if selected_user:
+            render_gallery(selected_user)
 
 elif app_mode == "Training":
     render_training_page(selected_user)

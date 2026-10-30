@@ -103,18 +103,32 @@ def page_header(subtitle=""):
                 unsafe_allow_html=True)
 
 
-def welcome(compact=False):
-    """What to do first, when no ride is open. compact: a profile exists, so only the one-line hint."""
-    st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
-    if compact:
+def welcome(has_user=True):
+    """What to do first, when no ride is open. Without a profile the page is only the profile form."""
+    if not has_user:
+        _first_profile()
         return
-    steps = [("1 · Profile", "Create your profile in the sidebar (FTP, LTHR, weight, height). Zones, TSS and "
-                             "W/kg use it."),
-             ("2 · Choose a ride", "Upload a GPX/FIT file, or connect Strava or Wahoo and pick any ride, "
-                                   "also by date."),
-             ("3 · Explore", "Summary, power curve, CdA, thermal model, and the segment analysis for any stretch, "
-                             "lap or climb. Then export the ride as a PDF.")]
-    for col, (title, text) in zip(st.columns(3), steps):
-        with col.container(border=True):
-            st.markdown(f"**{title}**")
-            st.caption(text)
+    st.info("👈 Upload a GPX/FIT file in the sidebar or pick a ride from **Strava** or **Wahoo**.")
+
+
+def _first_profile():
+    """The one thing to do before anything else: create the rider's profile (zones, TSS and W/kg use it)."""
+    from src.data.db import save_user
+    st.subheader("Welcome — create your profile")
+    st.caption("Zones, TSS and W/kg are computed from these values. You can edit them later in the sidebar.")
+    with st.form("first_profile_form"):
+        name = st.text_input("Name", key="first_profile_name")
+        c1, c2, c3, c4 = st.columns(4)
+        ftp = c1.number_input("FTP (Watts)", value=200)
+        lthr = c2.number_input("LTHR (bpm)", value=170)
+        weight = c3.number_input("Weight (kg)", value=70.0)
+        height = c4.number_input("Height (cm)", value=175)
+        if st.form_submit_button("Create profile", type="primary"):
+            if not name.strip():
+                st.error("Enter a name first.")
+            else:
+                ok, msg = save_user(name.strip(), ftp, lthr, weight, height)
+                if ok:
+                    st.rerun()
+                else:
+                    st.error(msg)
