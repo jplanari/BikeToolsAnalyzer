@@ -247,8 +247,8 @@ def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db,
     assert "Power Curve" in _texts(at.subheader) and at.get("plotly_chart")
     section.set_value("📈 Time series").run()
     _no_errors(at)
-    assert at.get("plotly_chart") and "Channels over the elevation profile" in [m.label for m in at.multiselect]
-    next(r for r in at.radio if r.label == "Layout").set_value("Stacked").run()
-    _no_errors(at)
+    assert at.get("plotly_chart") and "Channels under the elevation profile" in [m.label for m in at.multiselect]
+    assert next(s for s in at.selectbox if s.label == "Smoothing").value == "5 s"
+    assert not [r for r in at.radio if r.label in ("Layout", "X axis")]
     next(b for b in at.button if b.key == "back_to_gallery").click().run()
     assert "Last 7 days" in {m.label for m in at.metric}

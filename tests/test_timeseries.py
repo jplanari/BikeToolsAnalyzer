@@ -35,30 +35,22 @@ def test_available_channels_follow_the_data():
     assert "Heart rate" not in ts.available(df) and ts.available(ride(power=1, hr=1))[0] == "Speed"
 
 
-def test_overlay_has_the_elevation_base_and_one_axis_per_channel():
+def test_one_row_per_channel_under_the_elevation_base():
     fig = ts.build_figure(ride(), ["Power", "Heart rate", "Speed"])
     assert [t.name for t in fig.data] == ["Elevation", "Power", "Heart rate", "Speed"]
-    assert fig.data[0].fill == "tozeroy"
-    right = fig.layout.xaxis.domain[1]
-    assert right < 0.97                                                  # room for the extra axes
-    for name, colour in (("yaxis2", "#0072B2"), ("yaxis3", "#D55E00"), ("yaxis4", "#009E73")):
-        ax = fig.layout[name]
-        assert ax.overlaying == "y" and ax.side == "right" and ax.tickfont.color == colour
-        assert right <= ax.position <= 1.0
-    assert [t.yaxis for t in fig.data] == ["y", "y2", "y3", "y4"]
+    assert fig.data[0].fill == "tozeroy" and len({t.yaxis for t in fig.data}) == 4
+    assert fig.layout.xaxis4.title.text == "Distance (km)"               # shared axis, labelled once at the bottom
+    assert max(fig.data[1].x) == pytest.approx(1199 * 8 / 1000)
 
 
-def test_stacked_has_one_row_per_channel_below_the_elevation():
-    fig = ts.build_figure(ride(), ["Power", "Speed"], layout="Stacked")
-    assert [t.name for t in fig.data] == ["Elevation", "Power", "Speed"]
-    assert len({t.yaxis for t in fig.data}) == 3
+def test_time_axis_only_when_there_is_no_distance():
+    fig = ts.build_figure(ride(dist_m=1), ["Power"])
+    assert fig.layout.xaxis2.title.text == "Time (min)" and max(fig.data[1].x) == pytest.approx(1199 / 60)
 
 
-def test_x_axis_can_be_distance_or_time():
-    d = ts.build_figure(ride(), ["Power"], x_mode="Distance")
-    t = ts.build_figure(ride(), ["Power"], x_mode="Time")
-    assert d.layout.xaxis.title.text == "Distance (km)" and t.layout.xaxis.title.text == "Time (min)"
-    assert max(d.data[1].x) == pytest.approx(1199 * 8 / 1000) and max(t.data[1].x) == pytest.approx(1199 / 60)
+def test_default_smoothing_is_five_seconds():
+    import inspect
+    assert inspect.signature(ts.build_figure).parameters["smoothing"].default == "5 s"
 
 
 def test_smoothing_flattens_the_channel():
@@ -74,5 +66,3 @@ def test_long_rides_are_thinned_and_odd_input_is_tolerated():
     no_ele = ts.build_figure(ride(ele=1), ["Power"])
     assert [t.name for t in no_ele.data] == ["Power"]
     assert len(ts.build_figure(ride(), []).data) == 1                              # only the base
-    for layout in ts.LAYOUTS:
-        ts.build_figure(ride(dist_m=1), ["Power", "Heart rate"], layout=layout)     # no distance column: falls back to time

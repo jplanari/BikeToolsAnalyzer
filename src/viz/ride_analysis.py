@@ -313,19 +313,13 @@ def _render_time_series(df):
         st.info("This ride has no power, heart rate, speed or cadence data.")
         return
     default = [c for c in ("Power",) if c in channels] or channels[:1]
-    a, b, c, d = st.columns([3, 1, 1, 1])
+    a, b = st.columns([4, 1])
     with a:
-        chosen = remembered(st.multiselect, "ts_channels", default, "Channels over the elevation profile",
-                            options=channels, max_selections=5)
+        chosen = remembered(st.multiselect, "ts_channels", default, "Channels under the elevation profile",
+                            options=channels, max_selections=6)
     with b:
         smoothing = remembered(st.selectbox, "ts_smoothing", "5 s", "Smoothing", list(ts.SMOOTHING))
-    with c:
-        x_mode = remembered(st.radio, "ts_x", "Distance", "X axis", ts.X_AXES)
-    with d:
-        layout = remembered(st.radio, "ts_layout", "Overlay", "Layout", ts.LAYOUTS,
-                            help="Overlay: all channels on one chart, each with its own colour-matched axis. "
-                                 "Stacked: one row per channel, shared x axis.")
-    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels], x_mode, layout, smoothing),
+    st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels], smoothing),
                     use_container_width=True, key="ts_chart")
 
 
