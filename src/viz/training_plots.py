@@ -209,3 +209,8 @@ def plot_polarization(dist, mode='light'):
                   annotation_text='> 2.0: polarized', annotation_position='top left',
                   annotation_font=dict(size=11, color=pal['muted']))
     return _layout(fig, 'Polarization index', 'a.u.', pal, legend=False)
+
+
+# Title, legend and plot area never overlap: every plot_* builder above returns a tidied figure.
+from src.viz.figstyle import tidy_builders  # noqa: E402
+tidy_builders(globals())

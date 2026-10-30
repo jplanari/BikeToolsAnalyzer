@@ -6,6 +6,7 @@ import hashlib
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from src.data.gpx import calculate_bearing
+from src.viz.figstyle import tidy
 from src.data.fit import get_fit_laps, get_fit_lap_spans
 from src.data.pipeline import prepare_ride, summarize_ride, ride_kind, metrics_for_storage
 from src.viz.plots import (plot_elevation,
@@ -511,7 +512,7 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(tidy(fig), use_container_width=True)
             
             # --- METRICS ---
             max_core = thermal_df['core_temp'].max()
