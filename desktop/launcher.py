@@ -161,17 +161,23 @@ def tell(message):
         print(message)
 
 
-def open_window(url):
-    """Shows the app in a native window. False when that is not possible (pywebview missing, or no GTK/Qt/WebView2
-    on this machine): the caller then uses the browser instead of giving up."""
+def show_window(url):
+    """Runs the native window in this process (blocking until it is closed)."""
+    import webview
+    webview.create_window("BikeTools Analyzer", url, width=1400, height=900)
+    webview.start()
+
+
+def open_window(url, log=None):
+    """Shows the app in a native window. False when that is not possible (pywebview missing, no GTK/Qt/WebView2,
+    or Qt aborting the whole process for a missing system library): the caller then uses the browser. The window
+    runs in its own process precisely so that such a hard crash cannot take the launcher down with it."""
     try:
-        import webview
-        webview.create_window("BikeTools Analyzer", url, width=1400, height=900)
-        webview.start()                     # returns when the window is closed
-        return True
-    except Exception as e:                  # ImportError, webview.errors.WebViewException, ...
-        print(f"No native window ({type(e).__name__}: {e}); using the browser.", file=sys.stderr)
+        code = subprocess.call(target_command() + ["--window", url], stdout=log, stderr=log,
+                               stdin=subprocess.DEVNULL)
+    except OSError:
         return False
+    return code == 0
 
 
 def main():
@@ -183,6 +189,15 @@ def main():
         except Exception as e:
             tell(f"Could not create the shortcut: {e}")
             return 1
+    if "--window" in sys.argv:
+        if FROZEN or sys.stdout is None:
+            redirect_output_to_log()
+        try:
+            show_window(sys.argv[sys.argv.index("--window") + 1])
+            return 0
+        except Exception as e:
+            print(f"No native window ({type(e).__name__}: {e})", file=sys.stderr)
+            return 3
     if "--server" in sys.argv:
         return run_server(int(sys.argv[sys.argv.index("--server") + 1]))
     if FROZEN or sys.stdout is None:
@@ -196,7 +211,7 @@ def main():
                   file=sys.stderr)
             return 1
         url = f"http://127.0.0.1:{port}"
-        if not open_window(url):
+        if not open_window(url, log):
             webbrowser.open(url)
             print(f"BikeTools Analyzer is running at {url} (Ctrl+C or close this program to quit)")
             server.wait()

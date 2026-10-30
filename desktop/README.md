@@ -14,6 +14,9 @@ Build the standalone app for the OS you are on (PyInstaller cannot cross-compile
 The *Desktop build* GitHub workflow does this for Windows, macOS and Linux (Actions → Desktop build → Run
 workflow, or push a `v*` tag) and attaches the three zips.
 
+**Linux native window:** Qt needs one system library on Ubuntu/Debian 22.04+: `sudo apt install libxcb-cursor0`. Without it
+(or without any window backend) the app opens in your browser instead.
+
 **Shortcut on the desktop / app menu.** After building (or unzipping the downloaded build), run once:
 
     dist/BikeToolsAnalyzer/BikeToolsAnalyzer --install-shortcut        (Windows: BikeToolsAnalyzer.exe)

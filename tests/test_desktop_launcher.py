@@ -64,25 +64,22 @@ def test_server_mode_serves_the_app(tmp_path):
         p.wait(10)
 
 
-def test_window_failure_falls_back_instead_of_crashing(monkeypatch):
-    import types
-    fake = types.ModuleType("webview")
-    fake.create_window = lambda *a, **k: None
-
-    def start():
-        raise RuntimeError("You must have either QT or GTK")
-    fake.start = start
-    monkeypatch.setitem(sys.modules, "webview", fake)
+def test_window_process_crash_falls_back_to_the_browser(monkeypatch):
+    """Qt aborts the whole process (SIGABRT) when a system library is missing: the launcher must survive that."""
+    monkeypatch.setattr(launcher, "target_command", lambda: [sys.executable, "-c",
+                        "import os, signal, sys; os.kill(os.getpid(), signal.SIGABRT)"])
     assert launcher.open_window("http://127.0.0.1:1") is False
 
 
 def test_window_closed_normally_is_not_a_failure(monkeypatch):
-    import types
-    fake = types.ModuleType("webview")
-    fake.create_window = lambda *a, **k: None
-    fake.start = lambda: None
-    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(launcher, "target_command", lambda: [sys.executable, "-c", "pass"])
     assert launcher.open_window("http://127.0.0.1:1") is True
+
+
+def test_window_mode_reports_failure_without_pywebview(monkeypatch):
+    monkeypatch.setitem(sys.modules, "webview", None)          # import raises ImportError
+    monkeypatch.setattr(sys, "argv", ["launcher", "--window", "http://127.0.0.1:1"])
+    assert launcher.main() == 3
 
 
 def test_linux_entry_runs_the_command_and_has_no_terminal():
