@@ -64,7 +64,7 @@ def test_fit_with_only_enhanced_channels(monkeypatch):
                for i in range(1800)]
 
     class FakeFit:
-        def __init__(self, *_): pass
+        def __init__(self, *_, **__): pass
         def get_messages(self, kind): return records if kind == 'record' else []
 
     monkeypatch.setattr(fit.fitparse, 'FitFile', FakeFit, raising=False)

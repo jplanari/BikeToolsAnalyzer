@@ -79,7 +79,11 @@ streamlit run app.py
 
 * Sidebar: Create a user profile (set your Weight and FTP for accurate physics/metrics).
 
-* Analyze Upload: Upload a .gpx/.fit file, or pick a ride from Strava (see *Connecting Strava*). The app will automatically parse it, fetch weather data, and generate the dashboard.
+* Analyze Upload: Upload ride files straight from your device or platform, or pick a ride from Strava or Wahoo (see below). The app parses it, fetches weather data and generates the dashboard.
+  * **Formats:** FIT, GPX and TCX, recognised from the content (so a file called `ride` or `activity.xml` works), plus `.gz` and `.zip` of them. Garmin Connect's bulk export (zips inside zips) works as it is; wellness and settings files in it are skipped.
+  * **Devices and platforms:** Garmin, Hammerhead, Magene, Wahoo, Zwift, Polar, Suunto, COROS, Strava/Garmin exports, anything that writes standard FIT/GPX/TCX. Not tested with real files from every brand: if one fails, open an issue with the file.
+  * **One file** opens for analysis. **Several files, or a zip with several rides,** show an *Import N rides to history* button: rides already in your history (same file, or starting within 2 minutes of one you have, e.g. from Strava or another device) and non-cycling activities are skipped.
+  * **Indoor and damaged files:** rides without GPS (Zwift, trainers) use the distance and altitude the device recorded; a FIT file cut short by a crash or a dead battery is read up to where it stops.
 
 * Ride History: View a log of previously analyzed rides stored in the local database.
 

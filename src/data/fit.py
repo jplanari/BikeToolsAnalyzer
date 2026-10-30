@@ -11,27 +11,30 @@ def parse_fit(file_bytes):
     Parses a FIT file object and returns a standardized Pandas DataFrame 
     compatible with the rest of the BikeToolsAnalyzer pipeline.
     """
-    # fitparse expects a file path or a file-like object opened in binary mode
+    # fitparse expects a file path or a file-like object opened in binary mode.
+    # check_crc=False: bike computers that lose power or are stopped mid-ride (and some budget units) write files
+    # with a wrong or missing checksum; the samples before the damage are still good.
     file_obj = io.BytesIO(file_bytes)
 
     try:
-        fitfile = fitparse.FitFile(file_obj)
+        fitfile = fitparse.FitFile(file_obj, check_crc=False)
     except Exception as e:
         print(f"Error opening FIT file: {e}")
         return pd.DataFrame()
 
     records = []
 
-    # Iterate over all messages of type "record" (points in the track)
-    for record in fitfile.get_messages("record"):
-        row = {}
-        
-        # Extract data fields from the record
-        # fitparse returns values with units, we extract the raw values
-        for data in record:
-            row[data.name] = data.value
-
-        records.append(row)
+    # Iterate over all messages of type "record" (points in the track). A truncated or damaged file raises
+    # part-way through: keep what was read up to there.
+    try:
+        for record in fitfile.get_messages("record"):
+            row = {}
+            # fitparse returns values with units, we extract the raw values
+            for data in record:
+                row[data.name] = data.value
+            records.append(row)
+    except Exception as e:
+        print(f"FIT file damaged after {len(records)} samples, using those: {e}")
 
     if not records:
         return pd.DataFrame()
@@ -96,6 +99,23 @@ def parse_fit(file_bytes):
 
     return df
 
+
+
+CYCLING_SPORTS = (None, "cycling", "e_biking", "generic")
+
+
+def fit_sport(file_bytes):
+    """The activity's sport name from the FIT 'session' (or 'sport') message, e.g. 'cycling', 'running'; None if unknown."""
+    try:
+        fitfile = fitparse.FitFile(io.BytesIO(file_bytes), check_crc=False)
+        for kind in ("session", "sport"):
+            for msg in fitfile.get_messages(kind):
+                sport = next((f.value for f in msg if f.name == "sport"), None)
+                if sport is not None:
+                    return str(sport).lower()
+    except Exception as e:
+        print(f"FIT sport lookup failed: {e}")
+    return None
 
 
 @st.cache_data(show_spinner=False)

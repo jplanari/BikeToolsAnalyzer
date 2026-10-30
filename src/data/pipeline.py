@@ -9,6 +9,8 @@ import pandas as pd
 from src.data.gpx import (parse_gpx, compute_distance_and_ascent, resample_to_seconds,
                           compute_speed, compute_grade)
 from src.data.fit import parse_fit
+from src.data.tcx import parse_tcx
+from src.data.upload import sniff_kind
 from src.data.strava import streams_to_dataframe
 from src.data.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
@@ -19,12 +21,20 @@ from src.analysis.hr import estimate_hr_threshold
 MOVING_THRESHOLD_MS = 2.0
 
 
-def ride_kind(filename):
+def ride_kind(filename, file_bytes=None):
+    """'fit', 'gpx', 'tcx' or 'strava' (a saved Strava stream payload). The content decides when it can: a file
+    exported as `ride` or `activity.xml` is still read for what it is."""
+    if file_bytes is not None:
+        found = sniff_kind(file_bytes)
+        if found in ("fit", "gpx", "tcx"):
+            return found
     name = (filename or "").lower()
     if name.endswith(".fit"):
         return "fit"
     if name.endswith(".json"):
         return "strava"
+    if name.endswith(".tcx"):
+        return "tcx"
     return "gpx"
 
 
@@ -33,9 +43,11 @@ def prepare_ride(filename, file_bytes):
     Returns (df, total_dist_m, total_ascent_m). Raises ValueError if the file
     contains no timestamped samples.
     """
-    kind = ride_kind(filename)
+    kind = ride_kind(filename, file_bytes)
     if kind == "fit":
         df = parse_fit(file_bytes)
+    elif kind == "tcx":
+        df = parse_tcx(file_bytes)
     elif kind == "strava":
         df = streams_to_dataframe(file_bytes)
     else:
@@ -48,8 +60,8 @@ def prepare_ride(filename, file_bytes):
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
     df = resample_to_seconds(df)
     df, total_dist, total_ascent = compute_distance_and_ascent(df)
-    # FIT files usually carry a native speed channel; otherwise derive it
-    if kind != "fit" or 'speed' not in df.columns or df['speed'].isna().all():
+    # FIT (and many TCX) files carry a native speed channel; otherwise derive it
+    if kind not in ("fit", "tcx") or 'speed' not in df.columns or df['speed'].isna().all():
         df = compute_speed(df)
     df = compute_grade(df)
     df.attrs['cleaned'] = fixed

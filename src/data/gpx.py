@@ -13,13 +13,13 @@ def parse_gpx(file_content):
 
     try:
         if isinstance(file_content, bytes):
-            gpx_xml = file_content.decode('utf-8')
+            gpx_xml = file_content.decode('utf-8-sig')
         elif isinstance(file_content, str):
             gpx_xml = file_content
         else:
             gpx_xml = file_content.read()
             if isinstance(gpx_xml, bytes):
-                gpx_xml = gpx_xml.decode('utf-8')
+                gpx_xml = gpx_xml.decode('utf-8-sig')
         gpx = gpxpy.parse(gpx_xml)
     except Exception as e:
         raise ValueError(f"Failed to parse GPX file: {e}")
@@ -128,10 +128,15 @@ def compute_distance_and_ascent(df):
     lats = df['lat'].values
     lons = df['lon'].values
     eles = df['ele'].values
-    
+    # Indoor rides (Zwift, trainers) and GPS dropouts have no position: use the distance the device recorded
+    native = pd.to_numeric(df['dist_m'], errors='coerce').to_numpy(dtype=float) if 'dist_m' in df.columns else None
+
     for i in range(1, N):
         # Calculate distance
         d = haversine_dist(lats[i-1], lons[i-1], lats[i], lons[i])
+        if native is not None and (np.isnan(lats[i-1]) or np.isnan(lons[i-1]) or np.isnan(lats[i]) or np.isnan(lons[i])):
+            step = native[i] - native[i-1]
+            d = step if np.isfinite(step) and step >= 0 else 0.0
         dists[i] = d
         
         # Calculate ascent (only if elevation data exists)
@@ -280,6 +285,11 @@ def resample_to_seconds(df):
         df_resampled.loc[long_gap, 'speed'] = 0.0
     if 'hr' in df_resampled.columns:
         df_resampled['hr'] = df_resampled['hr'].ffill()
+
+    # Recorded distance: linear across short gaps, held while stopped
+    if 'dist_m' in df_resampled.columns:
+        d = pd.to_numeric(df_resampled['dist_m'], errors='coerce')
+        df_resampled['dist_m'] = d.interpolate(method='time', limit_area='inside').where(~long_gap, d.ffill())
 
     df_resampled = df_resampled.drop(columns='_orig').reset_index()
     return df_resampled
