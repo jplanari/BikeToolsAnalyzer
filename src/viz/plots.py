@@ -660,3 +660,8 @@ def plot_cadence_by_zone(table):
     fig.update_layout(title="Average cadence by power zone", yaxis_title="rpm",
                       template="plotly_white", yaxis_range=[0, max(110, table['cadence'].max() * 1.15)])
     return fig
+
+
+# Title, legend and plot area never overlap: every plot_* builder above returns a tidied figure.
+from src.viz.figstyle import tidy_builders  # noqa: E402
+tidy_builders(globals())
