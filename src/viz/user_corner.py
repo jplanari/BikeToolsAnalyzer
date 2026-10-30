@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 from src.data.history import recompute_history
+from src.data.db import set_user_thresholds, DEFAULT_FTP, DEFAULT_LTHR
+from src.viz import theme
 from src.data.cached import get_user_data, get_user_rides, count_rides_needing_update
 from src.viz.formatting import format_duration
 
@@ -66,6 +68,37 @@ def _render_history_update(user_name, user_data):
                 st.rerun()
 
 
+def _by_hand(new, old, auto):
+    """The value to store as a manual choice; an untouched estimated value keeps following the data."""
+    return int(new) if int(new) != int(old) or not auto else None
+
+
+def _threshold_controls(user_name, user):
+    """Says where FTP / LTHR come from and lets the rider set them by hand or hand them back to the data."""
+    notes = [f"{label} is estimated from your rides (95 % of the best 20 minutes; {default} until a ride has one)"
+             for label, default, auto in (("FTP", f"{DEFAULT_FTP} W", user.get('ftp_auto')),
+                                          ("LTHR", f"{DEFAULT_LTHR} bpm", user.get('lthr_auto'))) if auto]
+    if notes:
+        st.caption("ℹ️ " + "; ".join(notes) + ".")
+    with st.popover("Set FTP / LTHR"):
+        st.markdown(theme.FTP_HELP)
+        st.markdown(theme.LTHR_HELP)
+        with st.form(f"thresholds_{user_name}"):
+            ftp = st.number_input("FTP (Watts)", value=int(user['ftp']), min_value=1, step=5)
+            lthr = st.number_input("LTHR (bpm)", value=int(user['lthr']), min_value=1, step=1)
+            if st.form_submit_button("Save by hand"):
+                set_user_thresholds(user_name, ftp=_by_hand(ftp, user['ftp'], user.get('ftp_auto')),
+                                    lthr=_by_hand(lthr, user['lthr'], user.get('lthr_auto')))
+                st.rerun()
+        a1, a2 = st.columns(2)
+        if a1.button("Estimate FTP from rides", key=f"auto_ftp_{user_name}", disabled=bool(user.get('ftp_auto'))):
+            set_user_thresholds(user_name, auto_ftp=True)
+            st.rerun()
+        if a2.button("Estimate LTHR from rides", key=f"auto_lthr_{user_name}", disabled=bool(user.get('lthr_auto'))):
+            set_user_thresholds(user_name, auto_lthr=True)
+            st.rerun()
+
+
 def render_user_corner(user_name):
     st.header("👤 User Corner")
 
@@ -83,6 +116,7 @@ def render_user_corner(user_name):
     c1.metric("FTP", f"{user_data['ftp']} W")
     c2.metric("LTHR", f"{user_data['lthr']} bpm")
     c3.metric("Weight", f"{user_data['weight']} kg")
+    _threshold_controls(user_name, user_data)
     
     st.markdown("---")
 

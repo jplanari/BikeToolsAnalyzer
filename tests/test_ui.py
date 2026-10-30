@@ -87,9 +87,46 @@ def _texts(elements):
 def test_every_page_loads_with_no_users(empty_db):
     at = _app()
     _no_errors(at)
-    assert "Upload a GPX/FIT" in _texts(at.info)
+    assert "create your profile" in _texts(at.subheader)           # no user: the welcome page is only the form
+    assert not at.info or "Upload a GPX/FIT" not in _texts(at.info)
     for page in ("Training", "User Corner", "Analyze Upload"):
         _no_errors(_go(at, page))
+
+
+def test_first_profile_form_creates_the_user_and_shows_the_gallery_hint(empty_db):
+    at = _app()
+    at.text_input(key="first_profile_name").set_value("Ana")
+    next(b for b in at.button if b.label == "Create profile").click().run()
+    _no_errors(at)
+    assert db.get_user_data("Ana")
+    assert "Upload a GPX/FIT" in _texts(at.info)
+
+
+def test_first_profile_needs_only_a_name_and_explains_ftp_and_lthr(empty_db):
+    at = _app()
+    assert "What are FTP and LTHR?" in [e.label for e in at.expander]
+    at.text_input(key="first_profile_name").set_value("Bea")
+    next(b for b in at.button if b.label == "Create profile").click().run()
+    _no_errors(at)
+    user = db.get_user_data("Bea")
+    assert user["ftp"] == 200 and user["lthr"] == 170                       # empty fields fall back to the defaults
+
+
+def test_empty_ftp_and_lthr_follow_the_rides_in_the_history(empty_db):
+    db.save_user("Auto", None, None, 70.0, 180.0)
+    today = pd.Timestamp.today().normalize()
+    streams = make_streams(n=2400, power=300.0, hr=160.0)
+    payload = sv.build_ride_payload(activity(500, f"{today - pd.Timedelta(days=2):%Y-%m-%d}T07:00:00Z"), streams)
+    df, dist, ele = prepare_ride(sv.ride_filename(500), payload)
+    s = summarize_ride(df, 200, 170)
+    meta = db.build_ride_metadata(df, dist, ele, s['avg_speed_kph'], s['norm_power'], s['tss'], s['if'],
+                                  filename=sv.ride_filename(500), metrics=metrics_for_storage(s))
+    assert db.save_ride("Auto", sv.ride_filename(500), payload, meta, s['power_curve'])[0]
+    at = _app()
+    _no_errors(at)
+    user = db.get_user_data("Auto")
+    assert abs(user["ftp"] - 285) <= 3 and 150 <= user["lthr"] <= 154          # 95 % of 300 W and of 160 bpm
+    assert user["ftp_auto"] == 1 and user["lthr_auto"] == 1
 
 
 def test_training_page(seeded_db):
