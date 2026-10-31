@@ -99,7 +99,7 @@ def test_old_database_is_migrated_once_with_a_backup(tmp_path, monkeypatch):
     conn.close()
     size_before = os.path.getsize(path)
 
-    db.init_db()                                       # next app start migrates
+    db.init_db(force=True)                             # next app start migrates (init_db is once per process)
 
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT COUNT(*) FROM rides WHERE file_content IS NOT NULL").fetchone()[0] == 0
@@ -147,6 +147,7 @@ def test_concurrent_app_starts_migrate_once_without_errors(tmp_path, monkeypatch
     import threading
     path = _legacy_db(tmp_path, monkeypatch)
     errors = []
+    db._initialised.discard(db.DB_FILE)              # a fresh process: init_db has not run yet
 
     def start():
         try:
@@ -169,7 +170,7 @@ def test_locked_database_postpones_the_migration_instead_of_crashing(tmp_path, m
     other = sqlite3.connect(path, isolation_level=None)
     other.execute("BEGIN EXCLUSIVE")                  # another process holds the file
     with pytest.warns(UserWarning, match="postponed"):
-        assert db._move_ride_files() == 0
+        assert db._move_ride_files() is None          # None = postponed, so init_db tries again next run
     other.execute("ROLLBACK")
     other.close()
     assert db._move_ride_files() == 40                # next run picks up where it was
