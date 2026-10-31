@@ -253,14 +253,13 @@ def _page_aero(d):
     return fig
 
 
+def ride_figures(data):
+    """The pages of one ride report, as matplotlib figures."""
+    return [_page_summary(data), _page_effort(data), _page_route(data), _page_aero(data)]
+
+
 def build_ride_report_pdf(data):
     """The report as PDF bytes."""
-    pages = [_page_summary(data), _page_effort(data), _page_route(data), _page_aero(data)]
+    from src.viz.report_pdf import write_pdf
     left = f"BikeTools Analyzer  ·  {data['name']}  ·  generated {datetime.now():%d %b %Y %H:%M}"
-    buf = io.BytesIO()
-    with PdfPages(buf, metadata={'Title': f"Ride report - {data['name']}", 'Author': 'BikeTools Analyzer',
-                                 'CreationDate': datetime.now()}) as pdf:
-        for n, fig in enumerate(pages, 1):
-            _footer(fig, left, n, len(pages))
-            pdf.savefig(fig)
-    return buf.getvalue()
+    return write_pdf(ride_figures(data), left, f"Ride report - {data['name']}")
