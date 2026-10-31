@@ -30,7 +30,20 @@ still air and reported as such; `--fetch` downloads and stores their weather (th
 
 It checks that the CdA behaves like a CdA. It cannot say it is right.
 
-## 3. Reference tests (not scripted)
+## 3. Wind height factor sweep: `wind_factor_sweep.py`
+
+```
+python -m validation.wind_factor_sweep --user NAME [--since 2026-01-01] [--factors 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+```
+
+The app scales the weather service's 10 m wind to rider height by `WIND_HEIGHT_FACTOR` (0.7). If it is wrong, the CdA
+fitted on the head-wind stretches of a ride differs from the one fitted on its tail-wind stretches, though a rider's CdA
+cannot depend on the wind direction. The sweep refits every ride for each factor, finds where the median head/tail ratio
+reaches 1 (bootstrap interval over rides) and checks the factor on rides it was not fitted on (alternate rides, earlier
+against later rides). It cannot separate drafting, direction-dependent shelter or wind errors that grow with speed:
+the result is a hypothesis for the reference tests, not a calibration.
+
+## 4. Reference tests (not scripted)
 
 Precision on repeated runs, known position differences, and agreement with a wind tunnel or a velodrome analysis on a
 calibrated power meter are field work. Record, for each run: the meter's zero offset, rider and kit mass, bike mass, tyres

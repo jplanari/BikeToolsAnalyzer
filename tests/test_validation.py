@@ -99,3 +99,59 @@ def test_load_rides_from_the_database_end_to_end(temp_db, tmp_path):
         assert {'cda', 'cda_still_air', 'bike'} <= set(rides.columns)
         cc.write_outputs("Rider", rides, cc.analyse(rides), skipped, str(tmp_path))
         assert (tmp_path / "cda_consistency_Rider.md").exists()
+
+
+# --- wind height factor sweep -------------------------------------------------------------
+
+def _rides_with_true_factor(true_factor, n=10, seed=0):
+    """Simulated rides whose real wind effect is `true_factor` x the 10 m wind (the app assumes 0.7)."""
+    from src.physics import aerodyn as ae
+    rng = np.random.default_rng(seed)
+    saved, out = ae.WIND_HEIGHT_FACTOR, []
+    try:
+        ae.WIND_HEIGHT_FACTOR = true_factor
+        for i in range(n):
+            sc = dict(terrain='hilly' if i % 2 else 'flat', route='out_and_back',
+                      wind10=float(rng.uniform(3, 6)), wind_from=float(rng.uniform(0, 360)))
+            truth = sim.simulate(sc)
+            df, kw = sim.observe(truth, sim.Errors(), rng)
+            out.append(dict(df=df, rider_mass=kw['rider_mass'], bike_mass=kw['bike_mass'], crr=kw['crr'],
+                            ride_id=i, date=f"2026-0{1 + i // 4}-{10 + i:02d}", name=f"r{i}", bike="Road"))
+    finally:
+        ae.WIND_HEIGHT_FACTOR = saved
+    return out
+
+
+def test_sweep_finds_the_true_wind_height_factor_and_restores_the_setting(tmp_path):
+    from src.physics import aerodyn as ae
+    from validation import wind_factor_sweep as ws
+    before = ae.WIND_HEIGHT_FACTOR
+    rides = _rides_with_true_factor(0.4)
+    factors = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
+    long_df = ws.sweep(rides, factors)
+    assert ae.WIND_HEIGHT_FACTOR == before
+    res = ws.analyse(long_df, factors)
+    assert res['crossing'] == pytest.approx(0.4, abs=0.06)
+    lo, hi, _ = res['crossing_ci']
+    assert lo - 0.01 <= 0.4 <= hi + 0.01 and hi < 0.7                  # the data say the current 0.70 is too high
+    for name, v in res['held_out'].items():
+        assert v is not None and v[1] == pytest.approx(1.0, abs=0.1) and v[2] < 0.9      # 0.70 would be biased low
+    text = ws.report("Ana", res, "")
+    assert "do not support the current value" in text
+    ws.write_outputs("Ana", long_df, res, "", str(tmp_path))
+    assert (tmp_path / "wind_factor_sweep_Ana.md").exists() and (tmp_path / "wind_factor_sweep_Ana.csv").exists()
+
+
+def test_sweep_says_so_when_the_current_factor_is_right():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.7)
+    factors = (0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+    res = ws.analyse(ws.sweep(rides, factors), factors)
+    assert res['crossing'] == pytest.approx(0.7, abs=0.06)
+    assert "no evidence to change it" in ws.report("Ana", res, "")
+
+
+def test_crossing_helper():
+    from validation import wind_factor_sweep as ws
+    assert ws.crossing([0.2, 0.4, 0.6], [0.5, 0.8, 1.25]) == pytest.approx(0.5, abs=0.01)
+    assert ws.crossing([0.2, 0.4], [0.5, 0.6]) is None

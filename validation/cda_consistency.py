@@ -18,6 +18,7 @@ as the app does when a ride is opened).
 """
 import argparse
 import csv
+import logging
 import os
 import sys
 
@@ -27,7 +28,7 @@ import pandas as pd
 from src.physics import aerodyn as ae
 
 MIN_SAMPLES = 120               # usable seconds needed for a fit (same as estimate_cda)
-HEAD_THRESHOLD_MS = 0.5         # the head / tail wind halves need at least this much wind along the road
+HEAD_THRESHOLD_10M_MS = 0.7     # head / tail halves need at least this much 10 m wind along the road (0.5 m/s at 0.7)
 MIN_RIDES_FOR_STATS = 8
 CORR_FLAG = 0.4                 # |Spearman rho| from here, and p below ALPHA divided by the number of tests, is flagged
 ALPHA = 0.05
@@ -38,7 +39,7 @@ def _fit(k, p):
     return float((p * k).sum() / (k * k).sum()) if len(k) >= MIN_SAMPLES else np.nan
 
 
-def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS):
+def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS, with_still_air=True):
     """
     CdA of one ride in several ways, plus the conditions it was ridden in. None when the ride cannot be fitted.
     `df` is the analysed ride: speed, power, grade_smooth, and bearing and wind columns when the ride has weather.
@@ -49,7 +50,7 @@ def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS):
         return None
     has_wind = {'wind_speed', 'wind_deg', 'bearing'} <= set(df.columns) and df['wind_speed'].notna().any()
     still = df.drop(columns=[c for c in ('wind_speed', 'wind_deg') if c in df.columns])
-    fit_still = ae.estimate_cda(still, **kw)
+    fit_still = ae.estimate_cda(still, **kw) if with_still_air else None
 
     b = ae._balance(df, rider_mass, bike_mass, crr, None, loss)
     ok = ae._usable(df, b) & b['unit_drag'].notna() & b['p_aero'].notna() & (b['unit_drag'] > 0)
@@ -63,8 +64,11 @@ def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS):
         head, cross = ae._wind_components(df)
         row['head_ms'], row['cross_ms'] = float(head[ok].mean()), float(cross[ok].abs().mean())
         row['wind_ms'] = float(df['wind_speed'][ok].mean())
-        row['cda_head'] = _fit(k[head[ok] > HEAD_THRESHOLD_MS], p[head[ok] > HEAD_THRESHOLD_MS])
-        row['cda_tail'] = _fit(k[head[ok] < -HEAD_THRESHOLD_MS], p[head[ok] < -HEAD_THRESHOLD_MS])
+        # the halves are chosen on the 10 m wind, not the scaled one, so they are the same samples whatever
+        # WIND_HEIGHT_FACTOR is (the sweep in wind_factor_sweep.py changes it)
+        head10 = head[ok] / ae.WIND_HEIGHT_FACTOR if ae.WIND_HEIGHT_FACTOR else head[ok] * 0.0
+        h_mask, t_mask = head10 > HEAD_THRESHOLD_10M_MS, head10 < -HEAD_THRESHOLD_10M_MS
+        row['cda_head'], row['cda_tail'] = _fit(k[h_mask], p[h_mask]), _fit(k[t_mask], p[t_mask])
     return row
 
 
@@ -138,8 +142,12 @@ def report(user, rides, res, skipped):
     return "\n".join(L) + "\n"
 
 
-def load_rides(user_name, since=None, fetch=False):
-    """(DataFrame of ride_metrics rows, skipped-reason text) for a user's saved rides. Heavy imports are local."""
+def prepare_user_rides(user_name, since=None, fetch=False, progress=False):
+    """
+    (list of prepared rides, {reason: count} of skipped ones) for a user's saved rides. A prepared ride is a dict with
+    the analysed DataFrame (bearing and stored weather attached) and the physics the app would use for it.
+    Heavy imports are local.
+    """
     from src.analysis.bikes import bike_physics, label as bike_label
     from src.data import db, weather
     from src.data.gpx import calculate_bearing
@@ -150,14 +158,15 @@ def load_rides(user_name, since=None, fetch=False):
         raise SystemExit(f"No user named {user_name!r} in {db.DB_FILE}")
     bikes = {b['id']: b for b in db.get_bikes(user_name)}
     default = next((b for b in bikes.values() if b.get('is_default')), None)
-    rows, skips = [], {}
+    prepared, skips = [], {}
 
     def skip(why):
         skips[why] = skips.get(why, 0) + 1
 
-    for r in db.get_user_rides(user_name):
-        if since and (r['date_time'] or '') < since:
-            continue
+    rides = [r for r in db.get_user_rides(user_name) if not since or (r['date_time'] or '') >= since]
+    for n, r in enumerate(rides, 1):
+        if progress:
+            print(f"ride {n}/{len(rides)}", file=sys.stderr, flush=True)
         filename, content = db.get_ride_file(r['id'])
         if content is None:
             skip("original file not stored")
@@ -184,14 +193,24 @@ def load_rides(user_name, since=None, fetch=False):
         bike_id = found[1] if found else None
         bike = None if bike_id == 0 else (bikes.get(bike_id) if bike_id else default)
         bike_mass, crr = bike_physics(bike)
-        m = ride_metrics(df, user['weight'], bike_mass, crr)
+        prepared.append(dict(df=df, rider_mass=user['weight'], bike_mass=bike_mass, crr=crr, ride_id=r['id'],
+                             date=r['date_time'], name=filename, bike=bike_label(bike)))
+    return prepared, skips
+
+
+def load_rides(user_name, since=None, fetch=False, progress=False):
+    """(DataFrame of ride_metrics rows, skipped-reason text) for a user's saved rides."""
+    prepared, skips = prepare_user_rides(user_name, since, fetch, progress)
+    rows = []
+    for p in prepared:
+        m = ride_metrics(p['df'], p['rider_mass'], p['bike_mass'], p['crr'])
         if m is None:
-            skip("too few usable samples (indoor, stops, or an implausible fit)")
+            why = "too few usable samples (indoor, stops, or an implausible fit)"
+            skips[why] = skips.get(why, 0) + 1
             continue
-        m.update(ride_id=r['id'], date=r['date_time'], name=filename, bike=bike_label(bike))
+        m.update(ride_id=p['ride_id'], date=p['date'], name=p['name'], bike=p['bike'])
         rows.append(m)
-    text = "; ".join(f"{n} {why}" for why, n in skips.items())
-    return pd.DataFrame(rows), text
+    return pd.DataFrame(rows), "; ".join(f"{n} {why}" for why, n in skips.items())
 
 
 def write_outputs(user, rides, res, skipped, out_dir):
@@ -236,12 +255,13 @@ def main(argv=None):
     ap.add_argument("--fetch", action="store_true", help="fetch and store the weather of rides that have none")
     ap.add_argument("--out", default="validation/output")
     a = ap.parse_args(argv)
+    logging.disable(logging.WARNING)          # Streamlit warns that there is no app runtime; not relevant here
     if a.db:
         os.environ["BIKETOOLS_DB"] = a.db
     from src.data import db
     if a.db:
         db.DB_FILE = a.db
-    rides, skipped = load_rides(a.user, a.since, a.fetch)
+    rides, skipped = load_rides(a.user, a.since, a.fetch, progress=True)
     if rides.empty:
         raise SystemExit(f"No ride could be fitted. Skipped: {skipped or 'nothing found'}")
     res = analyse(rides)
