@@ -39,6 +39,22 @@ def _fit(k, p):
     return float((p * k).sum() / (k * k).sum()) if len(k) >= MIN_SAMPLES else np.nan
 
 
+def _joint(k, p):
+    """
+    (CdA, constant power term in W) from the ordinary least-squares line p = CdA * k + delta over the samples.
+    delta > 0 is resistance the balance does not account for (rolling resistance or drivetrain loss too low, a power
+    meter reading high); it matters most where drag is small. NaN when there is too little to tell the two apart or
+    the CdA is implausible.
+    """
+    if len(k) < MIN_SAMPLES or float(k.std()) == 0.0:
+        return np.nan, np.nan
+    kc = k - k.mean()
+    slope = float((kc * (p - p.mean())).sum() / (kc * kc).sum())
+    if not ae.CDA_VALID[0] <= slope <= ae.CDA_VALID[1]:
+        return np.nan, np.nan
+    return slope, float(p.mean() - slope * k.mean())
+
+
 def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS, with_still_air=True):
     """
     CdA of one ride in several ways, plus the conditions it was ridden in. None when the ride cannot be fitted.
@@ -59,7 +75,13 @@ def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS, with_s
            'has_wind': bool(has_wind), 'cda_head': np.nan, 'cda_tail': np.nan,
            'speed_ms': float(b['v'][ok].mean()), 'grade_pct': float(b['slope'][ok].mean() * 100.0),
            'temp_c': float(df['temp_c'].mean()) if 'temp_c' in df.columns and df['temp_c'].notna().any() else np.nan,
-           'head_ms': np.nan, 'cross_ms': np.nan, 'wind_ms': np.nan}
+           'head_ms': np.nan, 'cross_ms': np.nan, 'wind_ms': np.nan,
+           'cda_head_adj': np.nan, 'cda_tail_adj': np.nan}
+    # the same ride with a constant extra power term allowed: CdA and delta together
+    row['cda_joint'], row['delta_w'] = _joint(k, p)
+    mean_v = float(b['v'][ok].mean())
+    row['delta_crr'] = row['delta_w'] / ((rider_mass + bike_mass) * ae.G * mean_v) if np.isfinite(row['delta_w']) else np.nan
+    p_adj = p - row['delta_w'] if np.isfinite(row['delta_w']) else None
     if has_wind:
         head, cross = ae._wind_components(df)
         row['head_ms'], row['cross_ms'] = float(head[ok].mean()), float(cross[ok].abs().mean())
@@ -69,6 +91,8 @@ def ride_metrics(df, rider_mass, bike_mass, crr, loss=ae.DRIVETRAIN_LOSS, with_s
         head10 = head[ok] / ae.WIND_HEIGHT_FACTOR if ae.WIND_HEIGHT_FACTOR else head[ok] * 0.0
         h_mask, t_mask = head10 > HEAD_THRESHOLD_10M_MS, head10 < -HEAD_THRESHOLD_10M_MS
         row['cda_head'], row['cda_tail'] = _fit(k[h_mask], p[h_mask]), _fit(k[t_mask], p[t_mask])
+        if p_adj is not None:                 # head / tail halves once the constant term is taken out
+            row['cda_head_adj'], row['cda_tail_adj'] = _fit(k[h_mask], p_adj[h_mask]), _fit(k[t_mask], p_adj[t_mask])
     return row
 
 
@@ -100,6 +124,22 @@ def analyse(rides):
         diff = ratio - 1.0
         pval = 1.0 if (diff == 0).all() else float(stats.wilcoxon(diff).pvalue)
         out['head_tail'] = (len(ht), float(ratio.median()), float(ratio.quantile(0.25)), float(ratio.quantile(0.75)), pval)
+    jt = rides[['cda', 'cda_joint', 'delta_w', 'delta_crr', 'speed_ms']].dropna() if 'delta_w' in rides else None
+    if jt is not None and len(jt) >= MIN_RIDES_FOR_STATS:
+        try:
+            p_delta = 1.0 if (jt['delta_w'] == 0).all() else float(stats.wilcoxon(jt['delta_w']).pvalue)
+        except ValueError:
+            p_delta = np.nan
+        j = dict(n=len(jt), delta_med=float(jt['delta_w'].median()), delta_q1=float(jt['delta_w'].quantile(0.25)),
+                 delta_q3=float(jt['delta_w'].quantile(0.75)), delta_p=p_delta,
+                 frac_positive=float((jt['delta_w'] > 0).mean()), crr_med=float(jt['delta_crr'].median()),
+                 cda_mean=float(jt['cda_joint'].mean()),
+                 cda_cv=float(jt['cda_joint'].std(ddof=1) / jt['cda_joint'].mean() * 100.0),
+                 rho_speed=float(stats.spearmanr(jt['cda_joint'], jt['speed_ms'])[0]),
+                 rho_speed_plain=float(stats.spearmanr(jt['cda'], jt['speed_ms'])[0]))
+        ha = rides[['cda_head_adj', 'cda_tail_adj']].dropna()
+        j['ratio_adj'] = (len(ha), float((ha['cda_head_adj'] / ha['cda_tail_adj']).median())) if len(ha) >= MIN_RIDES_FOR_STATS else None
+        out['joint'] = j
     w = rides[rides['has_wind']][['cda', 'cda_still_air']].dropna()
     if len(w) >= 3:
         out['wind_effect'] = (len(w), float(((w['cda'] / w['cda_still_air']) - 1.0).median() * 100.0))
@@ -133,6 +173,27 @@ def report(user, rides, res, skipped):
               "under-states the head wind (or over-states the tail wind); well below 1, the reverse."]
     else:
         L.append(f"Needs at least {MIN_RIDES_FOR_STATS} rides with a head-wind and a tail-wind stretch, with weather.")
+    L += ["", "## With a constant extra power term allowed", ""]
+    j = res.get('joint')
+    if j:
+        L += [f"Each ride is also fitted as power = CdA x drag + delta. A positive delta is resistance the balance does not "
+              f"account for (rolling resistance or drivetrain loss too low, a power meter reading high). {j['n']} rides.", "",
+              f"- delta: median {j['delta_med']:+.1f} W (quartiles {j['delta_q1']:+.1f} to {j['delta_q3']:+.1f}); "
+              f"positive in {j['frac_positive'] * 100:.0f} % of rides; Wilcoxon p = {j['delta_p']:.3f}.",
+              f"- equivalent change of the rolling resistance coefficient: {j['crr_med']:+.4f} "
+              "(delta divided by mass x g x speed).",
+              f"- CdA with delta: mean {j['cda_mean']:.3f} m2, spread {j['cda_cv']:.1f} % "
+              f"(without: mean {res['mean']:.3f}, spread {res['cv_pct']:.1f} %).",
+              f"- CdA against speed: rho {j['rho_speed']:+.2f} with delta, {j['rho_speed_plain']:+.2f} without."]
+        if j['ratio_adj']:
+            L.append(f"- head-wind / tail-wind CdA ratio after taking delta out: median {j['ratio_adj'][1]:.2f} "
+                     f"({j['ratio_adj'][0]} rides; compare the ratio above).")
+        L += ["", "Reading it: a clearly positive delta that weakens the CdA-with-speed trend points at unmodelled resistance "
+              "(check the bike's Crr and tyres, and the power meter's zero offset) and not at the wind. The two "
+              "parameters are partly interchangeable, so single-ride values of delta are noisy: look at the median over "
+              "many rides."]
+    else:
+        L.append(f"Needs at least {MIN_RIDES_FOR_STATS} rides.")
     L += ["", "## What the weather wind changes", ""]
     if 'wind_effect' in res:
         n, med = res['wind_effect']

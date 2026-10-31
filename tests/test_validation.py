@@ -189,3 +189,44 @@ def test_rides_are_grouped_by_how_windy_they_were_and_the_sets_are_reported():
     assert set(res['sets']) == {'alternate rides, set A', 'alternate rides, set B', 'earlier rides', 'later rides'}
     text = ws.report("Ana", res, "")
     assert "windiest third" in text and "Reaches 1 at" in text
+
+
+# --- constant extra power term ------------------------------------------------------------
+
+def test_joint_fit_recovers_cda_and_a_power_offset_that_the_plain_fit_absorbs():
+    truth = sim.simulate(sim.SCENARIOS['hilly out-and-back, 4 m/s wind'])
+    df, kw = sim.observe(truth, sim.Errors(power_offset_w=15.0), _rng())
+    m = cc.ride_metrics(df, kw['rider_mass'], kw['bike_mass'], kw['crr'], with_still_air=False)
+    assert m['cda'] > 0.305                                         # the offset is blamed on the air
+    assert m['cda_joint'] == pytest.approx(0.30, abs=0.012)
+    assert m['delta_w'] == pytest.approx(15 * (1 - 0.03), abs=3.0)
+    assert m['delta_crr'] > 0.001                                  # worth about a fifth of a typical Crr
+    clean_df, kw = sim.observe(truth, sim.Errors(), _rng())
+    clean = cc.ride_metrics(clean_df, kw['rider_mass'], kw['bike_mass'], kw['crr'], with_still_air=False)
+    assert abs(clean['delta_w']) < 3.0 and clean['cda_joint'] == pytest.approx(0.30, abs=0.01)
+
+
+def test_joint_block_of_the_analysis_and_the_report():
+    rides = _rides(30)
+    rng = np.random.default_rng(5)
+    rides['delta_w'] = 12 + rng.normal(0, 3, 30)
+    rides['delta_crr'] = rides['delta_w'] / 2000.0
+    rides['cda_joint'] = rides['cda'] - 0.01
+    rides['cda_head_adj'], rides['cda_tail_adj'] = rides['cda'], rides['cda']
+    res = cc.analyse(rides)
+    j = res['joint']
+    assert j['delta_med'] == pytest.approx(12, abs=2) and j['frac_positive'] > 0.95 and j['delta_p'] < 0.001
+    assert j['ratio_adj'][1] == pytest.approx(1.0)
+    text = cc.report("Ana", rides, res, "")
+    assert "With a constant extra power term allowed" in text and "delta: median +1" in text
+
+
+def test_sweep_reports_the_ratio_after_removing_the_constant_term():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.5)
+    factors = (0.3, 0.5, 0.7)
+    long_df = ws.sweep(rides, factors)
+    assert {'ratio_adj', 'delta_w'} <= set(long_df.columns)
+    res = ws.analyse(long_df, factors)
+    assert {'median_ratio_adj', 'delta_med'} <= set(res['table'].columns)
+    assert "constant extra power term" in ws.report("Ana", res, "")

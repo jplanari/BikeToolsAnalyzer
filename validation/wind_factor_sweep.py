@@ -49,7 +49,9 @@ def sweep(prepared, factors=DEFAULT_FACTORS, progress=False):
                 rows.append(dict(ride_id=p['ride_id'], date=p['date'], factor=float(f), cda=m['cda'],
                                  cda_head=m['cda_head'], cda_tail=m['cda_tail'], speed_ms=m['speed_ms'],
                                  head10_ms=m['head_ms'] / float(f) if f else np.nan, wind10_ms=m['wind_ms'],
-                                 ratio=m['cda_head'] / m['cda_tail'] if m['cda_tail'] else np.nan))
+                                 ratio=m['cda_head'] / m['cda_tail'] if m['cda_tail'] else np.nan,
+                                 ratio_adj=m['cda_head_adj'] / m['cda_tail_adj'] if m['cda_tail_adj'] else np.nan,
+                                 delta_w=m['delta_w']))
     finally:
         ae.WIND_HEIGHT_FACTOR = saved
     return pd.DataFrame(rows)
@@ -102,10 +104,14 @@ def analyse(long_df, factors=DEFAULT_FACTORS, seed=1):
         for key, col in (('rho_speed', 'speed_ms'), ('rho_head', 'head10_ms')):
             d = sub[['cda', col]].dropna()
             row[key] = float(stats.spearmanr(d['cda'], d[col])[0]) if len(d) >= MIN_RIDES and d[col].nunique() > 1 else np.nan
+        ra = sub['ratio_adj'].dropna() if 'ratio_adj' in sub else sub['ratio'].iloc[0:0]
+        row['median_ratio_adj'] = float(ra.median()) if len(ra) else np.nan
+        row['delta_med'] = float(sub['delta_w'].median()) if 'delta_w' in sub else np.nan
         table.append(row)
     out['table'] = pd.DataFrame(table)
     meds = _medians(wide)
     out['crossing'] = crossing(factors, meds)
+    out['crossing_adj'] = crossing(factors, out['table']['median_ratio_adj'].to_numpy())
     if len(wide) >= MIN_RIDES:
         rng = np.random.default_rng(seed)
         values = wide.to_numpy()
@@ -163,11 +169,12 @@ def report(user, res, skipped):
          f"{res['n_rides']} rides with a head-wind and a tail-wind stretch. Skipped before the sweep: {skipped or 'none'}.", "",
          "Ratio = CdA fitted on the head-wind samples / CdA fitted on the tail-wind samples of the same ride "
          "(samples chosen on the 10 m wind, so they are the same whatever the factor). It should be 1.", "",
-         "| Factor | Median ratio | Quartiles | Mean CdA | CdA spread (%) | rho CdA~speed | rho CdA~head wind |",
-         "|---|---|---|---|---|---|---|"]
+         "| Factor | Median ratio | Quartiles | Ratio after removing a constant power term | Median constant term (W) | "
+         "Mean CdA | CdA spread (%) | rho CdA~speed | rho CdA~head wind |",
+         "|---|---|---|---|---|---|---|---|---|"]
     for r in t.itertuples():
-        L.append(f"| {r.factor:.2f} | {r.median_ratio:.2f} | {r.q1:.2f} to {r.q3:.2f} | {r.mean_cda:.3f} | {r.cv_pct:.1f} | "
-                 f"{r.rho_speed:+.2f} | {r.rho_head:+.2f} |")
+        L.append(f"| {r.factor:.2f} | {r.median_ratio:.2f} | {r.q1:.2f} to {r.q3:.2f} | {r.median_ratio_adj:.2f} | "
+                 f"{r.delta_med:+.1f} | {r.mean_cda:.3f} | {r.cv_pct:.1f} | {r.rho_speed:+.2f} | {r.rho_head:+.2f} |")
     L += ["", "## Where the ratio reaches 1", ""]
     c = res['crossing']
     ci = res.get('crossing_ci')
@@ -194,6 +201,12 @@ def report(user, res, skipped):
                                           if differs else
                                           "The interval includes 0.70 (within a change of "
                                           f"{MATERIAL:.2f}): no evidence to change it."))
+    ca = res.get('crossing_adj')
+    L += ["", "With a constant extra power term taken out of each ride first (fitted as power = CdA x drag + delta), the "
+          "head/tail ratio reaches 1 at " + (f"**{ca:.2f}**" if ca is not None else
+                                            f"a factor {crossing_label(res['factors'], t['median_ratio_adj'].to_numpy(), None)}")
+          + ". If this is far from the crossing above, part of the head/tail difference was unmodelled resistance and "
+          "not the wind; if it is the same, the wind (or how you rode into it) is the cause."]
     L += ["", "## Is the effect the same on other rides?", ""]
     sets = res.get('sets') or {}
     if sets:
