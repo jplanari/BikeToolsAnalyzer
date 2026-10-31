@@ -284,7 +284,7 @@ def test_deleting_a_user_needs_confirmation(seeded_db):
 
 def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db, monkeypatch):
     import src.viz.ride_analysis as ra
-    monkeypatch.setattr(ra, "fetch_ride_weather", lambda df: df)          # no network in tests
+    monkeypatch.setattr(ra, "load_or_fetch", lambda df, *a, **k: (df, None, None))          # no network in tests
     at = _app()
     _no_errors(at)
     assert "Last 7 days" in {m.label for m in at.metric}

@@ -175,7 +175,7 @@ def test_lap_table_still_renders_without_a_recent_jinja2(monkeypatch):
     pytest.importorskip("streamlit_folium")
     pytest.importorskip("plotly")
     from src.viz import segment_analysis as sa
-    t = pd.DataFrame({'Start (km)': [1.234], 'Distance (km)': [5.678], 'Time': ['00:10:00'], 'Avg HR': [float('nan')]})
+    t = pd.DataFrame({'Start (km)': [1.234], 'Distance (km)': [5.678], 'Time': [600.0], 'Avg HR': [float('nan')]})
     monkeypatch.setattr(sa.sg, 'stats_table', lambda *a, **k: t.copy())
 
     class Boom:
