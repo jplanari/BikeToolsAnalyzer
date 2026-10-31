@@ -135,6 +135,7 @@ def test_indoor_fit_without_gps_keeps_distance_and_gradient(monkeypatch):
         def get_messages(self, kind): return records if kind == 'record' else []
 
     monkeypatch.setattr(fit.fitparse, 'FitFile', FakeFit, raising=False)
+    getattr(fit.parse_fit, 'clear', lambda: None)()
     df, dist, ele = pipeline.prepare_ride('zwift.fit', fake_fit())
     assert dist == pytest.approx(1799 * 8, rel=0.01) and df['dist_m'].iloc[-1] == pytest.approx(1799 * 8, rel=0.01)
     assert ele == pytest.approx(1799 * 0.4, rel=0.02)
@@ -142,6 +143,7 @@ def test_indoor_fit_without_gps_keeps_distance_and_gradient(monkeypatch):
 
 
 def test_truncated_fit_keeps_the_samples_before_the_damage(monkeypatch):
+    getattr(fit.parse_fit, 'clear', lambda: None)()       # st.cache_data would replay the other test's parse of the same bytes
     records = _records(1200, enhanced_speed=8.0)
 
     class FakeFit:
