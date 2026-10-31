@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 
+from src.viz.figstyle import elevation_range
 from src.viz.report_pdf import (INK, LEFT, PAL, PAGE, RIGHT, SERIES, SOFT, _axes, _empty, _fmt, _footer,
                                 _legend, _new_page, _note, _style, _table, _tile_row)
 
@@ -44,6 +45,8 @@ def _line(ax, s, col, title, ylabel, color, fill=False, zero=False, label=True):
     ax.plot(s['t_min'], s[col], color=color, lw=1.2)
     if fill:
         ax.fill_between(s['t_min'], s[col], s[col].min() - 5, color=color, alpha=0.12, lw=0)
+    if col == 'ele':
+        ax.set_ylim(*elevation_range(s[col]))
     if zero:
         ax.set_ylim(bottom=0)
     _elapsed_axis(ax, float(s['t_min'].iloc[-1]) or 1.0, label)

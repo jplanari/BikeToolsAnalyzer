@@ -106,29 +106,37 @@ def time_in_zones(series, zones):
         counts[k] = int(binned[i])
     return counts
 
+def w_prime_expended(power_series, cp, tau=546):
+    """
+    Work done above critical power that is still "owed", in joules, second by second (integral model):
+    W_exp(t) = W_exp(t-1) * exp(-1/tau) + max(0, P(t) - CP). Assumes 1 Hz samples.
+    """
+    p = power_series.fillna(0).to_numpy()
+    w_exp = np.zeros_like(p, dtype=float)
+    decay = np.exp(-1 / tau)
+    acc = 0.0
+    for i, watts in enumerate(p):
+        acc = acc * decay + max(0.0, watts - cp)
+        w_exp[i] = acc
+    return pd.Series(w_exp, index=power_series.index)
+
+
 def calculate_w_prime_balance(power_series, ftp, w_prime_cap_j=20000, tau=546):
     """
-    Calculate W' Balance over time.
+    W' balance over time: the capacity minus what is still expended. Negative when the ride used more
+    than the capacity the rider was credited with.
     """
     if ftp is None or ftp == 0 or power_series.empty:
         return pd.Series(dtype=float)
+    return w_prime_cap_j - w_prime_expended(power_series, ftp, tau)
 
-    p = power_series.fillna(0).to_numpy()
-    w_bal = np.zeros_like(p, dtype=float)
 
-    w_exp = 0.0
-    decay = np.exp(-1 / tau)
+def w_prime_needed(power_series, ftp, tau=546):
+    """The smallest W' (joules) that keeps this ride's balance from going below zero; 0 without data."""
+    if ftp is None or ftp == 0 or power_series.empty:
+        return 0.0
+    return float(w_prime_expended(power_series, ftp, tau).max())
 
-    for i, watts in enumerate(p):
-        # Integral model:
-        # W_exp(t) = W_exp(t-1) * exp(-1/tau) + max(0, P(t) - CP)
-
-        excess_power = max(0, watts - ftp)
-        w_exp = w_exp * decay + excess_power
-
-        w_bal[i] = w_prime_cap_j - w_exp
-
-    return pd.Series(w_bal, index=power_series.index)
 
 def calculate_ride_kJ(power_series):
     """ Assume series sampled a 1Hz """

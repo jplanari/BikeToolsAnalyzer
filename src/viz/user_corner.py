@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from src.data.history import recompute_history
-from src.data.db import set_user_thresholds, DEFAULT_FTP, DEFAULT_LTHR
+from src.data.db import set_user_thresholds, set_user_w_prime, DEFAULT_FTP, DEFAULT_LTHR
 from src.viz import theme
 from src.data.cached import get_user_data, get_user_rides, count_rides_needing_update
 from src.viz.formatting import format_duration
@@ -80,13 +80,17 @@ def _threshold_controls(user_name, user):
                                           ("LTHR", f"{DEFAULT_LTHR} bpm", user.get('lthr_auto'))) if auto]
     if notes:
         st.caption("ℹ️ " + "; ".join(notes) + ".")
-    with st.popover("Set FTP / LTHR"):
+    with st.popover("Set FTP / LTHR / W′"):
         st.markdown(theme.FTP_HELP)
         st.markdown(theme.LTHR_HELP)
+        st.markdown(theme.W_PRIME_HELP)
         with st.form(f"thresholds_{user_name}"):
             ftp = st.number_input("FTP (Watts)", value=int(user['ftp']), min_value=1, step=5)
             lthr = st.number_input("LTHR (bpm)", value=int(user['lthr']), min_value=1, step=1)
+            wprime = st.number_input("W′ (kJ)", value=round((user.get('w_prime') or 20000) / 1000, 1),
+                                     min_value=1.0, step=0.5)
             if st.form_submit_button("Save by hand"):
+                set_user_w_prime(user_name, wprime * 1000)
                 set_user_thresholds(user_name, ftp=_by_hand(ftp, user['ftp'], user.get('ftp_auto')),
                                     lthr=_by_hand(lthr, user['lthr'], user.get('lthr_auto')))
                 st.rerun()
@@ -112,10 +116,11 @@ def render_user_corner(user_name):
         return
 
     # 1. Profile Summary
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("FTP", f"{user_data['ftp']} W")
     c2.metric("LTHR", f"{user_data['lthr']} bpm")
-    c3.metric("Weight", f"{user_data['weight']} kg")
+    c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.W_PRIME_HELP)
+    c4.metric("Weight", f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
     
     st.markdown("---")

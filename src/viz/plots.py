@@ -6,6 +6,8 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+from src.viz.figstyle import elevation_range
+
 def _add_elevation_background(fig, df, secondary_y=True):
     """Helper to add elevation profile in the background of other charts."""
     if 'ele' in df.columns and 'dist_m' in df.columns:
@@ -21,6 +23,9 @@ def _add_elevation_background(fig, df, secondary_y=True):
             ),
             secondary_y=secondary_y
         )
+        rng = elevation_range(df['ele'])
+        if rng:
+            fig.update_yaxes(range=rng, secondary_y=secondary_y)
 
 def plot_elevation(df):
     fig = go.Figure()
@@ -43,6 +48,9 @@ def plot_elevation(df):
         template="plotly_white",
         height=400
     )
+    rng = elevation_range(df['ele'])
+    if rng:
+        fig.update_yaxes(range=rng)
     return fig
 
 def plot_x_time(df, col, ylabel, color='blue', title=None):
@@ -157,8 +165,7 @@ def plot_climbs(df, climbs):
         hoverinfo='skip'
     ))
     
-    y_min = df['ele'].min() * 0.95
-    y_max = df['ele'].max() * 1.05
+    y_min, y_max = elevation_range(df['ele']) or (None, None)
 
    # 2. Highlight Each Climb
     for i, c in enumerate(climbs):
@@ -191,9 +198,8 @@ def plot_climbs(df, climbs):
         height=300
     )
         # Apply calculated limits
-    fig.update_yaxes(
-        range=[y_min, y_max]
-    )
+    if y_min is not None:
+        fig.update_yaxes(range=[y_min, y_max])
 
     return fig
 
@@ -218,10 +224,9 @@ def plot_detailed_climb(segment):
     min_ele = df['ele'].min()
     max_ele = df['ele'].max()
     
-    # Y-Axis range: 95% of min to 105% of max
+    # Y-Axis range: lowest point minus 5 % of the span to highest plus 5 %
     # We use this y_min to anchor the text at the bottom
-    y_min = min_ele * 0.95
-    y_max = max_ele * 1.05
+    y_min, y_max = elevation_range(df['ele']) or (min_ele, max_ele)
 
     # Initialize Figure
     from plotly.subplots import make_subplots
@@ -404,6 +409,9 @@ def plot_power_budget(df):
         line=dict(color='gray', width=2.5)),
         secondary_y=True
     )
+    rng = elevation_range(df['ele'])
+    if rng:
+        fig.update_yaxes(range=rng, secondary_y=True)
 
     fig.update_layout(
         title="Power Budget (Relative Cost Breakdown)",

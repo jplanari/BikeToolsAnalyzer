@@ -57,6 +57,7 @@ def render_sidebar():
     user_weight = 70.0
     user_lthr = 170
     user_height = 175
+    user_w_prime = 20000.0
 
     pages = ["Analyze Upload", "Training", "User Corner"]
     app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
@@ -81,6 +82,7 @@ def render_sidebar():
                     user_lthr = u_data['lthr']
                     user_weight = u_data['weight']
                     user_height = u_data['height']
+                    user_w_prime = u_data.get('w_prime') or user_w_prime
 
 
             with st.popover("Delete user"):
@@ -99,12 +101,15 @@ def render_sidebar():
                                       placeholder="estimated from your rides", help=theme.FTP_HELP)
             new_lthr = st.number_input("LTHR (bpm) · optional", value=None, min_value=1, step=1,
                                        placeholder="estimated from your rides", help=theme.LTHR_HELP)
+            new_wprime = st.number_input("W′ (kJ) · optional", value=None, min_value=1.0, step=0.5,
+                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.W_PRIME_HELP)
             new_weight = st.number_input("Weight (kg)", value=70.0)
             new_height = st.number_input("Height (cm)", value=175)
             submitted = st.form_submit_button("Save User")
             if submitted and new_name:
                 success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
-                                          int(new_lthr) if new_lthr else None, new_weight, new_height)
+                                          int(new_lthr) if new_lthr else None, new_weight, new_height,
+                                          theme.w_prime_from_kj(new_wprime))
                 if success:
                     st.success(msg)
                     st.rerun()
@@ -140,7 +145,8 @@ def render_sidebar():
         'ftp': user_ftp,
         'lthr': user_lthr,
         'weight': user_weight,
-        'height': user_height
+        'height': user_height,
+        'w_prime': float(user_w_prime),
     }
 
     st.sidebar.markdown("---")
