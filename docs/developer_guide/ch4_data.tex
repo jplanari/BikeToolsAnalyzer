@@ -1,0 +1,150 @@
+\chapter{The data model}
+
+\section{The standard ride table}
+
+\code{prepare_ride(filename, file_bytes)} returns \code{(df, total_dist_m, total_ascent_m)}. The DataFrame has one
+row per second and these columns (a column is absent or all-\texttt{NaN} when the device did not record it):
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Column & Meaning & Unit\\
+\midrule
+\texttt{time} & timestamp (naive, UTC) & datetime\\
+\texttt{lat}, \texttt{lon}, \texttt{ele} & position and elevation & degrees, m\\
+\texttt{power}, \texttt{hr}, \texttt{cadence} & sensor values & W, bpm, rpm\\
+\texttt{speed} & ground speed & m/s\\
+\code{dist_m} & cumulative distance & m\\
+\texttt{grade}, \code{grade_smooth} & road gradient & \%\\
+\code{temp_c} & device temperature (FIT only) & $^\circ$C\\
+\texttt{bearing} & direction of travel (added by the ride page) & degrees\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{warn}
+\texttt{speed} is in \emph{metres per second}; a convenience column \code{speed_kmh} also exists. Mixing the two is
+the most common source of wrong numbers. Convert at the edge, on display.
+\end{warn}
+
+Always test for a channel before using it:
+
+\begin{lstlisting}
+has_power = 'power' in df.columns and df['power'].notna().any()
+\end{lstlisting}
+
+Indoor rides have no GPS, runs on the same watch have no power, cheap sensors have no cadence; every analysis must
+degrade gracefully, never raise.
+
+\section{Cleaning}
+
+\code{clean_channels} (in \code{cleaning.py}) runs before any metric. It removes physically impossible readings: power
+above 2500\,W or negative, heart rate outside 30--230\,bpm, cadence above 220\,rpm. Short power glitches are
+interpolated; longer ones become 0\,W. The number of samples changed is kept in \texttt{df.attrs['cleaned']}.
+If you add a sensor channel, add its sanity limits there so that one bad sample cannot become a record.
+
+\section{The summary dictionary}
+
+\code{summarize_ride(df, ftp, lthr)} returns the dictionary the ride page shows and the database stores:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3.6cm}p{10.6cm}@{}}
+\toprule
+Key & Content\\
+\midrule
+\code{duration_s}, \code{moving_time_s} & elapsed seconds; seconds with speed $\geq$ 2\,m/s (or pedalling, if no speed)\\
+\code{avg_speed_kph}, \code{avg_power}, \code{avg_hr} & averages over moving time\\
+\code{norm_power}, \texttt{if}, \texttt{tss}, \code{tss_source} & load; \code{tss_source} says whether it came from power or heart rate\\
+\texttt{kj}, \texttt{vi}, \texttt{ef}, \code{decoupling_pct} & work, variability index, efficiency factor, aerobic decoupling\\
+\code{power_curve} & mean-maximal power per duration, \texttt{\{seconds: watts\}}\\
+\texttt{zones} & seconds per zone: \texttt{\{'power': \{...\}, 'hr': \{...\}\}}\\
+\texttt{fatigued} & power curves of the part of the ride after 1000, 2000 and 3000\,kJ of work (durability)\\
+\texttt{hist} & joint histograms power$\times$HR and power$\times$cadence\\
+\texttt{hrr60}, \code{hrr_efforts}, \texttt{hr20} & heart-rate recovery; best 20-minute heart rate\\
+\code{is_moving} & boolean mask over the rows of \texttt{df}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{metrics_for_storage(summary)} selects the keys that go to the database. Note the two places where a key is
+renamed on the way in (\code{moving_time_s} $\to$ column \code{moving_s}, \texttt{hrr60} $\to$
+\code{hrr60_bpm}); the mapping lives in \code{db._metrics_fields}.
+
+\section{The database}
+
+SQLite, one file, opened through \code{db._connect()} only (it turns on foreign keys, so deleting a user cascades to
+their rides). The schema is created by \code{init_db()} and extended by \code{migrate_db()}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3.5cm}p{11.2cm}@{}}
+\toprule
+Table & Holds\\
+\midrule
+\texttt{users} & name, FTP, LTHR, weight, height, CP, W$'$, crank length; \code{ftp_auto}/\code{lthr_auto} flags\\
+\texttt{rides} & one row per ride: date, distance, NP, TSS, IF, VI, EF, \ldots, \code{metrics_version}\\
+\code{ride_files} & the original file, compressed (\texttt{codec}, \texttt{content})\\
+\code{power_records} & the ride's power curve, one row per duration\\
+\code{power_records_kj} & the same after a given amount of work\\
+\code{ride_zones} & seconds per zone and kind (\texttt{power}, \texttt{hr})\\
+\code{ride_hist} & sparse 2-D histogram cells (\code{p_hr}, \code{p_cad})\\
+\code{planned_sessions} & future sessions (TSS, optional interval blocks as JSON)\\
+\code{strava_auth}, \code{wahoo_auth}, \code{polar_auth} & per-rider tokens\\
+\code{app_credentials} & the client ID/secret of each service's API app\\
+\code{oauth_states}, \code{wahoo_sent} & sign-in tokens; workouts already sent to a head unit\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Migrations}
+
+There is no migration framework. A new column is added by an \texttt{ALTER TABLE} that ignores the error when the
+column already exists, so it is safe to run on every start:
+
+\begin{lstlisting}
+try:
+    c.execute("ALTER TABLE rides ADD COLUMN my_metric REAL")
+except sqlite3.OperationalError:
+    pass          # already there
+\end{lstlisting}
+
+A new table uses \texttt{CREATE TABLE IF NOT EXISTS}. Never rename or drop a column; add a new one and stop reading
+the old one. Users upgrade by replacing the program and keeping their data folder, so \emph{an old database must always
+open with new code}.
+
+\subsection{Recomputing old rides: \texttt{METRICS\_VERSION}}
+
+Each ride row stores the \code{metrics_version} it was computed with. The constant \code{db.METRICS_VERSION}
+(currently 6) says what the current code produces. Rides with a lower number are counted as ``needing update'',
+the Training page tells the rider so, and \emph{User Corner $\rightarrow$ Update ride history} re-reads the stored
+files and recomputes them (\code{history.recompute_history}), after taking an automatic database backup.
+
+\begin{tip}[Rule of thumb]
+If your change alters a stored number or adds a stored number, raise \code{METRICS_VERSION} by one. If it only
+changes how something is \emph{displayed}, do not.
+\end{tip}
+
+Rides keep the FTP and LTHR they were scored with (\code{ftp_at_ride}, \code{lthr_at_ride}), so changing the
+profile never rewrites the past.
+
+\section{Reading and writing}
+
+\begin{itemize}
+\item All SQL lives in \code{db.py}. Pages and analysis code call its functions; they never open the database.
+\item Functions that write are called directly. Functions that \emph{read for a page} are called through
+  \code{src/data/cached.py} (next chapter).
+\item Dates are stored as ISO text. Use \code{src.analysis.dates.parse_utc} to read a column that may mix values with and
+  without time zones.
+\item Duplicate protection: the ride file's hash is unique, and imports also skip a ride that starts within two minutes
+  of one already saved (the same ride arriving from Strava and from a head unit).
+\end{itemize}
+
+\section{Headless modules and Streamlit}\label{sec:headless}
+
+The goal is that calculation code does not import Streamlit. Two exceptions exist for historical reasons:
+\code{gpx.py} caches its parser with \code{st.cache_data}, and the pipeline imports the parsers. That is why
+\code{tests/conftest.py} installs stand-ins for missing libraries and why the import workflows import
+\code{pipeline} \emph{inside the function}: it keeps the rest of the module importable without Streamlit.
+Follow the same habit in new code: import heavy or UI-dependent modules lazily, inside the function that needs them.

@@ -1,0 +1,213 @@
+\chapter{Recipes}
+
+Each recipe lists the files to touch in order, shows the code, and ends with what to test. They use a running
+example so the pieces fit together: a made-up metric, \emph{climbing share} (the fraction of moving time spent on
+a gradient above 3\,\%).
+
+\section{Add a per-ride metric}\label{rec:metric}
+
+A metric that is computed for every ride, stored, and then shown on the ride page and available to the Training page.
+
+\subsection*{Step 1: the calculation}
+
+Put a pure function in the analysis module that fits (here \code{src/analysis/ride_metrics.py}). It takes pandas
+objects, returns a number or \texttt{None}, and never raises on missing data.
+
+\begin{lstlisting}
+def climbing_share(grade, moving=None, threshold_pct=3.0):
+    """Fraction of moving time on a gradient above `threshold_pct` (None without grade data)."""
+    g = pd.Series(grade).to_numpy(dtype=float)
+    if len(g) == 0:
+        return None
+    if moving is not None:
+        g = g[pd.Series(moving).to_numpy(dtype=bool)]
+    g = g[~np.isnan(g)]
+    if len(g) == 0:
+        return None
+    return float((g > threshold_pct).mean())
+\end{lstlisting}
+
+\subsection*{Step 2: add it to the summary}
+
+In \code{pipeline.summarize_ride}, add a key to the returned dictionary. Guard on the channel that is needed:
+
+\begin{lstlisting}
+'climbing_share': (rm.climbing_share(df['grade_smooth'], is_moving)
+                   if 'grade_smooth' in df.columns else None),
+\end{lstlisting}
+
+\subsection*{Step 3: choose whether to store it}
+
+Show-only metrics stop here. To store it (so the Training page can use it without re-reading files):
+
+\begin{enumerate}
+\item In \code{pipeline.metrics_for_storage}, add \code{'climbing_share'} to the \texttt{keys} list.
+\item In \code{db.migrate_db}, add \code{("climbing_share", "REAL")} to the list of columns added to \texttt{rides}.
+\item In \code{db._METRIC_COLUMNS}, add \code{'climbing_share'}. The insert (\code{save_ride}) and update
+  (\code{update_ride_metrics}) statements are built from this list, so they pick it up.
+\item In \code{db._metrics_fields}, add one entry to the returned dictionary:
+\begin{lstlisting}
+'climbing_share': _opt_float(metrics.get('climbing_share')),
+\end{lstlisting}
+\item Raise \code{db.METRICS_VERSION} by one so existing rides are offered the recompute.
+\item If a page needs it per ride, add the column to the \texttt{SELECT} of the matching read function
+  (for example \code{get_user_rides}); cached readers pick it up automatically.
+\end{enumerate}
+
+\begin{warn}
+Forgetting step 3.3 stores nothing and raises no error: the column simply stays empty. Forgetting step 3.5 means old
+rides never get the value. Both are caught by the round-trip test below.
+\end{warn}
+
+\subsection*{Step 4: show it}
+
+On the ride page, \code{ride_analysis._render_summary} draws the metric cards in rows of \texttt{st.columns}. Add a
+card to the quality row (\texttt{q1}\ldots\texttt{q4}) or open a new row below it:
+
+\begin{lstlisting}
+cs = summary.get('climbing_share')
+st.columns(4)[0].metric("Climbing share", f"{cs:.0%}" if cs is not None else "N/A",
+                        help="Share of moving time on a gradient above 3 %.")
+\end{lstlisting}
+
+Show \texttt{"N/A"} rather than \texttt{0} when the value cannot be computed; zero is a real result.
+
+\subsection*{Step 5: test}
+
+\begin{lstlisting}
+# tests/test_ride_metrics.py
+def test_climbing_share_counts_only_moving_seconds():
+    grade = pd.Series([0, 5, 5, 0])
+    moving = pd.Series([True, True, False, True])
+    assert rm.climbing_share(grade, moving) == pytest.approx(1/3)
+
+def test_climbing_share_without_data_is_none():
+    assert rm.climbing_share(pd.Series([], dtype=float)) is None
+\end{lstlisting}
+
+And, if stored, a round trip through the database using the \code{temp_db} fixture of \code{tests/test_db.py}
+(save a ride with the new key in its metadata, read the column back).
+
+\section{Add an analysis to the Training page}\label{rec:training}
+
+\begin{enumerate}
+\item \textbf{Calculate.} A pure function in \code{src/analysis/} that takes the tables the page already reads
+  (rides, power records, zone rows) and returns a DataFrame or dictionary. Example shape: \code{training_load.compute_pmc}.
+\item \textbf{Read.} If you need new rows from the database, add a function to \code{db.py} and one line to
+  \code{cached.py}.
+\item \textbf{Chart.} Add \code{plot_my_chart(data, pal)} to \code{training_plots.py} (\S\ref{rec:plot}).
+\item \textbf{Page.} In \code{training_page.py}, write \code{_render_my_section(user_name, today, mode)} and add it to
+  the \texttt{sections} list and the \texttt{if/elif} chain in \code{render_training_page}:
+\end{enumerate}
+
+\begin{lstlisting}
+def _render_my_section(user_name, today, mode):
+    recs = get_power_records(user_name)                  # cached read
+    if recs is None or recs.empty:
+        st.info("No power data yet. Import a ride with a power meter.")
+        return
+    data = my_analysis(recs, today)                      # pure function
+    _chart(tp.plot_my_chart(data, tp.palette(mode)))
+\end{lstlisting}
+
+Always handle the empty case with a plain message that says what the rider can do about it; an empty chart or a
+traceback is the failure users see first. The PDF report uses the same analysis functions
+(\S\ref{rec:report}), so keep the calculation out of the page.
+
+\section{Add a section to the ride page}\label{rec:ridesection}
+
+In \code{ride_analysis._render_sections}, add the label to \texttt{sections} (conditionally, if it needs a channel)
+and an \texttt{elif} branch that calls your renderer with the DataFrame and summary:
+
+\begin{lstlisting}
+if has_power and 'lat' in df.columns:
+    sections.append("My section")
+...
+elif section == "My section":
+    _render_my_section(df, summary, settings)
+\end{lstlisting}
+
+The renderer receives the 1\,Hz DataFrame, so it can do second-by-second work. Anything slow (a physics fit, a
+weather request) should be computed once in \code{process_and_display_analysis}, next to
+\code{run_heavy_analysis}, and passed down, not recomputed inside a section that re-runs on each click.
+
+\section{Add a chart}\label{rec:plot}
+
+Chart builders return a Plotly figure and do not call Streamlit. Follow the conventions already in
+\code{training_plots.py}:
+
+\begin{itemize}
+\item \textbf{One y-axis per chart.} Two measures of different scale are two charts.
+\item \textbf{Colours from \texttt{palette(mode)}}, in series order; never hard-code hex values in a builder. Text uses
+  neutral ink colours, never the series colour.
+\item \textbf{A legend whenever there is more than one series}; none for a single series (the title names it).
+\item Name the function \code{plot_*} so title and legend placement is automatic (\S\ref{sec:figstyle}).
+\item Return an empty-but-valid figure, or let the page show a message, when there is no data.
+\end{itemize}
+
+\begin{lstlisting}
+def plot_climbing_share(df, pal):
+    """Climbing share per month (bars)."""
+    fig = go.Figure(go.Bar(x=df['month'], y=df['share'] * 100, name="Climbing share",
+                           marker_color=pal['series'][0]))
+    fig.update_layout(title="Climbing share per month", yaxis_title="% of moving time")
+    fig.update_xaxes(showgrid=False)
+    return fig
+\end{lstlisting}
+
+Test that the figure builds from a small DataFrame (\code{tests/test_plots.py} has examples) and, if there is a
+decision in it (a threshold, a colour rule), test the decision as a separate pure function.
+
+\section{Read a new file format}\label{rec:format}
+
+\begin{enumerate}
+\item \textbf{Parser.} Add \code{src/data/myformat.py} with \code{parse_myformat(file_bytes)} returning a DataFrame with
+  at least a \texttt{time} column and, where available, \texttt{lat}, \texttt{lon}, \texttt{ele}, \texttt{power},
+  \texttt{hr}, \texttt{cadence}, and \texttt{speed} in m/s. Look at \code{tcx.py}, the shortest example. Raise
+  \texttt{ValueError} if the file holds no timestamped samples.
+\item \textbf{Recognise it.} In \code{upload.sniff_kind}, add a test on the first bytes of the file, and add the
+  kind to \code{ACTIVITY_KINDS}. The type is decided from the \emph{content}; file names are not trusted
+  (a file exported as \texttt{ride} or \texttt{activity.xml} must still work).
+\item \textbf{Route it.} In \code{pipeline.ride_kind} return the new kind, and in \code{pipeline.prepare_ride} add
+  the \texttt{elif} that calls your parser. If your format carries a reliable speed channel, add its kind to the
+  tuple in the ``derive speed'' rule so speed is not recomputed from GPS.
+\item \textbf{Accept it.} Add the extension to \code{upload.UPLOAD_TYPES} (the uploader's allowed types).
+\item \textbf{Sport filter.} The bulk importer skips non-cycling files using the sport recorded inside the file
+  (\code{upload_import._sport}); add a branch there if your format records it.
+\end{enumerate}
+
+Test with a tiny synthetic file built in the test itself (see \code{tests/test_upload.py}), including a damaged one:
+the parsers are expected to return what they can rather than fail the whole upload.
+
+\section{Add a profile setting}\label{rec:setting}
+
+A per-rider value, such as crank length (already present) or a second threshold.
+
+\begin{enumerate}
+\item \textbf{Column.} \texttt{ALTER TABLE users ADD COLUMN ...} in \code{migrate_db} with a default
+  (\S\ref{sec:headless} showed the pattern).
+\item \textbf{Read and write.} \code{get_user_data} returns the row as a dict, so the new field appears in it; add a
+  small writer such as \code{update_user_crank}.
+\item \textbf{Edit it.} Add a control in \code{user_corner.py}. A control that writes should call the writer and
+  \texttt{st.rerun()}.
+\item \textbf{Use it.} Pass it through the \texttt{settings} dictionary built at the end of \code{render_sidebar} if
+  the ride page needs it.
+\end{enumerate}
+
+Because every cached read is keyed on the database file's stamp, the page shows the new value on the next run
+without clearing anything.
+
+\section{Add something to the PDF report}\label{rec:report}
+
+The report is built in two steps on purpose, so the screen and the paper cannot disagree.
+
+\begin{enumerate}
+\item \code{report_data.collect_report_data(user, period_days, today)} gathers every number (no plotting, no
+  Streamlit). Add your analysis there and put the result in the returned dictionary; return an empty table, never
+  \texttt{None}, when there is no data.
+\item \code{report_pdf.build_report_pdf(data)} draws pages with matplotlib and returns the PDF as bytes. Add a drawing
+  function and call it from the page sequence, checking \texttt{.empty} first.
+\end{enumerate}
+
+The single-ride report works the same way (\code{ride_report_data.py}, \code{ride_report_pdf.py}).
+Reports are built only when the rider clicks, because matplotlib is slow.

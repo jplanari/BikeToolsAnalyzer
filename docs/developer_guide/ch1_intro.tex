@@ -1,0 +1,190 @@
+\chapter{Introduction}
+
+BikeTools Analyzer is a Streamlit application that reads cycling activities (FIT, GPX, TCX, or straight from Strava,
+Wahoo and Polar), stores them in a local SQLite database and turns them into ride analysis, training-load analytics,
+physics-based models (aerodynamics, climbing, thermal) and PDF reports. It runs on a rider's own computer, either with
+\texttt{streamlit run} or as a packaged desktop program. All data stays on that computer.
+
+The project is meant to be changed by the people who use it. This guide exists so that a change does not need a
+long reading session first: it explains the few ideas the whole code base is built on, then gives step-by-step
+recipes for the changes people most often want.
+
+\section*{What you can add, and where to look}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{5.4cm}p{3.3cm}p{5.2cm}@{}}
+\toprule
+I want to\ldots & Read & Touches mostly\\
+\midrule
+add a per-ride number (metric) & \S\ref{rec:metric} & \code{analysis/}, \code{pipeline.py}, \code{db.py}\\
+add an analysis to the Training page & \S\ref{rec:training} & \code{analysis/}, \code{viz/training_page.py}\\
+add a section to the ride page & \S\ref{rec:ridesection} & \code{viz/ride_analysis.py}\\
+add a chart & \S\ref{rec:plot} & \code{viz/plots.py}, \code{training_plots.py}\\
+read a new file format & \S\ref{rec:format} & \code{data/}, \code{pipeline.py}\\
+connect a new online service & Chapter~\ref{ch:providers} & \code{data/}, \code{viz/sidebar.py}\\
+add a profile setting & \S\ref{rec:setting} & \code{db.py}, \code{viz/user_corner.py}\\
+add something to the PDF report & \S\ref{rec:report} & \code{report_data.py}, \code{report_pdf.py}\\
+change the look & \S\ref{sec:theme} & \code{viz/theme.py}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Three rules that make changes safe}
+
+\begin{enumerate}
+\item \textbf{Calculations never touch the screen.} Everything under \code{src/analysis}, \code{src/physics} and
+  \code{src/data} is plain Python on pandas objects, with no Streamlit calls. That is what makes it testable and
+  reusable by the PDF report. (A few data modules still import Streamlit for caching; see \S\ref{sec:headless}.)
+\item \textbf{The original file is the source of truth.} Every ride's file is stored, so any metric can be
+  recomputed later. A new metric therefore never needs the rider to re-upload anything.
+\item \textbf{Add a test with the change.} The test suite is quick (under a minute) and runs on every push.
+  Chapter~\ref{ch:conventions} lists what to test.
+\end{enumerate}
+
+\chapter{Getting started}
+
+\section{Run it from source}
+
+You need Python 3.10 or newer (the continuous-integration build uses 3.11).
+
+\begin{lstlisting}[style=plain]
+git clone https://github.com/jplanari/BikeToolsAnalyzer
+cd BikeToolsAnalyzer
+python -m venv .venv
+.venv\Scripts\activate          # Windows;  macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py --server.port 8501
+\end{lstlisting}
+
+Port 8501 matters: the Strava, Wahoo and Polar sign-in redirects point at \code{http://localhost:8501/}. If another
+program holds it, Streamlit silently moves to 8502 and sign-in breaks.
+
+The database file is \texttt{bikethools.db} in the folder you start from (the spelling is historical). Set the
+environment variable \code{BIKETOOLS_DB} to keep it elsewhere, for example outside a OneDrive or Dropbox folder,
+whose sync clients lock files in ways SQLite dislikes. The desktop build uses its own per-user data folder.
+
+\begin{tip}[Use a scratch database while developing]
+\begin{lstlisting}[style=plain]
+set BIKETOOLS_DB=C:\temp\dev.db          # Windows (cmd)
+$env:BIKETOOLS_DB="C:\temp\dev.db"       # Windows (PowerShell)
+export BIKETOOLS_DB=/tmp/dev.db          # macOS / Linux
+\end{lstlisting}
+Your real rides stay untouched while you experiment.
+\end{tip}
+
+\section{Run the tests}
+
+\begin{lstlisting}[style=plain]
+pytest                       # everything
+pytest tests/test_upload.py  # one file
+pytest -k thresholds -q      # by name
+\end{lstlisting}
+
+Continuous integration (\code{.github/workflows/python-app.yml}) installs \texttt{requirements.txt}, then runs
+\texttt{pytest} on every push. Two kinds of test exist:
+
+\begin{itemize}
+\item \textbf{Headless tests} (most of them) import the calculation and data modules directly. If a heavy library is
+  missing on your machine, \code{tests/conftest.py} replaces it with a stub, so these tests still run.
+\item \textbf{User-interface tests} (\code{tests/test_ui.py}, \code{tests/test_training_page.py}) start the real
+  application with Streamlit's \texttt{AppTest}, click through the pages against a seeded database, and fail on any
+  exception. They are skipped locally when Streamlit is not installed, but \emph{required} in CI.
+\end{itemize}
+
+\section{Make a change}
+
+\begin{enumerate}
+\item Create a branch from \texttt{main}: \texttt{git checkout -b my-feature}.
+\item Make the change and its tests; run \texttt{pytest}.
+\item Push and open a pull request. CI runs the same tests.
+\item To try it as the desktop app, run the \emph{Desktop build} workflow (Actions tab) on your branch.
+\end{enumerate}
+
+Keep pull requests focused. A new metric, a new chart and a new service are three pull requests, not one; each is
+then easy to review and to revert.
+
+\chapter{Architecture}
+
+\section{Layers}
+
+The code is four layers. A module may import from the layers to its right, never from the left.
+
+\begin{center}
+\begin{tikzpicture}[
+  box/.style={rectangle,rounded corners=3pt,draw=ink!60,fill=#1!12,minimum height=1.25cm,text width=3.1cm,align=center,font=\small},
+  arr/.style={-{Stealth[length=2.5mm]},thick,ink!70}]
+\node[box=accent] (viz) {\textbf{viz/}\\screens, charts, sidebar};
+\node[box=kw,right=0.9cm of viz] (analysis) {\textbf{analysis/ physics/}\\pure calculations};
+\node[box=cm,right=0.9cm of analysis] (data) {\textbf{data/}\\files, services, SQLite};
+\draw[arr] (viz) -- (analysis);
+\draw[arr] (analysis) -- (data);
+\draw[arr,bend left=25] (viz.north) to node[above,font=\scriptsize]{reads through \texttt{cached.py}} (data.north);
+\end{tikzpicture}
+\end{center}
+
+\begin{description}[style=nextline,leftmargin=1.2em]
+\item[\code{src/data}] Everything that is read or written: file parsers (\code{fit.py}, \code{gpx.py}, \code{tcx.py}),
+  service clients (\code{strava.py}, \code{wahoo.py}, \code{polar.py}), the SQLite layer (\code{db.py}) and the
+  \emph{pipeline} (\code{pipeline.py}) that turns a file into a standard table and its summary numbers.
+\item[\code{src/analysis}] Pure functions: normalized power and TSS (\code{power.py}), per-ride quality metrics
+  (\code{ride_metrics.py}), the performance management chart (\code{training_load.py}), power profile and critical
+  power (\code{power_profile.py}), climbs, segments, correlations, workout building.
+\item[\code{src/physics}] Models of the rider and the road: aerodynamic drag and CdA (\code{aerodyn.py}), a climbing
+  model (\code{climb_model.py}), heat balance (\code{thermal.py}).
+\item[\code{src/viz}] Everything with Streamlit or Plotly in it: the page for each mode, the sidebar, charts, the
+  look, and the PDF writers.
+\end{description}
+
+The entry point is \code{app.py}. It initialises the database, applies the look, finishes any pending sign-in
+redirect, draws the sidebar, then draws one of three pages according to the top navigation bar.
+
+\section{Repository map}
+
+\begin{longtable}{@{}p{5.6cm}p{9.3cm}@{}}
+\toprule
+Path & Role\\
+\midrule
+\endhead
+\code{app.py} & Entry point; chooses the page.\\
+\code{src/viz/sidebar.py} & Users, data sources (upload, Strava, Wahoo, Polar), sign-in callbacks.\\
+\code{src/viz/ride_analysis.py} & The ride page: parse, summarise, save, then draw sections.\\
+\code{src/viz/training_page.py} & The Training page (load, power profile, durability, intensity, deeper).\\
+\code{src/viz/user_corner.py} & Profile, thresholds, history repair, Connections form.\\
+\code{src/viz/connections.py} & In-app entry of service credentials.\\
+\code{src/viz/plots.py}, \code{training_plots.py} & Plotly chart builders.\\
+\code{src/viz/figstyle.py} & Keeps chart titles and legends from overlapping (automatic).\\
+\code{src/viz/sections.py} & Tab-like selector and \texttt{remembered()} widgets.\\
+\code{src/viz/theme.py} & Look (CSS), welcome page, help texts.\\
+\code{src/viz/report_pdf.py}, \code{ride_report_pdf.py} & PDF writers (matplotlib).\\
+\code{src/data/pipeline.py} & File $\rightarrow$ standard table $\rightarrow$ summary dict.\\
+\code{src/data/db.py} & Schema, migrations, every read and write.\\
+\code{src/data/cached.py} & Cached reads for the pages.\\
+\code{src/data/credentials.py} & Where service client IDs and secrets come from.\\
+\code{src/data/*_import.py} & Import workflows per source.\\
+\code{src/data/thresholds.py} & FTP and LTHR estimated from data.\\
+\code{desktop/} & Launcher and PyInstaller recipe for the packaged app.\\
+\code{docs/} & OAuth forwarding page, physics report, this guide.\\
+\code{tests/} & One test file per area.\\
+\bottomrule
+\end{longtable}
+
+\section{How a ride travels through the app}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.55cm,
+  s/.style={rectangle,rounded corners=3pt,draw=ink!60,fill=codebg,minimum height=0.9cm,text width=11.5cm,align=left,font=\small},
+  arr/.style={-{Stealth[length=2mm]},ink!70}]
+\node[s] (a) {\textbf{1. Source.} Upload, Strava, Wahoo or Polar delivers file bytes and a file name.};
+\node[s,below=of a] (b) {\textbf{2. \code{prepare_ride}} (\code{pipeline.py}). Detect the format from content, parse, clean impossible
+  readings, resample to 1\,Hz, add distance, speed and grade. Result: one \texttt{DataFrame}.};
+\node[s,below=of b] (c) {\textbf{3. \code{summarize_ride}.} Normalized power, TSS, zones, power curve, decoupling, \ldots\ in one dict.};
+\node[s,below=of c] (d) {\textbf{4. \code{db.save_ride}.} Metadata, power curve, zone times, histograms \emph{and the original file} are stored.};
+\node[s,below=of d] (e) {\textbf{5. Pages.} Training analytics read the stored numbers, never the files. The ride page works on the DataFrame.};
+\foreach \x/\y in {a/b,b/c,c/d,d/e} \draw[arr] (\x) -- (\y);
+\end{tikzpicture}
+\end{center}
+
+Stored numbers make the Training page fast: it reads rows, it does not re-parse hundreds of files. The ride page,
+which needs second-by-second data, works on the DataFrame from step 2.

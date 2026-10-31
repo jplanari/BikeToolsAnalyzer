@@ -1,0 +1,87 @@
+\chapter{Conventions and pitfalls}\label{ch:conventions}
+
+\section{Code conventions}
+
+\begin{itemize}
+\item \textbf{Pure first.} Put the calculation in a function that takes data and returns data; the page only calls it.
+\item \textbf{Docstrings say what and why}, in plain words, including the units and what is returned when there is
+  no data. Many modules open with a short essay on the reasoning; keep that habit when the method is not obvious.
+\item \textbf{Named constants} for every threshold (\code{MOVING_THRESHOLD_MS}, \code{MAX_POWER_W}); no bare
+  numbers inside formulas.
+\item \textbf{Missing data is normal.} Return \texttt{None} or an empty frame; the page decides what message to show.
+\item \textbf{Time is UTC.} Convert to local time only for display.
+\item \textbf{Units at the edge.} Compute in SI (m, m/s, W); convert to km/h only when printing.
+\item \textbf{Lazy imports} of anything heavy or UI-bound, inside the function that needs it.
+\item \textbf{No new dependency lightly.} Packages go in \texttt{requirements.txt} with a lower bound that the code
+  needs and an upper bound below the next major release; the desktop build bundles every one of them.
+\end{itemize}
+
+\section{What to test}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{4.6cm}p{9.9cm}@{}}
+\toprule
+You changed & Test\\
+\midrule
+a calculation & known input $\to$ hand-computed output; the empty and the one-sample case\\
+a parser & a tiny synthetic file built in the test; a truncated one; a file without power\\
+the database & round trip through the \code{temp_db} fixture; opening an \emph{old-schema} database\\
+a service client & fake responses for success, 401, 404, 429, network error\\
+an importer & idempotence, duplicate start, unreadable file, rate limit\\
+a page & the \texttt{AppTest} smoke tests must still pass; add a click-through for a new section\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Common pitfalls}
+
+\begin{warn}[Widgets that lose their value]
+A widget in a section that is not drawn forgets its value. Use \texttt{remembered()}.
+\end{warn}
+
+\begin{warn}[Stale caches in tests]
+Cached reads survive between tests unless you call \code{st.cache_data.clear()} (the UI tests do, in their
+fixture).
+\end{warn}
+
+\begin{warn}[Seconds versus samples]
+Everything downstream of \code{prepare_ride} assumes one row per second. A function that works on 5-second data must
+resample first; do not assume the source rate.
+\end{warn}
+
+\begin{warn}[Editing a stored column's meaning]
+If you change what an existing stored number means, raise \code{METRICS_VERSION}, or old and new rides will silently
+disagree in the Training charts.
+\end{warn}
+
+\begin{warn}[Mutating the DataFrame]
+Cached or shared DataFrames must not be changed in place. Copy first (\texttt{df = df.copy()}) in any function that
+adds columns.
+\end{warn}
+
+\section{Building the desktop program}
+
+The packaged app is built by PyInstaller from \code{desktop/biketools.spec}; \code{desktop/launcher.py} starts the
+Streamlit server on port 8501 and opens a window (falling back to the browser). The \emph{Desktop build} workflow
+runs it on Windows, macOS and Linux. Things to remember when you change the code:
+
+\begin{itemize}
+\item A new \emph{data file} the program reads at run time (a template, an image) must be listed in the spec;
+  PyInstaller only bundles imports it can see.
+\item A module imported only by name (\texttt{importlib}) or lazily may need a ``hidden import'' entry.
+\item The user's data lives outside the program folder (\texttt{\%APPDATA\%\textbackslash BikeToolsAnalyzer} on Windows),
+  so updating means replacing the program folder and keeping the data.
+\item Builds are unsigned: Windows SmartScreen and macOS Gatekeeper warn on first start.
+\end{itemize}
+
+\section{Opening a pull request}
+
+\checklist{
+\item tests added or updated, \texttt{pytest} passes
+\item no secrets, no personal ride files, no database in the commit
+\item \code{METRICS_VERSION} raised if stored numbers changed
+\item new read function added to \texttt{cached.py} if a page uses it
+\item README or this guide updated if behaviour or structure changed
+\item pages show a clear message when data is missing
+}

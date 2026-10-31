@@ -1,0 +1,30 @@
+\input{preamble}
+\begin{document}
+
+\begin{titlepage}
+\raggedright
+\vspace*{3cm}
+{\color{accent}\rule{3cm}{4pt}}\\[1.2cm]
+{\Huge\bfseries BikeTools Analyzer}\\[.4cm]
+{\LARGE Developer guide}\\[1.2cm]
+{\large How the code is organised and how to extend it:\\
+new metrics, charts, file formats, services and pages.}\\[3cm]
+{\color{muted}Repository \texttt{jplanari/BikeToolsAnalyzer}\\
+Applies to the app version shown in the page header (v1.4) and the database
+metrics version 6.}
+\vfill
+{\small\color{muted}This guide describes the code as it is in the repository. When it and the code disagree, the code wins;
+please fix the guide in the same pull request.}
+\end{titlepage}
+
+\tableofcontents
+
+\include{ch1_intro}
+\include{ch4_data}
+\include{ch5_streamlit}
+\include{ch6_recipes}
+\include{ch7_providers}
+\include{ch8_conventions}
+\include{appendix}
+
+\end{document}

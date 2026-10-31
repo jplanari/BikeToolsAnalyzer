@@ -1,0 +1,135 @@
+\chapter{Connecting a new online service}\label{ch:providers}
+
+Strava, Wahoo and Polar are connected the same way, so a fourth service is a matter of copying a pattern. Polar is the
+simplest to copy (its tokens never expire); \code{polar.py}, \code{polar_import.py} and \code{tests/test_polar.py} are
+the reference implementation. Suppose the service is called \texttt{acme}.
+
+\section{Two kinds of secret}
+
+\begin{description}
+\item[App credentials] The \emph{client ID} and \emph{client secret} of the API application someone registered with the
+  service. One set per installation. Entered in the app (stored in table \code{app_credentials}) or written to
+  \texttt{.streamlit/secrets.toml}; what is entered in the app wins (\code{credentials.resolve}).
+\item[Rider tokens] The access (and refresh) token each rider obtains by signing in. One set per rider and service,
+  in table \code{acme_auth}.
+\end{description}
+
+\begin{warn}[Never commit secrets]
+A client secret must not appear in the repository, in a test, or in the packaged desktop program. Tests use fake
+values; the real ones live in the user's data folder. The same applies to tokens in log messages and error texts.
+\end{warn}
+
+\section{Step by step}
+
+\subsection*{1. The client: \texttt{src/data/acme.py}}
+
+No Streamlit, no database. It holds the configuration, the errors, the OAuth calls and the API calls:
+
+\begin{lstlisting}
+@dataclass
+class AcmeConfig:
+    client_id: str
+    client_secret: str
+    redirect_uri: str = "http://localhost:8501/"
+
+class AcmeError(Exception): ...
+class AcmeAuthError(AcmeError): ...         # token revoked: rider must reconnect
+class AcmeRateLimitError(AcmeError): ...    # HTTP 429
+
+def authorize_url(cfg, state): ...          # where the Connect button sends the rider
+def exchange_code(cfg, code): ...           # one-time code -> {'access_token', ...}
+def list_activities(access_token): ...      # summaries
+def download_file(access_token, activity_id): ...   # bytes of a FIT/GPX/TCX file
+def is_cycling(activity): ...
+def ride_filename(activity_id): return f"acme_{activity_id}.fit"
+\end{lstlisting}
+
+Translate HTTP failures into your error classes in one private \code{_request} helper, as \code{polar.py} does, and
+always pass a \texttt{timeout}. Read the service's terms: some forbid storing data beyond a period, sharing it, or
+exceed what a free tier allows; put the relevant limits in the module docstring.
+
+\subsection*{2. Store the rider's token}
+
+In \code{db.py}, create \code{acme_auth} in \code{migrate_db} (copy \code{polar_auth}) and add
+\code{save_acme_auth}, \code{get_acme_auth}, \code{delete_acme_auth}. Add
+\code{get_imported_acme_ids(user)} and \code{acme_id_from_filename} on the model of the Polar pair: the
+\emph{file name carries the service's activity ID}, which is how a repeated sync knows what it already has.
+
+\subsection*{3. The import workflow: \texttt{src/data/acme\_import.py}}
+
+Functions the sidebar will call: \code{get_auth}, \texttt{connect}, \code{list_recent_rides},
+\code{fetch_ride_file}, \code{sync_new_rides}. The last returns the shared \texttt{ImportResult}
+(\code{strava_import.py}), and must be:
+
+\begin{itemize}
+\item \textbf{Idempotent}: running it twice imports nothing the second time;
+\item \textbf{Tolerant}: a file that cannot be read goes into \texttt{res.failed} and the loop continues;
+\item \textbf{Duplicate-aware}: skip a ride whose start is within two minutes of one already saved
+  (\code{_is_near}); the same ride often arrives from several sources;
+\item \textbf{Polite}: stop with \code{res.stopped_reason} on a rate limit, never loop.
+\end{itemize}
+
+Reuse \code{pipeline.prepare_ride}, \code{summarize_ride}, \code{metrics_for_storage}, \code{db.build_ride_metadata}
+and \code{db.save_ride} exactly as \code{polar_import.sync_new_rides} does, so an imported ride is indistinguishable from
+an uploaded one.
+
+\subsection*{4. Register the credentials}
+
+Add an entry to \code{credentials.PROVIDERS}:
+
+\begin{lstlisting}
+"acme": {
+    "label": "Acme",
+    "portal": "https://developers.acme.example/apps",
+    "redirect": "http://localhost:8501/",
+    "steps": "Create an application and add the redirect address below to it.",
+},
+\end{lstlisting}
+
+The in-app form, the \emph{User Corner $\rightarrow$ Connections} list and the resolution order then work for the new
+service without more code. In \code{sidebar.py} add the config function next to the others:
+
+\begin{lstlisting}
+def _acme_config():
+    c = get_credentials("acme")
+    return ac.AcmeConfig(c["client_id"], c["client_secret"], c["redirect_uri"]) if c else None
+\end{lstlisting}
+
+\subsection*{5. The sidebar and the redirect}
+
+\begin{enumerate}
+\item Write \code{_render_acme_sidebar(user_name, ftp, lthr)} on the model of \code{_render_polar_sidebar}:
+  show \code{setup_box("acme")} when the config is missing; a ``Connect'' link button when the rider has no token;
+  a list of recent rides, ``Analyze'' and ``Sync new rides'' buttons when connected; ``Disconnect''. It returns a
+  file-like object with a \texttt{.name} (an \texttt{io.BytesIO} with the file name attached) for the ride page, or
+  \texttt{None}.
+\item Use a state prefix. The OAuth \texttt{state} sent to the service is \texttt{"acme." + token}, and
+  \code{handle_strava_callback} routes on the prefix to a \code{_finish_acme_callback}. The prefix is the only way
+  the shared redirect page knows which service is calling back.
+\item Add \texttt{"Acme"} to the \texttt{st.sidebar.radio("Source", ...)} list in \code{render_sidebar} and an
+  \texttt{elif} that calls your renderer.
+\end{enumerate}
+
+\begin{tip}[Services that demand https]
+Some services refuse an \texttt{http://localhost} redirect. The repository already contains a static forwarding page,
+\code{docs/oauth/index.html}, published with GitHub Pages, that receives the https redirect and passes the code on to
+\texttt{localhost:8501}. Register that address with the service and put it in the \texttt{redirect} field above.
+It sees only the one-time code, which is useless without the client secret.
+\end{tip}
+
+\subsection*{6. Tests and documentation}
+
+Test the client with a fake HTTP response (\texttt{FakeResponse} in \code{tests/test_strava.py}) and monkey-patched
+\texttt{requests}; test the import workflow against the \code{temp_db} fixture with a stubbed client, covering: a
+new ride is saved, a second sync imports nothing, a near-duplicate is skipped, an unreadable file is reported without
+stopping the loop, a rate limit stops cleanly. Then add a section to the README (one-time setup, limits) and an
+example block to \texttt{.streamlit/secrets.toml.example}.
+
+\checklist{
+\item client module, no Streamlit
+\item auth table and three functions; imported-ID helper
+\item import workflow returning \texttt{ImportResult}
+\item entry in \texttt{credentials.PROVIDERS} and a config function
+\item sidebar renderer, state prefix, callback branch, \texttt{Source} radio entry
+\item tests for client and import; README and secrets example
+}
