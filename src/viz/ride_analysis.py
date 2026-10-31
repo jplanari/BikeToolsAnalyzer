@@ -15,10 +15,10 @@ from src.viz.plots import (plot_elevation,
                            plot_zone_distribution,
                            plot_power_budget,
                            plot_w_prime_balance)
-from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance
+from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, w_prime_needed
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
-from src.data.db import save_ride, build_ride_metadata, get_ride_start_times
+from src.data.db import save_ride, build_ride_metadata, get_ride_start_times, set_user_w_prime
 from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
@@ -52,22 +52,19 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_p
     # 2. Climb Detection
     climbs = detect_climbs(df, min_length=1000, join_dist=1000)
     
-    # 3. W' Balance (if FTP exists)
+    # 3. W' Balance (if FTP exists). A ride that uses more than the rider's W' means the stored figure is too low:
+    # the balance is recalculated with the W' the ride needed, and the Power section offers to save it.
     if ftp and 'power' in df.columns:
-        df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp, w_prime_cap_j=w_prime_cap_j)
-        breakthrough = df['w_prime_balance'].min()
-        if breakthrough < 0:
-            st.success(f"🚀 **Fitness Breakthrough Detected!**")
-            st.write(f"You depleted your modeled W' battery and kept going. You went **{abs(breakthrough)/1000:.1f} kJ** into the negative.")
-    
-            st.info("""
-    **Interpretation:** Your actual CP or W' is higher than your current settings.
-    - If this was a short, punchy ride: Increase your **W'**.
-    - If this was a long, steady hard ride: Increase your **CP/FTP**.
-    """)
+        needed = w_prime_needed(df['power'], ftp)
+        used = w_prime_cap_j
+        if needed > w_prime_cap_j:
+            used = float(np.ceil(needed / 100.0) * 100.0)         # round up to 0.1 kJ
+        df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp, w_prime_cap_j=used)
+        df.attrs['w_prime'] = {'profile': float(w_prime_cap_j), 'needed': needed, 'used': used}
     else:
         df['w_prime_balance'] = np.nan
-        
+        df.attrs.pop('w_prime', None)
+
     return df, climbs, p_comps
 
 
@@ -105,14 +102,14 @@ def process_and_display_analysis(file_obj, user_name, settings):
                 drivetrain_loss=0.03,
                 rider_mass=settings['weight'],
                 ftp=current_ftp,
-                w_prime_cap_j=settings.get('w_prime', 20000.0)
+                w_prime_cap_j=settings.get('w_prime') or 20000.0
             )
 
         ride_if = summary['if']
         ride_tss = summary['tss']
         ride_kj = summary['kj']
         current_curve = summary['power_curve']
-        settings['w_prime_cap'] = 20000.0
+        settings['w_prime_cap'] = (df.attrs.get('w_prime') or {}).get('used') or (settings.get('w_prime') or 20000.0)
 
         # Auto-Save
         if user_name:
@@ -341,9 +338,12 @@ def _render_aero(df, settings, p_comps):
     avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
     if fit:
         c1, c2 = st.columns(2)
+        tunnel = fit.get('tunnel_seconds') or 0
+        bridged = (f" Includes {tunnel // 60} min {tunnel % 60} s where the speed was lost while pedalling (a tunnel), "
+                   "taken at the stretch's average speed." if tunnel else "")
         c1.metric("Est. CdA", f"{fit['cda']:.3f} m²",
                   help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. Treat it as "
-                       "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient.")
+                       "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient." + bridged)
         c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
     else:
         st.warning("Not enough stable data points (Speed > 18km/h required).")
@@ -361,8 +361,24 @@ def _render_aero(df, settings, p_comps):
         st.info("No CdA data available.")
 
 
+def _render_w_prime_notice(df, settings, user_name):
+    """When the ride used more W' than the profile has: say so, show the recalculated balance, offer to save it."""
+    info = df.attrs.get('w_prime')
+    if not info or info['used'] <= info['profile']:
+        return
+    st.warning(f"This ride used **{info['needed'] / 1000:.1f} kJ** above your threshold power, more than the "
+               f"**{info['profile'] / 1000:.1f} kJ** W′ in your profile, so your real W′ is at least that. "
+               f"The chart below is recalculated with W′ = **{info['used'] / 1000:.1f} kJ**.")
+    st.caption("If it was a long, steady hard ride, your threshold power (FTP / CP) may be higher rather than your W′.")
+    if user_name and st.button(f"Set my W′ to {info['used'] / 1000:.1f} kJ", key=f"set_wprime_{user_name}",
+                               help="Saves it in your profile; the next rides start from it."):
+        set_user_w_prime(user_name, info['used'])
+        st.rerun()
+
+
 def _render_power(df, settings, current_curve, user_name):
     st.subheader("W' Balance")
+    _render_w_prime_notice(df, settings, user_name)
     if 'w_prime_balance' in df.columns:
         show_centered(plot_w_prime_balance(df, settings['w_prime_cap']))
     else:

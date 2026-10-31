@@ -8,6 +8,8 @@ chart is covered without remembering to call it.
 import functools
 import math
 
+import numpy as np
+
 TITLE_PX = 40            # room for a one-line title at the top of the figure
 LEGEND_ROW_PX = 26       # one row of legend entries
 BASE_TOP_PX = 16         # breathing room above everything
@@ -70,3 +72,26 @@ def _wrapped(fn):
         return tidy(fig) if hasattr(fig, "update_layout") else fig
     inner._tidy = True
     return inner
+
+
+ELEVATION_PAD = 0.05            # fraction of the elevation span added below the lowest and above the highest point
+ELEVATION_MIN_SPAN_M = 10.0     # a flat ride still gets a readable axis
+
+
+def elevation_range(*series, pad=ELEVATION_PAD, min_span=ELEVATION_MIN_SPAN_M):
+    """
+    [low, high] for an elevation axis: the lowest point minus `pad` of the span to the highest point plus `pad`
+    of the span, so the profile fills the plot instead of starting at 0 m. Several series (a whole ride and a
+    selection of it) share one range. None when there is no elevation data.
+    """
+    arrays = [np.asarray(s, dtype=float) for s in series if s is not None]
+    arrays = [a[np.isfinite(a)] for a in arrays]
+    arrays = [a for a in arrays if a.size]
+    if not arrays:
+        return None
+    lo, hi = min(a.min() for a in arrays), max(a.max() for a in arrays)
+    if hi - lo < min_span:
+        mid = (hi + lo) / 2
+        lo, hi = mid - min_span / 2, mid + min_span / 2
+    margin = pad * (hi - lo)
+    return [float(lo - margin), float(hi + margin)]

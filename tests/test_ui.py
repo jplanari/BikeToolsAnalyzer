@@ -104,12 +104,22 @@ def test_first_profile_form_creates_the_user_and_shows_the_gallery_hint(empty_db
 
 def test_first_profile_needs_only_a_name_and_explains_ftp_and_lthr(empty_db):
     at = _app()
-    assert "What are FTP and LTHR?" in [e.label for e in at.expander]
+    assert "What are FTP, LTHR and W′?" in [e.label for e in at.expander]
     at.text_input(key="first_profile_name").set_value("Bea")
     next(b for b in at.button if b.label == "Create profile").click().run()
     _no_errors(at)
     user = db.get_user_data("Bea")
     assert user["ftp"] == 200 and user["lthr"] == 170                       # empty fields fall back to the defaults
+    assert user["w_prime"] == 20000
+
+
+def test_first_profile_takes_the_riders_w_prime_in_kilojoules(empty_db):
+    at = _app()
+    at.text_input(key="first_profile_name").set_value("Cris")
+    at.number_input(key="first_profile_wprime").set_value(26.5)
+    next(b for b in at.button if b.label == "Create profile").click().run()
+    _no_errors(at)
+    assert db.get_user_data("Cris")["w_prime"] == 26500
 
 
 def test_empty_ftp_and_lthr_follow_the_rides_in_the_history(empty_db):

@@ -8,11 +8,14 @@ from plotly.subplots import make_subplots
 
 from src.analysis import segments as sg
 from src.viz.climb_estimator import render_climb_estimator
+from src.viz.figstyle import elevation_range
 from src.viz.formatting import format_duration
 from src.viz.maps import create_segment_map
 from src.viz.plots import plot_detailed_climb
 from src.viz.sections import remembered
 
+DISTANCE_STEP_KM = 0.01            # 10 m
+TIME_STEP_MIN = 0.1
 MIN_ESTIMATOR_LENGTH_M = 300
 MIN_ESTIMATOR_GRADE_PCT = 1.0
 
@@ -25,17 +28,48 @@ def _time(seconds):
     return "n/a" if seconds is None else format_duration(int(round(seconds)))
 
 
+MAX_SELECT_POINTS = 1500            # invisible markers that carry the drag-selection
+
+
 def _overview(df, i0, i1):
-    """Whole-ride elevation with the selection shaded."""
+    """Whole-ride elevation with the selection shaded. Drag across it to choose a new range."""
     x = df['dist_m'] / 1000.0 if 'dist_m' in df.columns else pd.Series(np.arange(len(df)) / 60.0, index=df.index)
     fig = go.Figure(go.Scatter(x=x, y=df['ele'], mode='lines', line=dict(color='lightgray', width=2),
                                fill='tozeroy', fillcolor='rgba(200,200,200,0.2)', hoverinfo='skip'))
     sel = df.iloc[i0:i1 + 1]
     fig.add_trace(go.Scatter(x=x.iloc[i0:i1 + 1], y=sel['ele'], mode='lines', line=dict(color='#d62728', width=3),
                              name='Selection', hoverinfo='skip'))
+    step = max(1, len(df) // MAX_SELECT_POINTS)                  # invisible markers: Plotly reports a box selection
+    fig.add_trace(go.Scatter(x=x.iloc[::step], y=df['ele'].iloc[::step], mode='markers', hoverinfo='skip',
+                             marker=dict(size=8, opacity=0), showlegend=False,
+                             selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0))))
     fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
-                      xaxis_title="Distance (km)" if 'dist_m' in df.columns else "Minutes", yaxis_title="m")
+                      xaxis_title="Distance (km)" if 'dist_m' in df.columns else "Minutes", yaxis_title="m",
+                      dragmode="select", selectdirection="h")     # a horizontal drag picks a stretch of the route
+    rng = elevation_range(df['ele'])
+    if rng:
+        fig.update_yaxes(range=rng)
     return fig
+
+
+def _drawn_range(df, i0, i1, ride_id, lo, hi, step):
+    """
+    Draws the overview and returns the (start, end) the rider dragged across it, if any. The chart is keyed on the
+    current selection, so a drawn box disappears once it has been applied (the red line shows it instead).
+    """
+    try:
+        event = st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}_{i0}_{i1}",
+                                on_select="rerun", selection_mode=("box",),
+                                config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]})
+    except TypeError:                                              # Streamlit without chart selections
+        st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}_{i0}_{i1}")
+        return None
+    sel = None
+    try:
+        sel = event["selection"] if "selection" in event else getattr(event, "selection", None)
+    except Exception:
+        pass
+    return sg.selection_range(sel, lo, hi, step)
 
 
 def _channels(df, i0, i1):
@@ -106,7 +140,12 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         st.caption("No laps could be matched to this ride" + (f" ({n} lap record(s) in the file)." if n else
                    ": the file has no laps (the whole ride is one)."))
     modes = ["Custom selection"] + (["Lap"] if laps else []) + (["Climb"] if climb_spans else [])
-    mode = remembered(st.radio, f"seg_mode_{ride_id}", modes[0], "Analyse", modes, horizontal=True)
+    mode_key, range_key, pending_key = f"seg_mode_{ride_id}", f"seg_range_{ride_id}", f"seg_pending_{ride_id}"
+    pending = st.session_state.pop(pending_key, None)             # a range dragged on the profile on the last run
+    if pending:                                                   # widget values can only be set before they are drawn
+        st.session_state[mode_key] = modes[0]
+        st.session_state[range_key] = pending
+    mode = remembered(st.radio, mode_key, modes[0], "Analyse", modes, horizontal=True)
 
     chosen = None                                   # the detected climb when one is picked
     if mode == "Lap":
@@ -127,19 +166,28 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         _, i0, i1, chosen = next(x for x in climb_spans if x[0] == pick)
     elif 'dist_m' in df.columns and df['dist_m'].notna().any():
         total_km = float(df['dist_m'].max()) / 1000.0
-        a, b = remembered(st.slider, f"seg_range_{ride_id}", (0.0, round(min(total_km, 5.0), 1)),
-                          "Distance range (km)", 0.0, round(total_km, 1), step=0.1)
+        a, b = remembered(st.slider, range_key, (0.0, round(min(total_km, 5.0), 2)),
+                          "Distance range (km)", 0.0, round(total_km, 2), step=DISTANCE_STEP_KM, format="%.2f")
         i0, i1 = sg.span_by_distance(df, a * 1000.0, b * 1000.0)
     else:
         minutes = len(df) / 60.0
-        a, b = remembered(st.slider, f"seg_range_{ride_id}", (0.0, round(min(minutes, 10.0), 1)),
-                          "Time range (min)", 0.0, round(minutes, 1), step=0.5)
+        a, b = remembered(st.slider, range_key, (0.0, round(min(minutes, 10.0), 1)),
+                          "Time range (min)", 0.0, round(minutes, 1), step=TIME_STEP_MIN)
         i0, i1 = sg._clip(df, int(a * 60), int(b * 60))
 
+    has_dist = 'dist_m' in df.columns and df['dist_m'].notna().any()
+    top = round(float(df['dist_m'].max()) / 1000.0, 2) if has_dist else round(len(df) / 60.0, 1)
+    drawn = _drawn_range(df, i0, i1, ride_id, 0.0, top, DISTANCE_STEP_KM if has_dist else TIME_STEP_MIN)
+    st.caption("Drag across the profile to choose a stretch of the route. In *Custom selection* the range slider "
+               f"fine-tunes it in {'10 m' if has_dist else '0.1 min'} steps.")
+    if drawn and mode == "Custom selection" and drawn == tuple(st.session_state.get(range_key) or ()):
+        drawn = None                                              # already the current range
+    if drawn:
+        st.session_state[pending_key] = drawn
+        st.rerun()
     if i1 - i0 < 5:
         st.info("The selection is too short to analyse. Widen the range.")
         return
-    st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}")
     stats = sg.segment_stats(df, i0, i1, ftp, weight)
 
     seg_map = create_segment_map(df, i0, i1)

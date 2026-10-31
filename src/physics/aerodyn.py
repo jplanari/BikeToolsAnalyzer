@@ -25,6 +25,10 @@ SPEED_SMOOTH_S = 5               # centred window for speed before differentiati
 # Open-Meteo gives wind at 10 m; at a rider's height (~1.5 m) it is weaker (boundary-layer profile,
 # shelter from hedges and buildings). 0.7 is a common rule of thumb for road cycling.
 WIND_HEIGHT_FACTOR = 0.7
+STALL_SPEED_MS = 0.5             # below this the recorded speed is "zero" (GPS lost, e.g. in a tunnel)
+MIN_STALL_S = 10                 # a frozen stretch shorter than this is not bridged
+MAX_STALL_S = 900                # ... and neither is one longer than this (a pause, not a tunnel)
+MIN_JUMP_M = 50.0                # the position must jump at least this far when the fix comes back
 CDA_VALID = (0.10, 0.80)         # outside this a fitted CdA is a sign of bad data, not a rider
 
 _RD, _RV = 287.058, 461.495      # gas constants of dry air and water vapour, J/(kg K)
@@ -87,15 +91,71 @@ def apparent_air_speed(df, v=None):
     return v.copy() if w is None else np.sqrt((v + w[0]) ** 2 + w[1] ** 2)
 
 
+def find_gps_stalls(df):
+    """
+    Stretches where the rider was pedalling but the recorded speed and position were frozen, then jumped when
+    the position came back (a tunnel, an underpass, a GPS dropout): speed is zero there, so the drag cannot be
+    read from it. Returns [(i0, i1, v_avg, grade_pct)] with positional indexes: i0 is the last sample with a
+    position, i1 the first sample after the stretch (where the position jumps), v_avg the average speed over
+    i0..i1, (position at i1 - position at i0) / elapsed time, and grade_pct the average gradient of the stretch.
+    Only stretches whose average speed is high enough to tell drag from noise are returned.
+    """
+    need = {'speed', 'power', 'dist_m', 'time'}
+    if df.empty or not need <= set(df.columns):
+        return []
+    n = len(df)
+    speed = df['speed'].fillna(0).to_numpy(dtype=float)
+    power = df['power'].fillna(0).to_numpy(dtype=float)
+    cad = df['cadence'].fillna(0).to_numpy(dtype=float) if 'cadence' in df.columns else power
+    dist = pd.to_numeric(df['dist_m'], errors='coerce').to_numpy(dtype=float)
+    t = (df['time'] - df['time'].iloc[0]).dt.total_seconds().to_numpy(dtype=float)
+    ele = pd.to_numeric(df['ele'], errors='coerce').to_numpy(dtype=float) if 'ele' in df.columns else None
+
+    moved = np.r_[np.inf, np.abs(np.diff(dist))]                # distance since the previous sample
+    frozen = (speed < STALL_SPEED_MS) & (moved < 1.0)
+    pedalling = (power > 0) & (cad > 0)
+
+    out, k = [], 1
+    while k < n:
+        if not frozen[k]:
+            k += 1
+            continue
+        a = b = k
+        while b + 1 < n and (frozen[b + 1] or (b + 3 < n and frozen[b + 2:b + 4].any() and not (moved[b + 1] >= 1.0))):
+            b += 1
+        k = b + 1
+        i0, i1 = a - 1, b + 1
+        if i1 >= n or not (MIN_STALL_S <= t[b] - t[a] + 1 <= MAX_STALL_S):
+            continue
+        if pedalling[a:b + 1].mean() < 0.8:
+            continue
+        jump, dt = dist[i1] - dist[i0], t[i1] - t[i0]
+        if not np.isfinite(jump) or jump < MIN_JUMP_M or dt <= 0 or jump / dt < MIN_CDA_SPEED_MS:
+            continue
+        grade = 0.0
+        if ele is not None and np.isfinite(ele[i0]) and np.isfinite(ele[i1]):
+            grade = float(np.clip((ele[i1] - ele[i0]) / jump * 100.0, -20.0, 20.0))
+        out.append((i0, i1, float(jump / dt), grade))
+    return out
+
+
 def _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss):
     """Terms of the power balance (W) and the quantities they use. None if the ride lacks the channels."""
     if df.empty or 'speed' not in df.columns or 'power' not in df.columns:
         return None
     m = rider_mass + bike_mass
-    v = df['speed'].rolling(SPEED_SMOOTH_S, center=True, min_periods=1).mean()
-    slope = df['grade_smooth'] / 100.0 if 'grade_smooth' in df.columns else pd.Series(0.0, index=df.index)
+    speed = df['speed'].copy()
+    slope = (df['grade_smooth'] / 100.0 if 'grade_smooth' in df.columns
+             else pd.Series(0.0, index=df.index)).copy()
+    bridged = pd.Series(False, index=df.index)
+    for i0, i1, v_avg, grade_pct in find_gps_stalls(df):       # tunnel: the average speed of the stretch stands in
+        speed.iloc[i0 + 1:i1 + 1] = v_avg
+        slope.iloc[i0 + 1:i1 + 1] = grade_pct / 100.0
+        bridged.iloc[i0 + 1:i1 + 1] = True
+    v = speed.rolling(SPEED_SMOOTH_S, center=True, min_periods=1).mean()
     cos_t = 1.0 / np.sqrt(1.0 + slope ** 2)
     accel = pd.Series(np.gradient(v.to_numpy()) if len(v) > 1 else np.zeros(len(v)), index=df.index)
+    accel[bridged] = 0.0                                        # constant average speed over the stretch
     rho_s = _density(df, df['ele'] if 'ele' in df.columns else 0.0) if rho is None else \
         pd.Series(float(rho), index=df.index)
     v_air = _air_speed(df, v)
@@ -105,17 +165,14 @@ def _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss):
     p_accel = m * v * accel
     p_aero = p_wheel - p_accel - p_roll - p_grav          # what is left for drag
     unit_drag = 0.5 * rho_s * v_air ** 2 * v              # aero power per unit CdA
-    return {'v': v, 'p_aero': p_aero, 'p_roll': p_roll, 'p_grav': p_grav, 'p_accel': p_accel,
+    return {'v': v, 'slope': slope, 'bridged': bridged, 'p_aero': p_aero, 'p_roll': p_roll, 'p_grav': p_grav, 'p_accel': p_accel,
             'unit_drag': unit_drag}
 
 
 def _usable(df, b):
     """Samples that can tell drag from noise: fast enough, and not on a steep descent where unmeasured braking
     would be booked as drag (a descent is also where the fit weights, which grow like v^6, are largest)."""
-    ok = b['v'] > MIN_CDA_SPEED_MS
-    if 'grade_smooth' in df.columns:
-        ok &= ~(df['grade_smooth'] < -MAX_DESCENT_GRADE_PCT)
-    return ok
+    return (b['v'] > MIN_CDA_SPEED_MS) & ~(b['slope'] * 100.0 < -MAX_DESCENT_GRADE_PCT)
 
 
 def calculate_CdA(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
@@ -139,6 +196,10 @@ def estimate_cda(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, driv
     faster than 5 m/s and not on a steep descent (grade below -5 %): sum(P k) / sum(k²), so fast samples (a lot of drag signal) count
     for more than slow ones, and noise cancels instead of being clipped. Returns {'cda', 'seconds'} or None when
     there are too few samples or the result is implausible.
+
+    Where the speed was lost while pedalling (a tunnel: speed zero, then the position jumps) the stretch is
+    included at its average speed, (position at the end - position at the start) / time; 'tunnel_seconds' says
+    how many of the seconds used come from such stretches.
     """
     b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
     if b is None:
@@ -151,7 +212,7 @@ def estimate_cda(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, driv
     cda = float((p * k).sum() / (k * k).sum())
     if not CDA_VALID[0] <= cda <= CDA_VALID[1]:
         return None
-    return {'cda': cda, 'seconds': int(ok.sum())}
+    return {'cda': cda, 'seconds': int(ok.sum()), 'tunnel_seconds': int((ok & b['bridged']).sum())}
 
 
 def get_avg_cda(cda_series):

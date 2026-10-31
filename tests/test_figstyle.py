@@ -71,3 +71,24 @@ def test_plot_builders_are_wrapped_once():
     assert getattr(plots.plot_power_curve, "_tidy", False) and getattr(tp.plot_ramp_rate, "_tidy", False)
     fig = plots.plot_zone_distribution({"Z1": 10, "Z2": 20})
     assert fig.layout.title.yref == "container"
+
+
+# --- elevation axis ----------------------------------------------------------------------------------------------
+
+def test_elevation_range_pads_five_percent_of_the_span_each_side():
+    from src.viz.figstyle import elevation_range
+    assert elevation_range([100, 300, 200]) == pytest.approx([90.0, 310.0])
+
+
+def test_elevation_range_does_not_start_at_zero_for_a_high_ride():
+    from src.viz.figstyle import elevation_range
+    lo, hi = elevation_range([1500, 1800])
+    assert lo > 1400 and hi < 1900
+
+
+def test_elevation_range_flat_empty_and_shared():
+    from src.viz.figstyle import elevation_range
+    lo, hi = elevation_range([50.0, 50.0])
+    assert hi - lo > 5 and lo < 50 < hi                            # a flat ride still gets a readable axis
+    assert elevation_range([]) is None and elevation_range([float('nan')]) is None
+    assert elevation_range([100, 200], [90, 110]) == pytest.approx([84.5, 205.5])   # one range for two series

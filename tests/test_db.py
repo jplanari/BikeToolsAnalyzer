@@ -65,3 +65,12 @@ def test_get_ride_file(temp_db):
 
     assert db.get_ride_file(ride_id) == ("a.gpx", b"payload")
     assert db.get_ride_file(9999) == (None, None)
+
+
+def test_w_prime_is_20_kj_unless_the_rider_gives_theirs(temp_db):
+    db.save_user("Default")
+    db.save_user("Given", w_prime=27500)
+    assert db.get_user_data("Default")['w_prime'] == 20000
+    assert db.get_user_data("Given")['w_prime'] == 27500
+    db.set_user_w_prime("Default", 23400)
+    assert db.get_user_data("Default")['w_prime'] == 23400

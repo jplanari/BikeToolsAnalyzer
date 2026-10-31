@@ -141,3 +141,29 @@ def test_segment_map_highlights_the_selection():
     html = m.get_root().render()
     assert "#d62728" in html and "Start" in html and "End" in html
     assert create_segment_map(ride(), 0, 10) is None                    # no GPS
+
+
+# --- range drawn on the elevation profile ------------------------------------------------------------------------
+
+def test_selection_range_uses_the_box_rounded_to_10_m():
+    from src.analysis.segments import selection_range
+    assert selection_range({'box': [{'x': [12.3456, 14.2], 'y': [0, 9]}]}, 0.0, 40.0) == (12.35, 14.2)
+    assert selection_range({'box': [{'x': [14.2, 12.3456]}]}, 0.0, 40.0) == (12.35, 14.2)     # drawn right to left
+
+
+def test_selection_range_is_clipped_to_the_ride():
+    from src.analysis.segments import selection_range
+    assert selection_range({'box': [{'x': [-3.0, 55.0]}]}, 0.0, 40.0) == (0.0, 40.0)
+
+
+def test_selection_range_falls_back_to_the_selected_points():
+    from src.analysis.segments import selection_range
+    pts = {'points': [{'x': 5.0}, {'x': 7.25}, {'x': 6.1}]}
+    assert selection_range(pts, 0.0, 40.0) == (5.0, 7.25)
+
+
+def test_selection_range_ignores_nothing_and_slivers():
+    from src.analysis.segments import selection_range
+    assert selection_range(None, 0.0, 40.0) is None and selection_range({}, 0.0, 40.0) is None
+    assert selection_range({'box': [], 'points': []}, 0.0, 40.0) is None
+    assert selection_range({'box': [{'x': [3.0, 3.01]}]}, 0.0, 40.0) is None                 # narrower than two steps

@@ -269,16 +269,21 @@ def init_db():
     _move_ride_files()
 
 DEFAULT_FTP, DEFAULT_LTHR = 200, 170
+DEFAULT_W_PRIME = 20000          # joules, when the rider has not given theirs
 
-def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0):
-    """ftp / lthr None: stored as the defaults but flagged to be estimated from the rider's rides."""
+def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0, w_prime=None):
+    """
+    ftp / lthr None: stored as the defaults but flagged to be estimated from the rider's rides.
+    w_prime (joules) None: DEFAULT_W_PRIME; a ride that uses more than it raises the figure (see the Power section).
+    """
     conn = _connect()
     c = conn.cursor()
     try:
-        c.execute("""INSERT INTO users (name, ftp, lthr, weight, height, ftp_auto, lthr_auto)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        c.execute("""INSERT INTO users (name, ftp, lthr, weight, height, ftp_auto, lthr_auto, w_prime)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                   (name, DEFAULT_FTP if ftp is None else ftp, DEFAULT_LTHR if lthr is None else lthr,
-                   weight, height, int(ftp is None), int(lthr is None)))
+                   weight, height, int(ftp is None), int(lthr is None),
+                   DEFAULT_W_PRIME if not w_prime else float(w_prime)))
         conn.commit()
         return True, "User saved successfully!"
     except sqlite3.IntegrityError:
@@ -302,6 +307,13 @@ def set_user_thresholds(user_name, ftp=None, lthr=None, auto_ftp=None, auto_lthr
         conn.execute("UPDATE users SET ftp_auto = 1 WHERE name = ?", (user_name,))
     if auto_lthr:
         conn.execute("UPDATE users SET lthr_auto = 1 WHERE name = ?", (user_name,))
+    conn.commit()
+    conn.close()
+
+def set_user_w_prime(user_name, w_prime):
+    """Sets the rider's W' (joules)."""
+    conn = _connect()
+    conn.execute("UPDATE users SET w_prime = ? WHERE name = ?", (float(w_prime), user_name))
     conn.commit()
     conn.close()
 

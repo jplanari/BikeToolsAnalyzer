@@ -25,6 +25,28 @@ def span_by_distance(df, start_m, end_m):
     return _clip(df, i0, i1)
 
 
+def selection_range(selection, lo, hi, step=0.01):
+    """
+    The (start, end) a rider drew on the elevation profile, from a Plotly selection ({'box': [{'x': [x0, x1]}],
+    'points': [{'x': ...}]}), clipped to [lo, hi] and rounded to `step`. The box is used when there is one, else
+    the extent of the selected points. None when nothing usable was selected or it is narrower than two steps.
+    """
+    if not selection:
+        return None
+    xs = []
+    for box in (selection.get('box') or []):
+        xs += [x for x in (box.get('x') or []) if x is not None]
+        if xs:
+            break
+    if not xs:
+        xs = [p['x'] for p in (selection.get('points') or []) if p.get('x') is not None]
+    if not xs:
+        return None
+    a, b = max(lo, min(xs)), min(hi, max(xs))
+    a, b = round(round(a / step) * step, 6), round(round(b / step) * step, 6)
+    return (a, b) if b - a >= 2 * step else None
+
+
 def span_by_time(df, start, end):
     """Row positions of the samples between two timestamps."""
     t = pd.to_datetime(df['time']).to_numpy()

@@ -124,28 +124,45 @@ LTHR_HELP = ("**LTHR (lactate threshold heart rate)** is the average heart rate,
              "from the best 20-minute heart rate in your rides.")
 
 
+DEFAULT_W_PRIME_KJ = 20
+
+W_PRIME_HELP = ("**W′ (W prime)** is the amount of work, in kilojoules, you can do above your threshold power before "
+                "you are exhausted: your anaerobic battery. It drives the W′ balance chart of every ride. Typical "
+                f"values are 15 to 30 kJ. If unsure, leave it empty: the app starts from {DEFAULT_W_PRIME_KJ} kJ and, "
+                "when a ride uses more than that, offers to raise it.")
+
+
+def w_prime_from_kj(kj):
+    """Joules from the kilojoule field of a form; None when it was left empty."""
+    return float(kj) * 1000.0 if kj else None
+
+
 def _first_profile():
     """The one thing to do before anything else: create the rider's profile (zones, TSS and W/kg use it)."""
     from src.data.db import save_user
     st.subheader("Welcome — create your profile")
     st.caption("Only the name is required. You can fill in or change the rest later in the sidebar.")
-    with st.expander("What are FTP and LTHR?", expanded=True):
+    with st.expander("What are FTP, LTHR and W′?", expanded=True):
         st.markdown(FTP_HELP)
         st.markdown(LTHR_HELP)
+        st.markdown(W_PRIME_HELP)
     with st.form("first_profile_form"):
         name = st.text_input("Name", key="first_profile_name")
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         ftp = c1.number_input("FTP (Watts) · optional", value=None, min_value=1, step=5, key="first_profile_ftp",
                               placeholder="estimated from your rides", help=FTP_HELP)
         lthr = c2.number_input("LTHR (bpm) · optional", value=None, min_value=1, step=1, key="first_profile_lthr",
                                placeholder="estimated from your rides", help=LTHR_HELP)
         weight = c3.number_input("Weight (kg)", value=70.0)
         height = c4.number_input("Height (cm)", value=175)
+        wprime = c5.number_input("W′ (kJ) · optional", value=None, min_value=1.0, step=0.5, key="first_profile_wprime",
+                                 placeholder=f"{DEFAULT_W_PRIME_KJ} kJ", help=W_PRIME_HELP)
         if st.form_submit_button("Create profile", type="primary"):
             if not name.strip():
                 st.error("Enter a name first.")
             else:
-                ok, msg = save_user(name.strip(), int(ftp) if ftp else None, int(lthr) if lthr else None, weight, height)
+                ok, msg = save_user(name.strip(), int(ftp) if ftp else None, int(lthr) if lthr else None, weight, height,
+                                 w_prime_from_kj(wprime))
                 if ok:
                     st.rerun()
                 else:

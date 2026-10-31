@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from src.viz.figstyle import elevation_range
+
 # label -> (column, unit, colour). Colours are the Okabe-Ito palette used across the app.
 CHANNELS = {
     "Power": ("power", "W", "#0072B2"),
@@ -65,7 +67,7 @@ def build_figure(df, series):
         bx, by = _thin(x, df['ele'])
         fig.add_trace(go.Scatter(x=bx, y=by, mode='lines', name="Elevation", fill='tozeroy', fillcolor=BASE_FILL,
                                  line=dict(color=BASE_LINE, width=1), hovertemplate="%{y:.0f} m"), row=r, col=1)
-        fig.update_yaxes(title_text="Elevation (m)", row=r, col=1)
+        fig.update_yaxes(title_text="Elevation (m)", range=elevation_range(df['ele']), row=r, col=1)
         r += 1
     for label in series:
         col, unit, color = CHANNELS[label]
