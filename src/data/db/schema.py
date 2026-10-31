@@ -65,10 +65,23 @@ def _migration_utc_dates(conn):
                 conn.execute(f"UPDATE {table} SET date_time = ? WHERE date_time = ?", (new, old))
 
 
+def _migration_ride_weather(conn):
+    """The weather fetched for a ride is kept with it (JSON), so reopening the ride or building a report needs no network."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS ride_weather (
+            ride_id INTEGER PRIMARY KEY,
+            payload TEXT NOT NULL,
+            fetched_at TEXT,
+            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+        )
+    ''')
+
+
 MIGRATIONS = [
     (1, _migration_per_user_file_hash),
     (2, _migration_query_indexes),
     (3, _migration_utc_dates),
+    (4, _migration_ride_weather),
 ]
 
 

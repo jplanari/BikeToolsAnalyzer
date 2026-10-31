@@ -33,7 +33,8 @@ def climb_baseline(df, climb, settings):
         'crr': float(settings.get('crr') or DEFAULT_CRR),
         'rho': float(get_air_density(float(seg[ele_col].mean()),
                                      seg['temp_c'].mean() if 'temp_c' in seg.columns and seg['temp_c'].notna().any() else None,
-                                     seg['relative_humidity'].mean() if 'relative_humidity' in seg.columns and seg['relative_humidity'].notna().any() else 0.0)),
+                                     seg['relative_humidity'].mean() if 'relative_humidity' in seg.columns and seg['relative_humidity'].notna().any() else 0.0,
+                                     pressure_pa=seg['pressure'].mean() * 100.0 if 'pressure' in seg.columns and seg['pressure'].notna().any() else None)),
     }
 
 
