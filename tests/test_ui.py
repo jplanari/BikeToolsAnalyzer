@@ -305,3 +305,22 @@ def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db,
     assert not [r for r in at.radio if r.label in ("Layout", "X axis")]
     next(b for b in at.button if b.key == "back_to_gallery").click().run()
     assert "Last 7 days" in {m.label for m in at.metric}
+
+
+def test_user_corner_adds_a_bike_from_its_parts(seeded_db):
+    at = _go(_app(), "User Corner")
+    _no_errors(at)
+    assert "🚲 Bikes" in _texts(at.subheader)
+    tag = f"Rider_new"
+    at.text_input(key=f"bike_name_{tag}").set_value("Road")
+    at.number_input(key=f"kg_frame_{tag}").set_value(1.2)
+    at.number_input(key=f"kg_wheelset_{tag}").set_value(1.6)
+    at.number_input(key=f"kg_groupset_{tag}").set_value(2.5)
+    at.number_input(key=f"kg_tyres_{tag}").set_value(0.7)
+    at.number_input(key=f"crr_{tag}").set_value(0.004)
+    next(b for b in at.button if b.label == "Add bike").click().run()
+    _no_errors(at)
+    (bike,) = db.get_bikes("Rider")
+    assert bike["name"] == "Road" and bike["crr"] == pytest.approx(0.004)
+    assert bike["frame_kg"] + bike["wheelset_kg"] + bike["groupset_kg"] + bike["tyres_kg"] == pytest.approx(6.0)
+    assert any("Road" in e.label and "6.00 kg" in e.label for e in at.expander)

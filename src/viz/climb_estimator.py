@@ -27,9 +27,10 @@ def climb_baseline(df, climb, settings):
         'lengths': lengths, 'grades': grades,
         'actual_s': float((t.iloc[-1] - t.iloc[0]).total_seconds()) if len(t) > 1 else None,
         'power': power,
-        'mass': float(settings['weight']) + BIKE_MASS_KG,
+        'bike_mass': float(settings.get('bike_mass') or BIKE_MASS_KG),
+        'mass': float(settings['weight']) + float(settings.get('bike_mass') or BIKE_MASS_KG),
         'cda': float(cda) if pd.notna(cda) and 0.15 <= cda <= 0.6 else DEFAULT_CDA,
-        'crr': DEFAULT_CRR,
+        'crr': float(settings.get('crr') or DEFAULT_CRR),
         'rho': float(get_air_density(float(seg[ele_col].mean()),
                                      seg['temp_c'].mean() if 'temp_c' in seg.columns and seg['temp_c'].notna().any() else None,
                                      seg['relative_humidity'].mean() if 'relative_humidity' in seg.columns and seg['relative_humidity'].notna().any() else 0.0)),
@@ -63,7 +64,7 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
 
     c = st.columns(5)
     mass = c[0].number_input("System weight (kg)", 30.0, 200.0, min(200.0, max(30.0, round(base['mass'], 1))), 0.5, key=k("mass"),
-                             help="Rider + bike + clothing + bottles. Default: your profile weight + 8 kg bike.")
+                             help="Rider + bike + clothing + bottles. Default: your profile weight + the bike chosen for this ride (8 kg if none).")
     cda = c[1].number_input("CdA (m²)", 0.15, 0.70, round(base['cda'], 3), 0.005, format="%.3f", key=k("cda"),
                             help="Default: this ride's average estimate if it had one, else 0.32. "
                                  "Climbing at low speed, so it matters less than weight.")
@@ -99,15 +100,15 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
     if asridden:
         m[1].metric("Model, as ridden", _mmss(asridden['time_s']),
                     delta=_delta(asridden['time_s'] - base['actual_s']) + " vs actual" if base['actual_s'] else None,
-                    delta_color="off", help="The model with your actual power and the default weight, CdA and Crr.")
+                    delta_color="off", help="The model with your actual power and the ride's weight, CdA and Crr.")
     m[2].metric("Scenario", _mmss(s_time),
                 delta=(_delta(s_time - asridden['time_s']) + " vs as ridden") if asridden else None,
                 delta_color="inverse")
     m[3].metric("Power needed" if mode != "Time for a power" else "Avg speed",
-                f"{power:.0f} W ({power / max(mass - BIKE_MASS_KG, 1):.2f} W/kg)" if mode != "Time for a power"
+                f"{power:.0f} W ({power / max(mass - base['bike_mass'], 1):.2f} W/kg)" if mode != "Time for a power"
                 else f"{scenario['avg_speed_kmh']:.1f} km/h",
-                help="W/kg uses system weight minus the 8 kg bike." if mode != "Time for a power" else None)
-    st.caption(f"VAM {scenario['vam_m_h']:.0f} m/h · {power / max(mass - BIKE_MASS_KG, 1):.2f} W/kg"
+                help="W/kg uses system weight minus the bike." if mode != "Time for a power" else None)
+    st.caption(f"VAM {scenario['vam_m_h']:.0f} m/h · {power / max(mass - base['bike_mass'], 1):.2f} W/kg"
                + (" · Model and actual differ because of wind, surface, drafting, pacing and gradient noise."
                   if asridden else ""))
 

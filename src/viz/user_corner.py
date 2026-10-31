@@ -125,6 +125,10 @@ def render_user_corner(user_name):
     
     st.markdown("---")
 
+    from src.viz.bikes import render_bikes
+    render_bikes(user_name)
+    st.markdown("---")
+
     _render_history_update(user_name, user_data)
 
     from src.viz.connections import render_connections
