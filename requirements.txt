@@ -3,6 +3,7 @@
 # the app unannounced. Raise them deliberately, after the tests pass on the new version.
 streamlit>=1.37,<2
 pandas>=2.2,<4
+jinja2>=3.1.2,<4          # pandas needs it for DataFrame.style (the lap and climb tables)
 numpy>=1.26,<3
 scipy>=1.11,<2
 matplotlib>=3.8,<4
