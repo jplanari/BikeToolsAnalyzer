@@ -148,7 +148,7 @@ def fetch_hourly(lat, lon, start_date, end_date):
 
 def fetch_ride_payload(df):
     """The weather of a whole ride, ready to store: {'source', 'points': [{lat, lon, start, end, elevation,
-    rows}], 'override'}. None when the ride has no GPS; raises WeatherError when the service fails."""
+    rows}]}. None when the ride has no GPS; raises WeatherError when the service fails."""
     points = sample_points(df)
     if not points:
         return None
@@ -165,7 +165,7 @@ def fetch_ride_payload(df):
         out.append({**p, 'elevation': h['elevation'], 'rows': h['rows']})
     if not out:
         return None
-    return {'source': 'open-meteo', 'points': out, 'override': None}
+    return {'source': 'open-meteo', 'points': out}
 
 
 # ---------------------------------------------------------------------------------------------- applying
@@ -226,8 +226,7 @@ def _interpolate(rows, times):
 def apply_weather(df, payload):
     """
     The ride with wind_speed (m/s), wind_deg (blowing from), temp_c (°C), pressure (hPa at the rider's altitude)
-    and relative_humidity (fraction) columns. A recorded device temperature is kept. The payload's manual
-    override, if any, replaces the wind. df unchanged when there is nothing to apply.
+    and relative_humidity (fraction) columns. A recorded device temperature is kept. df unchanged when there is nothing to apply.
     """
     if payload is None or df.empty or 'time' not in df.columns:
         return df
@@ -250,11 +249,7 @@ def apply_weather(df, payload):
         if c == 'temp_c' and 'temp_c' in df.columns and df['temp_c'].notna().any():
             continue                                   # the head unit measured it: better than a model
         df[c] = v
-    ov = payload.get('override')
-    if ov:
-        df['wind_speed'] = float(ov.get('wind_ms', 0.0))
-        df['wind_deg'] = float(ov.get('wind_deg', 0.0))
-    df.attrs['weather_source'] = 'manual wind' if ov else payload.get('source', 'open-meteo')
+    df.attrs['weather_source'] = payload.get('source', 'open-meteo')
     return df
 
 
@@ -270,11 +265,11 @@ def weather_summary(df):
 
 
 # ---------------------------------------------------------------------------------------------- entry points
-def load_or_fetch(df, stored=None, override=None):
+def load_or_fetch(df, stored=None):
     """
     (df with weather, payload, message). Uses the stored payload when there is one (no network), otherwise asks
-    the service; the message says why a ride has no weather (None when all went well). `override` is the manual
-    wind {'wind_ms', 'wind_deg'} (or None for automatic) and is kept in the returned payload.
+    the service; the message says why a ride has no weather (None when all went well). The wind comes only from
+    the weather service.
     """
     payload, message = stored, None
     if payload is None:
@@ -282,12 +277,6 @@ def load_or_fetch(df, stored=None, override=None):
             payload = fetch_ride_payload(df)
             if payload is None:
                 message = "No GPS position in this file: weather not available."
-        except WeatherError as e:
-            message = f"Weather not available: {e}"
         except Exception as e:                          # nothing in here may stop the ride from opening
             message = f"Weather not available: {e}"
-    if override is not None:
-        payload = dict(payload or {'source': 'manual', 'points': []}, override=override)
-    elif payload is not None and payload.get('override'):
-        payload = dict(payload, override=None)
     return apply_weather(df, payload), payload, message
