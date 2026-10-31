@@ -14,4 +14,5 @@ gpxpy>=1.6,<2
 fitparse>=1.2,<2
 geographiclib>=2,<3
 requests>=2.31,<3
+cryptography>=42,<48       # encrypts the stored OAuth tokens and passwords (src/data/secrets_store.py)
 pytest>=8,<10

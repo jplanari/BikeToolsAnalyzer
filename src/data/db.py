@@ -9,6 +9,7 @@ import secrets
 import time
 from contextlib import contextmanager
 
+from src.data import secrets_store as _sec
 from src.analysis.dates import (local_day_bounds_utc, parse_utc, resolve_timezone, to_local_naive, to_utc_iso)
 
 # BIKETOOLS_DB lets you keep the database somewhere else, e.g. outside a OneDrive/Dropbox folder:
@@ -458,6 +459,7 @@ def _init_db():
     # Run migration to ensure existing databases get the new columns
     migrate_db()
     run_migrations()
+    encrypt_plaintext_secrets()
     return _move_ride_files() is not None
 
 DEFAULT_FTP, DEFAULT_LTHR = 200, 170
@@ -1013,8 +1015,40 @@ def save_strava_auth(user_name, auth):
                 refresh_token = excluded.refresh_token,
                 expires_at = excluded.expires_at
         ''', (user['id'], auth.get('athlete_id'), auth.get('athlete_name'),
-              auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
+              _sec.encrypt(auth['access_token']), _sec.encrypt(auth['refresh_token']), int(auth['expires_at'])))
     return True
+
+def _decrypt_fields(row, fields):
+    """A table row as a dict with its secret columns decrypted (None when there is no row)."""
+    if not row:
+        return None
+    out = dict(row)
+    for f in fields:
+        out[f] = _sec.decrypt(out.get(f))
+    return out
+
+_SECRET_COLUMNS = (("strava_auth", "user_id", ("access_token", "refresh_token")),
+                   ("wahoo_auth", "user_id", ("access_token", "refresh_token")),
+                   ("polar_auth", "user_id", ("access_token",)),
+                   ("app_credentials", "provider", ("client_secret",)),
+                   ("smtp_settings", "id", ("password",)))
+
+def encrypt_plaintext_secrets():
+    """Encrypts secrets stored before encryption existed. Idempotent; does nothing without a usable key (and
+    creates no key while there is nothing to encrypt). Returns how many values were encrypted."""
+    with connect() as conn:
+        pending = []
+        for table, key, cols in _SECRET_COLUMNS:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+                continue
+            for row in conn.execute(f"SELECT {key}, {', '.join(cols)} FROM {table}").fetchall():
+                pending += [(table, key, row[0], col, value) for col, value in zip(cols, row[1:])
+                            if value and not _sec.is_encrypted(value)]
+        if not pending or not _sec.available():
+            return 0
+        for table, key, ident, col, value in pending:
+            conn.execute(f"UPDATE {table} SET {col} = ? WHERE {key} = ?", (_sec.encrypt(value), ident))
+    return len(pending)
 
 def get_strava_auth(user_name):
     user = get_user_data(user_name)
@@ -1023,7 +1057,7 @@ def get_strava_auth(user_name):
     with connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    return dict(row) if row else None
+    return _decrypt_fields(row, ('access_token', 'refresh_token'))
 
 def delete_strava_auth(user_name):
     user = get_user_data(user_name)
@@ -1049,7 +1083,7 @@ def save_wahoo_auth(user_name, auth):
                 refresh_token = excluded.refresh_token,
                 expires_at = excluded.expires_at
         ''', (user['id'], auth.get('wahoo_user_id'), auth.get('wahoo_name'),
-              auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
+              _sec.encrypt(auth['access_token']), _sec.encrypt(auth['refresh_token']), int(auth['expires_at'])))
     return True
 
 def get_wahoo_auth(user_name):
@@ -1059,7 +1093,7 @@ def get_wahoo_auth(user_name):
     with connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM wahoo_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    return dict(row) if row else None
+    return _decrypt_fields(row, ('access_token', 'refresh_token'))
 
 def delete_wahoo_auth(user_name):
     user = get_user_data(user_name)
@@ -1077,13 +1111,13 @@ def save_app_credentials(provider, client_id, client_secret, redirect_uri=None, 
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(provider) DO UPDATE SET client_id = excluded.client_id, client_secret = excluded.client_secret,
                 redirect_uri = excluded.redirect_uri, timezone = excluded.timezone
-        ''', (provider, client_id.strip(), client_secret.strip(), redirect_uri, timezone))
+        ''', (provider, client_id.strip(), _sec.encrypt(client_secret.strip()), redirect_uri, timezone))
 
 def get_app_credentials(provider):
     with connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM app_credentials WHERE provider = ?", (provider,)).fetchone()
-    return dict(row) if row else None
+    return _decrypt_fields(row, ('client_secret',))
 
 def delete_app_credentials(provider):
     with connect() as conn:
@@ -1098,13 +1132,13 @@ def save_smtp_settings(host, port, security, username, password, sender):
             VALUES (1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET host = excluded.host, port = excluded.port, security = excluded.security,
                 username = excluded.username, password = excluded.password, sender = excluded.sender
-        """, (host.strip(), int(port), security, (username or '').strip() or None, password or None, sender.strip()))
+        """, (host.strip(), int(port), security, (username or '').strip() or None, _sec.encrypt(password or None), sender.strip()))
 
 def get_smtp_settings():
     with connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM smtp_settings WHERE id = 1").fetchone()
-    return dict(row) if row else None
+    return _decrypt_fields(row, ('password',))
 
 def delete_smtp_settings():
     with connect() as conn:
@@ -1177,7 +1211,7 @@ def save_polar_auth(user_name, auth):
         conn.execute('''
             INSERT INTO polar_auth (user_id, polar_user_id, access_token) VALUES (?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET polar_user_id = excluded.polar_user_id, access_token = excluded.access_token
-        ''', (user['id'], auth.get('polar_user_id'), auth['access_token']))
+        ''', (user['id'], auth.get('polar_user_id'), _sec.encrypt(auth['access_token'])))
     return True
 
 def get_polar_auth(user_name):
@@ -1187,7 +1221,7 @@ def get_polar_auth(user_name):
     with connect() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM polar_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    return dict(row) if row else None
+    return _decrypt_fields(row, ('access_token',))
 
 def delete_polar_auth(user_name):
     user = get_user_data(user_name)
