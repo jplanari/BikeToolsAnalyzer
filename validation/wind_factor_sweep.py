@@ -48,7 +48,7 @@ def sweep(prepared, factors=DEFAULT_FACTORS, progress=False):
                     continue
                 rows.append(dict(ride_id=p['ride_id'], date=p['date'], factor=float(f), cda=m['cda'],
                                  cda_head=m['cda_head'], cda_tail=m['cda_tail'], speed_ms=m['speed_ms'],
-                                 head10_ms=m['head_ms'] / float(f) if f else np.nan,
+                                 head10_ms=m['head_ms'] / float(f) if f else np.nan, wind10_ms=m['wind_ms'],
                                  ratio=m['cda_head'] / m['cda_tail'] if m['cda_tail'] else np.nan))
     finally:
         ae.WIND_HEIGHT_FACTOR = saved
@@ -62,6 +62,18 @@ def crossing(factors, medians):
         if np.isfinite(m[i]) and np.isfinite(m[i + 1]) and m[i] * m[i + 1] <= 0 and m[i] != m[i + 1]:
             return float(f[i] + (0 - m[i]) * (f[i + 1] - f[i]) / (m[i + 1] - m[i]))
     return None
+
+
+def crossing_label(factors, medians, c=None):
+    """Text for where a ratio curve reaches 1: the factor, or 'below / above the range'."""
+    c = crossing(factors, medians) if c is None else c
+    if c is not None:
+        return f"{c:.2f}"
+    m = np.asarray(medians, float)
+    m = m[np.isfinite(m)]
+    if len(m) and np.all(m < 1):
+        return f"below {min(factors):.2f}"
+    return f"above {max(factors):.2f}" if len(m) else "n/a"
 
 
 def _medians(wide):
@@ -107,14 +119,41 @@ def analyse(long_df, factors=DEFAULT_FACTORS, seed=1):
         # held-out: find the crossing on one set of rides, read the median ratio on the other at that factor
         dates = long_df.drop_duplicates('ride_id').set_index('ride_id')['date']
         order = [r for r in dates.sort_values().index if r in wide.index]
-        splits = {'alternate rides': (order[0::2], order[1::2]), 'earlier vs later rides': (order[:len(order) // 2],
-                                                                                           order[len(order) // 2:])}
+        half = len(order) // 2
+        sets = {'alternate rides, set A': order[0::2], 'alternate rides, set B': order[1::2],
+                'earlier rides': order[:half], 'later rides': order[half:]}
+        out['sets'] = {name: (len(ids), crossing(factors, _medians(wide.loc[ids])), _medians(wide.loc[ids]))
+                       for name, ids in sets.items()}
         held = {}
-        for name, (a, b) in splits.items():
-            ca = crossing(factors, _medians(wide.loc[a]))
-            held[name] = None if ca is None else (ca, at_factor(factors, _medians(wide.loc[b]), ca),
-                                                   at_factor(factors, _medians(wide.loc[b]), 0.7))
+        for name, (a, b) in {'alternate rides': ('alternate rides, set A', 'alternate rides, set B'),
+                             'earlier vs later rides': ('earlier rides', 'later rides')}.items():
+            ca = out['sets'][a][1]
+            mb = out['sets'][b][2]
+            held[name] = None if ca is None else (ca, at_factor(factors, mb, ca), at_factor(factors, mb, 0.7))
         out['held_out'] = held
+        # does the ratio depend on how windy the ride was? terciles (or halves) of the ride's mean 10 m wind
+        wind = long_df.drop_duplicates('ride_id').set_index('ride_id')['wind10_ms'].reindex(wide.index).dropna()
+        k = 3 if len(wind) >= 3 * MIN_RIDES else (2 if len(wind) >= 2 * MIN_RIDES else 0)
+        strata = []
+        if k:
+            edges = np.quantile(wind, np.linspace(0, 1, k + 1))
+            names = ("calm", "windy") if k == 2 else ("calmest third", "middle third", "windiest third")
+            for n_, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+                ids = wind[(wind >= lo) & ((wind <= hi) if n_ == k - 1 else (wind < hi))].index
+                sub = long_df[long_df['ride_id'].isin(ids)]
+                at07 = sub[sub['factor'] == min(factors, key=lambda f: abs(f - 0.7))]['cda']
+                strata.append(dict(name=names[n_], rides=len(ids), wind_lo=float(lo), wind_hi=float(hi),
+                                   medians=_medians(wide.loc[ids]), crossing=crossing(factors, _medians(wide.loc[ids])),
+                                   cda_mean=float(at07.mean()), cda_cv=float(at07.std(ddof=1) / at07.mean() * 100)
+                                   if len(at07) > 1 else np.nan))
+        out['strata'] = strata
+        # is the crossing really located? not if it is at the edge of the range or most resamples never crossed
+        step = factors[1] - factors[0] if len(factors) > 1 else 0.1
+        ci = out['crossing_ci']
+        out['edge'] = bool(
+            (out['crossing'] is None and np.all(meds[np.isfinite(meds)] < 1)) or
+            (out['crossing'] is not None and (out['crossing'] - factors[0] <= step / 2 + 1e-9 or
+                                              (ci is not None and ci[2] < 0.9 * BOOTSTRAPS))))
     return out
 
 
@@ -131,11 +170,20 @@ def report(user, res, skipped):
                  f"{r.rho_speed:+.2f} | {r.rho_head:+.2f} |")
     L += ["", "## Where the ratio reaches 1", ""]
     c = res['crossing']
-    if c is None:
+    ci = res.get('crossing_ci')
+    if res.get('edge'):
+        lo = min(res['factors'])
+        L.append(f"The ratio reaches 1 **at or below the lowest factor tested ({lo:.2f})**: the crossing is not located "
+                 f"(only {ci[2] if ci else 0} of {BOOTSTRAPS} bootstrap resamples crossed inside the range, so no "
+                 "interval is given). Re-run with lower factors, for example "
+                 "`--factors 0.05,0.1,0.15,0.2,0.3,0.4`. Factor 0 cannot be used: it leaves no wind to define the "
+                 "head-wind and tail-wind samples.")
+        L.append("")
+        L.append("Either way 0.70 is far from where the ratio reaches 1." if (c is None or c < 0.5) else "")
+    elif c is None:
         L.append(f"The median ratio does not cross 1 between {min(res['factors'])} and {max(res['factors'])}. "
                  "Widen --factors, or the head/tail difference is not (only) a wind-strength effect.")
     else:
-        ci = res.get('crossing_ci')
         L.append(f"Median ratio = 1 at a factor of **{c:.2f}**" +
                  (f" (bootstrap 90 % interval {ci[0]:.2f} to {ci[1]:.2f} over rides, {ci[2]} of {BOOTSTRAPS} resamples "
                   "crossed)." if ci else "."))
@@ -146,19 +194,43 @@ def report(user, res, skipped):
                                           if differs else
                                           "The interval includes 0.70 (within a change of "
                                           f"{MATERIAL:.2f}): no evidence to change it."))
-    L += ["", "## Checked on rides not used for the fit", ""]
-    held = res.get('held_out') or {}
-    if held:
-        L += ["| Split | Factor found on the first set | Median ratio on the other set at that factor | "
-              "...and at 0.70 |", "|---|---|---|---|"]
-        for name, v in held.items():
-            L.append(f"| {name} | " + (" | ".join(["no crossing", "", ""]) if v is None else
-                                        f"{v[0]:.2f} | {v[1]:.2f} | {v[2]:.2f} |") + " |")
-        L.append("")
-        L.append("If the factor found on one set brings the ratio on the other close to 1 (and 0.70 does not), the "
-                 "effect is not specific to a few rides.")
+    L += ["", "## Is the effect the same on other rides?", ""]
+    sets = res.get('sets') or {}
+    if sets:
+        L += ["Median head/tail ratio of each set of rides at each factor, and where it reaches 1:", "",
+              "| Rides | n | " + " | ".join(f"{f:.2f}" for f in res['factors']) + " | Reaches 1 at |",
+              "|---|---|" + "---|" * (len(res['factors']) + 1)]
+        for name, (n, cr, meds_) in sets.items():
+            L.append(f"| {name} | {n} | " + " | ".join(f"{m:.2f}" for m in meds_) + f" | "
+                     f"{crossing_label(res['factors'], meds_, cr)} |")
+        L += ["", "Factor found on one set, read on the other:", "",
+              "| Split | Factor found on the first set | Median ratio on the other set at that factor | ...and at 0.70 |",
+              "|---|---|---|---|"]
+        for name, v in (res.get('held_out') or {}).items():
+            L.append(f"| {name} | " + ("not inside the range | n/a | n/a" if v is None else
+                                       f"{v[0]:.2f} | {v[1]:.2f} | {v[2]:.2f}") + " |")
+        L += ["", "If the factor found on one set brings the ratio on the other close to 1 (and 0.70 does not), the "
+              "effect is not specific to a few rides. Sets that reach 1 at very different factors (or not at all) mean "
+              "no single factor fits."]
     else:
         L.append(f"Needs at least {MIN_RIDES} rides.")
+    L += ["", "## Does it depend on how windy the ride was?", ""]
+    strata = res.get('strata') or []
+    if strata:
+        L += ["Rides grouped by their mean 10 m wind. CdA mean and spread are at the factor closest to 0.70.", "",
+              "| Group | Rides | 10 m wind (m/s) | " + " | ".join(f"{f:.2f}" for f in res['factors']) +
+              " | Reaches 1 at | CdA mean | CdA spread (%) |",
+              "|---|---|---|" + "---|" * (len(res['factors']) + 3)]
+        for g in strata:
+            L.append(f"| {g['name']} | {g['rides']} | {g['wind_lo']:.1f} to {g['wind_hi']:.1f} | "
+                     + " | ".join(f"{m:.2f}" for m in g['medians'])
+                     + f" | {crossing_label(res['factors'], g['medians'], g['crossing'])} | {g['cda_mean']:.3f} | "
+                     f"{g['cda_cv']:.1f} |")
+        L += ["", "In the calm group the head-wind and tail-wind samples are few and the ratio is noisy, but if the CdA "
+              "there is steadier (a lower spread) than in the windy group, the wind model is adding error and "
+              "calm rides are the ones to trust."]
+    else:
+        L.append(f"Needs at least {2 * MIN_RIDES} rides.")
     L += ["", "## Reading it", "",
           "- A factor well below 0.70 with a ratio that reaches 1 means the wind felt was weaker than the model says "
           "(shelter, trees, buildings, the 0.25-degree weather grid).",

@@ -155,3 +155,37 @@ def test_crossing_helper():
     from validation import wind_factor_sweep as ws
     assert ws.crossing([0.2, 0.4, 0.6], [0.5, 0.8, 1.25]) == pytest.approx(0.5, abs=0.01)
     assert ws.crossing([0.2, 0.4], [0.5, 0.6]) is None
+
+
+def test_a_crossing_below_the_range_is_flagged_not_reported_as_located():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.1)
+    factors = (0.2, 0.3, 0.4, 0.5, 0.7)
+    res = ws.analyse(ws.sweep(rides, factors), factors)
+    assert res['edge']
+    text = ws.report("Ana", res, "")
+    assert "at or below the lowest factor tested (0.20)" in text and "bootstrap 90 % interval" not in text
+    assert ws.crossing_label(factors, [0.9, 0.8, 0.7, 0.6, 0.5]) == "below 0.20"
+    assert ws.crossing_label(factors, [1.5, 1.4, 1.3, 1.2, 1.1]) == "above 0.70"
+
+
+def test_a_located_crossing_is_not_flagged():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.5)
+    factors = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
+    res = ws.analyse(ws.sweep(rides, factors), factors)
+    assert not res['edge'] and res['crossing'] == pytest.approx(0.5, abs=0.06)
+
+
+def test_rides_are_grouped_by_how_windy_they_were_and_the_sets_are_reported():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.5, n=26, seed=2)
+    factors = (0.3, 0.5, 0.7)
+    long_df = ws.sweep(rides, factors)
+    res = ws.analyse(long_df, factors)
+    assert [g['name'] for g in res['strata']] == ["calmest third", "middle third", "windiest third"]
+    assert sum(g['rides'] for g in res['strata']) == res['n_rides']
+    assert res['strata'][0]['wind_hi'] <= res['strata'][2]['wind_lo'] + 1e-9
+    assert set(res['sets']) == {'alternate rides, set A', 'alternate rides, set B', 'earlier rides', 'later rides'}
+    text = ws.report("Ana", res, "")
+    assert "windiest third" in text and "Reaches 1 at" in text
