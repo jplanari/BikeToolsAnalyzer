@@ -164,10 +164,10 @@ def test_pressure_moves_to_the_riders_altitude():
     assert weather.pressure_at(1000.0, None, 500.0) == 1000.0
 
 
-# apply, device temperature, manual override
+# apply, device temperature
 def test_apply_weather_sets_columns_and_keeps_device_temperature():
     df = _ride(120)
-    payload = {'source': 'open-meteo', 'override': None,
+    payload = {'source': 'open-meteo', 
                'points': [{'lat': 41.4, 'lon': 2.17, 'start': 0, 'end': 120, 'elevation': 100.0, 'rows': _rows()}]}
     out = weather.apply_weather(df, payload)
     assert out['wind_speed'].iloc[0] == pytest.approx(5.0) and out['wind_deg'].iloc[0] == pytest.approx(0.0)
@@ -176,18 +176,6 @@ def test_apply_weather_sets_columns_and_keeps_device_temperature():
     df['temp_c'] = 31.0
     assert (weather.apply_weather(df, payload)['temp_c'] == 31.0).all()
     assert 'wind_speed' not in df.columns               # the input is not modified
-
-
-def test_manual_override_replaces_the_wind_and_no_wind_is_zero():
-    df = _ride(60)
-    df['bearing'] = 0.0
-    payload = {'points': [], 'override': {'wind_ms': 6.0, 'wind_deg': 0.0}}
-    out = weather.apply_weather(df, payload)
-    assert (out['wind_speed'] == 6.0).all() and out.attrs['weather_source'] == 'manual wind'
-    head, _ = _wind_components(out)
-    assert head.iloc[0] > 0                              # from the north, riding north: head wind
-    out2, p2, _ = weather.load_or_fetch(df, None, {'wind_ms': 0.0, 'wind_deg': 0.0})
-    assert (out2['wind_speed'] == 0).all() and p2['override'] is not None
 
 
 def test_summary_text_has_no_nan():
@@ -216,11 +204,11 @@ def test_ride_weather_roundtrip_and_cascade(path):
         conn.execute("INSERT INTO rides (user_id, filename, file_hash) VALUES (?, 'a.gpx', 'h')", (uid,))
         rid = conn.execute("SELECT id FROM rides").fetchone()[0]
     assert db.get_ride_weather(rid) is None
-    payload = {'source': 'open-meteo', 'override': None, 'points': [{'start': 0, 'end': 5, 'rows': _rows()}]}
+    payload = {'source': 'open-meteo', 'points': [{'start': 0, 'end': 5, 'rows': _rows()}]}
     db.save_ride_weather(rid, payload)
     assert db.get_ride_weather(rid) == payload
-    db.save_ride_weather(rid, {**payload, 'override': {'wind_ms': 1.0, 'wind_deg': 90.0}})
-    assert db.get_ride_weather(rid)['override']['wind_ms'] == 1.0
+    db.save_ride_weather(rid, {**payload, 'source': 'other'})
+    assert db.get_ride_weather(rid)['source'] == 'other'
     with db.connect() as conn:
         conn.execute("DELETE FROM rides WHERE id = ?", (rid,))
     assert db.get_ride_weather(rid) is None
@@ -230,7 +218,7 @@ def test_stored_weather_needs_no_network(monkeypatch):
     def offline(*a, **k):
         raise AssertionError("network used")
     monkeypatch.setattr(weather.requests, "get", offline)
-    payload = {'source': 'open-meteo', 'override': None,
+    payload = {'source': 'open-meteo', 
                'points': [{'start': 0, 'end': 60, 'elevation': 100.0, 'rows': _rows()}]}
     out, p, msg = weather.load_or_fetch(_ride(60), payload)
     assert msg is None and out['wind_speed'].iloc[0] == pytest.approx(5.0)
@@ -244,9 +232,9 @@ def test_weekly_report_ride_gets_stored_weather(path, monkeypatch):
         uid = conn.execute("SELECT id FROM users WHERE name='ann'").fetchone()[0]
         conn.execute("INSERT INTO rides (user_id, filename, file_hash) VALUES (?, 'a.gpx', 'h')", (uid,))
         rid = conn.execute("SELECT id FROM rides").fetchone()[0]
-    db.save_ride_weather(rid, {'source': 'open-meteo', 'override': {'wind_ms': 7.0, 'wind_deg': 180.0},
+    db.save_ride_weather(rid, {'source': 'open-meteo',
                                'points': [{'start': 0, 'end': 60, 'elevation': 100.0, 'rows': _rows()}]})
     out = weekly_report._with_weather(_ride(60), rid)
-    assert (out['wind_speed'] == 7.0).all() and 'bearing' in out.columns
+    assert out['wind_speed'].iloc[0] == pytest.approx(5.0) and 'bearing' in out.columns
     # no stored weather and no network: the ride is still reported, without wind
     assert 'wind_speed' not in weekly_report._with_weather(_ride(60), rid + 99).columns

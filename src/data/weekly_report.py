@@ -45,7 +45,7 @@ def _with_weather(df, ride_id):
     try:
         df['bearing'] = calculate_bearing(df)
         stored = db.get_ride_weather(ride_id)
-        out, payload, _ = weather.load_or_fetch(df, stored, (stored or {}).get('override'))
+        out, payload, _ = weather.load_or_fetch(df, stored)
         if payload is not None and stored is None:
             db.save_ride_weather(ride_id, payload)
         return out

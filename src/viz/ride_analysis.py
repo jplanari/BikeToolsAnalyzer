@@ -83,7 +83,6 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
     saved = get_ride_bike(user_name, file_bytes) if user_name else None
     stored_weather = get_ride_weather(saved[0]) if saved else None
-    wind_override = _wind_control(hashlib.md5(file_bytes).hexdigest()[:10], stored_weather)
 
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
@@ -93,7 +92,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
             # Physics prep + weather: the stored one if the ride was saved, else the service (df unchanged on failure)
             df['bearing'] = calculate_bearing(df)
-            df, weather, weather_message = load_or_fetch(df, stored_weather, wind_override)
+            df, weather, weather_message = load_or_fetch(df, stored_weather)
         except Exception as e:
             st.error(f"Error parsing ride file: {e}")
             return
@@ -127,7 +126,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
              _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary, bike_id)
              _keep_weather(user_name, file_bytes, weather, stored_weather)
 
-    if weather_message and not wind_override:
+    if weather_message:
         st.caption(f"🌫️ {weather_message} The aerodynamics use no wind.")
 
     # Detect Climbs
@@ -276,28 +275,6 @@ def _already_in_history(user_name, stats):
     if pd.isna(start):
         return False
     return _is_near(start.tz_convert(None), get_ride_start_times(user_name), DUPLICATE_START_TOLERANCE_S)
-
-
-def _wind_control(key, stored):
-    """
-    The 'Wind' control: automatic (weather service), a wind typed in, or no wind. Returns the override
-    {'wind_ms', 'wind_deg'} or None for automatic. A saved ride's earlier choice is the starting point.
-    """
-    prior = (stored or {}).get('override')
-    options = ["Automatic (weather service)", "Set the wind myself", "No wind"]
-    start = 0 if not prior else (2 if prior.get('wind_ms', 0) == 0 else 1)
-    with st.expander("🌬️ Wind", expanded=False):
-        mode = st.radio("Wind for the aerodynamics", options, index=start, key=f"wind_mode_{key}", horizontal=True)
-        if mode == options[2]:
-            return {'wind_ms': 0.0, 'wind_deg': 0.0}
-        if mode == options[1]:
-            c1, c2 = st.columns(2)
-            kmh = c1.number_input("Wind speed (km/h)", 0.0, 120.0, round((prior or {}).get('wind_ms', 0.0) * 3.6, 1),
-                                  step=1.0, key=f"wind_kmh_{key}")
-            deg = c2.number_input("Blowing from (°, 0 = north, 90 = east)", 0.0, 360.0,
-                                  float((prior or {}).get('wind_deg', 0.0)), step=5.0, key=f"wind_deg_{key}")
-            return {'wind_ms': kmh / 3.6, 'wind_deg': float(deg) % 360.0}
-    return None
 
 
 def _keep_weather(user_name, file_bytes, payload, stored):
