@@ -68,6 +68,26 @@ def migrate_db():
             c.execute(f"ALTER TABLE rides ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
             pass
+    try:   # the bike a ride was done on: NULL = not chosen (the rider's default bike), 0 = the generic bike
+        c.execute("ALTER TABLE rides ADD COLUMN bike_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS bikes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            frame_name TEXT, frame_kg REAL,
+            wheelset_name TEXT, wheelset_kg REAL,
+            groupset_name TEXT, groupset_kg REAL,
+            tyres_name TEXT, tyres_kg REAL,
+            extras_kg REAL,              -- pedals, bar, saddle, bottles...: whatever the four parts leave out
+            crr REAL,                    -- rolling resistance of the tyres on the road
+            is_default INTEGER DEFAULT 0,
+            UNIQUE (user_id, name),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS ride_zones (
             ride_id INTEGER NOT NULL,
@@ -649,12 +669,12 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
         # 1. Insert Ride Metadata
         cols = ['user_id', 'filename', 'file_hash', 'date_time',
                 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
-                'tss', 'if_factor', 'avg_hr', 'strava_activity_id'] + _METRIC_COLUMNS
+                'tss', 'if_factor', 'avg_hr', 'strava_activity_id', 'bike_id'] + _METRIC_COLUMNS
         vals = [user['id'], filename, file_hash, metadata.get('date'),
                 metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
                 metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
                 metadata.get('if', 0), metadata.get('avg_hr', 0),
-                metadata.get('strava_activity_id')] + [
+                metadata.get('strava_activity_id'), metadata.get('bike_id')] + [
                 metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
         c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
         ride_id = c.lastrowid
@@ -1320,3 +1340,116 @@ def replace_planned_sessions(user_name, sessions, after):
     conn.commit()
     conn.close()
     return len(rows)
+
+
+
+# --- Bikes -------------------------------------------------------------------------------------------------------
+# A bike is four parts (frame, wheelset, groupset, tyres) plus whatever they leave out; the parts add up to the bike's
+# weight and the tyres give the rolling resistance. CdA is not a bike property: it is computed from each ride.
+
+_BIKE_PARTS = ('frame', 'wheelset', 'groupset', 'tyres')
+_BIKE_FIELDS = ([f"{p}_name" for p in _BIKE_PARTS] + [f"{p}_kg" for p in _BIKE_PARTS] + ['extras_kg', 'crr'])
+
+
+def _bike_values(parts):
+    return [(parts.get(f) or None) if f.endswith('_name') else (None if parts.get(f) is None else float(parts[f]))
+            for f in _BIKE_FIELDS]
+
+
+def save_bike(user_name, name, parts, make_default=False):
+    """parts: {'frame_name', 'frame_kg', ..., 'extras_kg', 'crr'}. Returns (ok, message)."""
+    user = get_user_data(user_name)
+    if not user:
+        return False, "User not found."
+    if not (name or "").strip():
+        return False, "Give the bike a name."
+    conn = _connect()
+    try:
+        first = conn.execute("SELECT COUNT(*) FROM bikes WHERE user_id = ?", (user['id'],)).fetchone()[0] == 0
+        cols = ['user_id', 'name'] + _BIKE_FIELDS + ['is_default']
+        conn.execute(f"INSERT INTO bikes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                     [user['id'], name.strip()] + _bike_values(parts) + [int(first)])
+        bike_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return False, "You already have a bike with that name."
+    finally:
+        conn.close()
+    if make_default:
+        set_default_bike(user_name, bike_id)
+    return True, "Bike saved."
+
+
+def update_bike(bike_id, name, parts):
+    if not (name or "").strip():
+        return False, "Give the bike a name."
+    conn = _connect()
+    try:
+        sets = ', '.join(f"{c} = ?" for c in ['name'] + _BIKE_FIELDS)
+        conn.execute(f"UPDATE bikes SET {sets} WHERE id = ?", [name.strip()] + _bike_values(parts) + [bike_id])
+        conn.commit()
+        return True, "Bike updated."
+    except sqlite3.IntegrityError:
+        return False, "You already have a bike with that name."
+    finally:
+        conn.close()
+
+
+def get_bikes(user_name):
+    """The rider's bikes, default first, then by name."""
+    user = get_user_data(user_name)
+    if not user:
+        return []
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM bikes WHERE user_id = ? ORDER BY is_default DESC, name COLLATE NOCASE",
+                        (user['id'],)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_bike(bike_id):
+    """Removes the bike; rides done on it go back to the generic bike. The default moves to another bike if any."""
+    conn = _connect()
+    row = conn.execute("SELECT user_id, is_default FROM bikes WHERE id = ?", (bike_id,)).fetchone()
+    conn.execute("UPDATE rides SET bike_id = NULL WHERE bike_id = ?", (bike_id,))
+    conn.execute("DELETE FROM bikes WHERE id = ?", (bike_id,))
+    if row and row[1]:
+        nxt = conn.execute("SELECT id FROM bikes WHERE user_id = ? ORDER BY name COLLATE NOCASE LIMIT 1",
+                           (row[0],)).fetchone()
+        if nxt:
+            conn.execute("UPDATE bikes SET is_default = 1 WHERE id = ?", (nxt[0],))
+    conn.commit()
+    conn.close()
+
+
+def set_default_bike(user_name, bike_id):
+    """The bike new rides start with."""
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("UPDATE bikes SET is_default = 0 WHERE user_id = ?", (user['id'],))
+    conn.execute("UPDATE bikes SET is_default = 1 WHERE id = ? AND user_id = ?", (bike_id, user['id']))
+    conn.commit()
+    conn.close()
+
+
+def get_ride_bike(user_name, file_content):
+    """(ride_id, bike_id) of an already saved ride, found by its file; None when it has not been saved."""
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    row = conn.execute("SELECT id, bike_id FROM rides WHERE user_id = ? AND file_hash = ?",
+                       (user['id'], hashlib.md5(file_content).hexdigest())).fetchone()
+    conn.close()
+    return (row[0], row[1]) if row else None
+
+
+def set_ride_bike(ride_id, bike_id):
+    """Records the bike a saved ride was done on: a bike id, 0 for the generic bike, None for "not chosen"."""
+    conn = _connect()
+    conn.execute("UPDATE rides SET bike_id = ? WHERE id = ?", (bike_id, ride_id))
+    conn.commit()
+    conn.close()

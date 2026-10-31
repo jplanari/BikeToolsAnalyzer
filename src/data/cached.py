@@ -40,6 +40,7 @@ get_power_records = _cached('get_power_records')
 get_kj_records = _cached('get_kj_records')
 get_zone_rows = _cached('get_zone_rows')
 get_planned_sessions = _cached('get_planned_sessions')
+get_bikes = _cached('get_bikes')
 
 
 # Analytics that depend only on their inputs: cached on the inputs themselves.
