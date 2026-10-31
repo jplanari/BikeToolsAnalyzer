@@ -36,7 +36,7 @@ def collect_report_data(user_name, period_days=91, today=None):
         return float(s.iloc[-1]) if len(s) else None
 
     now = {}
-    if not pmc_all.empty:
+    if not pmc_all.loc[:today].empty:                 # empty when every ride is after `today` (a past week)
         row = pmc_all.loc[:today].iloc[-1]
         now = {'ctl': float(row['CTL']), 'atl': float(row['ATL']), 'tsb': float(row['TSB']),
                'ramp': last_actual(ramp), 'acwr': last_actual(ratio),

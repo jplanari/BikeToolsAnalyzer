@@ -468,15 +468,24 @@ def _page_rides(data):
     return fig
 
 
-def build_report_pdf(data):
-    """The report as PDF bytes."""
-    pages = [_page_summary(data), _page_volume(data), _page_power(data), _page_durability(data),
-             _page_intensity(data), _page_rides(data)]
-    left = f"BikeTools Analyzer  ·  {data['user']['name']}  ·  generated {datetime.now():%d %b %Y %H:%M}"
+def report_figures(data):
+    """The pages of the training report, as matplotlib figures."""
+    return [_page_summary(data), _page_volume(data), _page_power(data), _page_durability(data),
+            _page_intensity(data), _page_rides(data)]
+
+
+def write_pdf(figures, footer, title):
+    """Writes figures to one PDF (footer text + 'Page n of N' on each) and returns its bytes."""
     buf = io.BytesIO()
-    with PdfPages(buf, metadata={'Title': f"Training report - {data['user']['name']}",
-                                 'Author': 'BikeTools Analyzer', 'CreationDate': datetime.now()}) as pdf:
-        for n, fig in enumerate(pages, 1):
-            _footer(fig, left, n, len(pages))
+    with PdfPages(buf, metadata={'Title': title, 'Author': 'BikeTools Analyzer',
+                                 'CreationDate': datetime.now()}) as pdf:
+        for n, fig in enumerate(figures, 1):
+            _footer(fig, footer, n, len(figures))
             pdf.savefig(fig)
     return buf.getvalue()
+
+
+def build_report_pdf(data):
+    """The report as PDF bytes."""
+    left = f"BikeTools Analyzer  ·  {data['user']['name']}  ·  generated {datetime.now():%d %b %Y %H:%M}"
+    return write_pdf(report_figures(data), left, f"Training report - {data['user']['name']}")

@@ -18,6 +18,13 @@ theme.page_header("v1.4")
 if 'history_file' not in st.session_state:
     st.session_state['history_file'] = None
 
+# Weekly e-mail: when the app is opened in a new week, last week's report goes out (background thread, once
+# per browser session; the database makes sure each week is sent only once)
+if not st.session_state.get('weekly_email_checked'):
+    st.session_state['weekly_email_checked'] = True
+    from src.data.weekly_report import maybe_send_weekly
+    maybe_send_weekly()
+
 # Finish a Strava OAuth round trip if we were just redirected back
 handle_strava_callback()
 

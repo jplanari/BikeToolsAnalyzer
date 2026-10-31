@@ -172,7 +172,26 @@ def migrate_db():
         for col in ("ftp_auto", "lthr_auto"):
             _add_column(c, 'users', col, 'INTEGER DEFAULT 0')
 
-        _add_column(c, 'rides', 'strava_activity_id', 'INTEGER')
+        _add_column(c, 'rides', 'strava_activity_id', 'INTEGER')        
+        # the bike a ride was done on: NULL = not chosen (the rider's default bike), 0 = the generic bike
+        _add_column(c, 'rides', 'bike_id', 'INTEGER')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS bikes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                frame_name TEXT, frame_kg REAL,
+                wheelset_name TEXT, wheelset_kg REAL,
+                groupset_name TEXT, groupset_kg REAL,
+                tyres_name TEXT, tyres_kg REAL,
+                extras_kg REAL,
+                crr REAL,
+                is_default INTEGER DEFAULT 0,
+                UNIQUE (user_id, name),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')        
+        
         # Phase 1 per-ride metrics. metrics_version marks rides whose stored
         # metrics predate the current calculation (0 = legacy) so they can be
         # recomputed from their stored files.
@@ -305,6 +324,29 @@ def migrate_db():
                 FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS smtp_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL DEFAULT 587,
+                security TEXT NOT NULL DEFAULT 'starttls',
+                username TEXT,
+                password TEXT,
+                sender TEXT NOT NULL
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS weekly_email (
+                user_id INTEGER PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                recipient TEXT NOT NULL,
+                last_week TEXT,
+                last_status TEXT,
+                last_attempt TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        
         c.execute('''
             CREATE TABLE IF NOT EXISTS oauth_states (
                 state TEXT PRIMARY KEY,
@@ -1009,6 +1051,99 @@ def delete_app_credentials(provider):
     with connect() as conn:
         conn.execute("DELETE FROM app_credentials WHERE provider = ?", (provider,))
 
+# --- Weekly e-mail (one SMTP account for the app, one subscription per user) ---
+
+def save_smtp_settings(host, port, security, username, password, sender):
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO smtp_settings (id, host, port, security, username, password, sender)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET host = excluded.host, port = excluded.port, security = excluded.security,
+            username = excluded.username, password = excluded.password, sender = excluded.sender
+    """, (host.strip(), int(port), security, (username or '').strip() or None, password or None, sender.strip()))
+    conn.commit()
+    conn.close()
+
+def get_smtp_settings():
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM smtp_settings WHERE id = 1").fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_smtp_settings():
+    conn = _connect()
+    conn.execute("DELETE FROM smtp_settings")
+    conn.commit()
+    conn.close()
+
+def save_weekly_email(user_name, enabled, recipient):
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO weekly_email (user_id, enabled, recipient) VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, recipient = excluded.recipient
+    """, (user['id'], 1 if enabled else 0, recipient.strip()))
+    conn.commit()
+    conn.close()
+
+def get_weekly_email(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM weekly_email WHERE user_id = ?", (user['id'],)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def users_with_weekly_email():
+    """Names of the users whose weekly e-mail is switched on."""
+    conn = _connect()
+    rows = conn.execute("""SELECT u.name FROM weekly_email w JOIN users u ON u.id = w.user_id
+                           WHERE w.enabled = 1 ORDER BY u.name""").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def claim_weekly_email(user_name, week):
+    """
+    Reserves the e-mail of the week starting `week` (ISO date) for this process. True for exactly one caller:
+    the update only matches while last_week is older, so two browser tabs or two users of one server never send
+    the same week twice. Read get_weekly_email()['last_week'] first if you may need to release the claim.
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = _connect()
+    cur = conn.execute("""UPDATE weekly_email SET last_week = ?, last_status = 'sending', last_attempt = ?
+                          WHERE user_id = ? AND enabled = 1 AND (last_week IS NULL OR last_week < ?)""",
+                       (week, pd.Timestamp.now().isoformat(timespec='seconds'), user['id'], week))
+    conn.commit()
+    claimed = cur.rowcount == 1
+    conn.close()
+    return claimed
+
+def finish_weekly_email(user_name, status):
+    """Stores the outcome of a send that worked."""
+    user = get_user_data(user_name)
+    if user:
+        conn = _connect()
+        conn.execute("UPDATE weekly_email SET last_status = ? WHERE user_id = ?", (status, user['id']))
+        conn.commit()
+        conn.close()
+
+def release_weekly_email(user_name, status, previous_week):
+    """A send that failed: put last_week back (None = never sent) so the next app visit tries again."""
+    user = get_user_data(user_name)
+    if user:
+        conn = _connect()
+        conn.execute("UPDATE weekly_email SET last_status = ?, last_week = ? WHERE user_id = ?",
+                     (status, previous_week, user['id']))
+        conn.commit()
+        conn.close()
+
 # --- Polar authorization (tokens do not expire; stored like the other providers') ---
 
 def save_polar_auth(user_name, auth):
@@ -1359,3 +1494,116 @@ def replace_planned_sessions(user_name, sessions, after):
                      (user['id'], cutoff.strftime("%Y-%m-%d")))
         conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)
     return len(rows)
+
+
+
+# --- Bikes -------------------------------------------------------------------------------------------------------
+# A bike is four parts (frame, wheelset, groupset, tyres) plus whatever they leave out; the parts add up to the bike's
+# weight and the tyres give the rolling resistance. CdA is not a bike property: it is computed from each ride.
+
+_BIKE_PARTS = ('frame', 'wheelset', 'groupset', 'tyres')
+_BIKE_FIELDS = ([f"{p}_name" for p in _BIKE_PARTS] + [f"{p}_kg" for p in _BIKE_PARTS] + ['extras_kg', 'crr'])
+
+
+def _bike_values(parts):
+    return [(parts.get(f) or None) if f.endswith('_name') else (None if parts.get(f) is None else float(parts[f]))
+            for f in _BIKE_FIELDS]
+
+
+def save_bike(user_name, name, parts, make_default=False):
+    """parts: {'frame_name', 'frame_kg', ..., 'extras_kg', 'crr'}. Returns (ok, message)."""
+    user = get_user_data(user_name)
+    if not user:
+        return False, "User not found."
+    if not (name or "").strip():
+        return False, "Give the bike a name."
+    conn = _connect()
+    try:
+        first = conn.execute("SELECT COUNT(*) FROM bikes WHERE user_id = ?", (user['id'],)).fetchone()[0] == 0
+        cols = ['user_id', 'name'] + _BIKE_FIELDS + ['is_default']
+        conn.execute(f"INSERT INTO bikes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                     [user['id'], name.strip()] + _bike_values(parts) + [int(first)])
+        bike_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return False, "You already have a bike with that name."
+    finally:
+        conn.close()
+    if make_default:
+        set_default_bike(user_name, bike_id)
+    return True, "Bike saved."
+
+
+def update_bike(bike_id, name, parts):
+    if not (name or "").strip():
+        return False, "Give the bike a name."
+    conn = _connect()
+    try:
+        sets = ', '.join(f"{c} = ?" for c in ['name'] + _BIKE_FIELDS)
+        conn.execute(f"UPDATE bikes SET {sets} WHERE id = ?", [name.strip()] + _bike_values(parts) + [bike_id])
+        conn.commit()
+        return True, "Bike updated."
+    except sqlite3.IntegrityError:
+        return False, "You already have a bike with that name."
+    finally:
+        conn.close()
+
+
+def get_bikes(user_name):
+    """The rider's bikes, default first, then by name."""
+    user = get_user_data(user_name)
+    if not user:
+        return []
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM bikes WHERE user_id = ? ORDER BY is_default DESC, name COLLATE NOCASE",
+                        (user['id'],)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_bike(bike_id):
+    """Removes the bike; rides done on it go back to the generic bike. The default moves to another bike if any."""
+    conn = _connect()
+    row = conn.execute("SELECT user_id, is_default FROM bikes WHERE id = ?", (bike_id,)).fetchone()
+    conn.execute("UPDATE rides SET bike_id = NULL WHERE bike_id = ?", (bike_id,))
+    conn.execute("DELETE FROM bikes WHERE id = ?", (bike_id,))
+    if row and row[1]:
+        nxt = conn.execute("SELECT id FROM bikes WHERE user_id = ? ORDER BY name COLLATE NOCASE LIMIT 1",
+                           (row[0],)).fetchone()
+        if nxt:
+            conn.execute("UPDATE bikes SET is_default = 1 WHERE id = ?", (nxt[0],))
+    conn.commit()
+    conn.close()
+
+
+def set_default_bike(user_name, bike_id):
+    """The bike new rides start with."""
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("UPDATE bikes SET is_default = 0 WHERE user_id = ?", (user['id'],))
+    conn.execute("UPDATE bikes SET is_default = 1 WHERE id = ? AND user_id = ?", (bike_id, user['id']))
+    conn.commit()
+    conn.close()
+
+
+def get_ride_bike(user_name, file_content):
+    """(ride_id, bike_id) of an already saved ride, found by its file; None when it has not been saved."""
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    row = conn.execute("SELECT id, bike_id FROM rides WHERE user_id = ? AND file_hash = ?",
+                       (user['id'], hashlib.md5(file_content).hexdigest())).fetchone()
+    conn.close()
+    return (row[0], row[1]) if row else None
+
+
+def set_ride_bike(ride_id, bike_id):
+    """Records the bike a saved ride was done on: a bike id, 0 for the generic bike, None for "not chosen"."""
+    conn = _connect()
+    conn.execute("UPDATE rides SET bike_id = ? WHERE id = ?", (bike_id, ride_id))
+    conn.commit()
+    conn.close()

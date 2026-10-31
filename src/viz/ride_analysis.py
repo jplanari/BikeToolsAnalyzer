@@ -23,12 +23,14 @@ from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components
+from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR
 from src.data.weather import fetch_ride_weather
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.segment_analysis import render_segment_analysis
 from src.viz.sections import section_picker, remembered
+from src.viz.bikes import choose_ride_bike
+from src.analysis.bikes import bike_physics, label as bike_label
 from src.viz import timeseries as ts
 
 
@@ -73,7 +75,11 @@ def process_and_display_analysis(file_obj, user_name, settings):
     
     file_bytes = file_obj.getvalue()
     filename = file_obj.name.lower()
-    
+
+    bike, bike_id = choose_ride_bike(user_name, file_bytes)
+    bike_mass, crr = bike_physics(bike)
+    settings['bike_mass'], settings['crr'], settings['bike_name'] = bike_mass, crr, bike_label(bike)
+
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
@@ -97,8 +103,8 @@ def process_and_display_analysis(file_obj, user_name, settings):
         with st.spinner("Running analysis engine..."):
             df, climbs, p_comps = run_heavy_analysis(
                 df,
-                bike_mass=8.0,
-                crr=0.005,
+                bike_mass=bike_mass,
+                crr=crr,
                 drivetrain_loss=0.03,
                 rider_mass=settings['weight'],
                 ftp=current_ftp,
@@ -113,7 +119,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
         # Auto-Save
         if user_name:
-             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary)
+             _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary, bike_id)
 
     # Detect Climbs
     detected_climbs = climbs
@@ -264,11 +270,12 @@ def _already_in_history(user_name, stats):
     return _is_near(start.tz_convert(None), get_ride_start_times(user_name), DUPLICATE_START_TOLERANCE_S)
 
 
-def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary):
+def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bike_id=None):
     """Helper to handle database saving logic."""
     stats = build_ride_metadata(df, dist, ele, summary['avg_speed_kph'], summary['norm_power'],
                                 summary['tss'], summary['if'], filename=filename,
                                 metrics=metrics_for_storage(summary))
+    stats['bike_id'] = bike_id
     power_curve_dict = summary['power_curve']
 
     if 'saved_hashes' not in st.session_state:
@@ -295,8 +302,10 @@ def _ensure_cda(df, settings):
     section and as the starting point of the climb estimator). Returns the fit or None."""
     if 'power' not in df.columns or 'speed' not in df.columns:
         return None
-    df['cda'], df['p_aero'] = calculate_CdA(df, rider_mass=settings.get('weight', 70))
-    fit = estimate_cda(df, rider_mass=settings.get('weight', 70))
+    physics = dict(rider_mass=settings.get('weight', 70), bike_mass=settings.get('bike_mass') or BIKE_MASS_KG,
+                   crr=settings.get('crr') or CRR)
+    df['cda'], df['p_aero'] = calculate_CdA(df, **physics)
+    fit = estimate_cda(df, **physics)
     df.attrs['cda_est'] = fit['cda'] if fit else None
     return fit
 
@@ -335,6 +344,9 @@ def _render_time_series(df):
 def _render_aero(df, settings, p_comps):
     st.subheader("💨 Aerodynamic Analysis & Power Budget")
     fit = _ensure_cda(df, settings)
+    if settings.get('bike_name'):
+        st.caption(f"Power balance with {settings['bike_name']} and {settings['weight']:.0f} kg rider. "
+                   "CdA is computed from the ride.")
     avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
     if fit:
         c1, c2 = st.columns(2)

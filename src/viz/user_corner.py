@@ -125,10 +125,18 @@ def render_user_corner(user_name):
     
     st.markdown("---")
 
+    from src.viz.bikes import render_bikes
+    render_bikes(user_name)
+    st.markdown("---")
+
     _render_history_update(user_name, user_data)
 
     from src.viz.connections import render_connections
     render_connections()
+    st.markdown("---")
+
+    from src.viz.weekly_email import render_weekly_email
+    render_weekly_email(user_name)
     st.markdown("---")
 
     st.info("Charts and analytics are on the **Training** page, including your critical-power model and the "
