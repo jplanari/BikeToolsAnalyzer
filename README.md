@@ -150,6 +150,8 @@ Where:
 
 Rides can be imported straight from Strava through the official API (OAuth). Each rider profile connects its own Strava account.
 
+> **No file editing needed.** Instead of `secrets.toml` you can open the app, pick the service in the sidebar (or *User Corner → 🔌 Connections*) and paste the Client ID and Client Secret into the form. They are saved in the app's local database and take precedence over `secrets.toml`. Changing the client ID later disconnects riders already connected.
+
 **One-time setup**
 1. Go to <https://www.strava.com/settings/api> and create an API application.
 2. Set **Authorization Callback Domain** to `localhost`.
