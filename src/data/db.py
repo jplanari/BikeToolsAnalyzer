@@ -199,6 +199,28 @@ def migrate_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS smtp_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),     -- one mail account for the whole app
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL DEFAULT 587,
+            security TEXT NOT NULL DEFAULT 'starttls',  -- 'starttls' | 'ssl' | 'none'
+            username TEXT,
+            password TEXT,
+            sender TEXT NOT NULL
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS weekly_email (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            recipient TEXT NOT NULL,
+            last_week TEXT,                  -- Monday (ISO date) of the last week sent or being sent
+            last_status TEXT,
+            last_attempt TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS polar_auth (
             user_id INTEGER PRIMARY KEY,
             polar_user_id TEXT,
@@ -954,6 +976,99 @@ def delete_app_credentials(provider):
     conn.execute("DELETE FROM app_credentials WHERE provider = ?", (provider,))
     conn.commit()
     conn.close()
+
+# --- Weekly e-mail (one SMTP account for the app, one subscription per user) ---
+
+def save_smtp_settings(host, port, security, username, password, sender):
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO smtp_settings (id, host, port, security, username, password, sender)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET host = excluded.host, port = excluded.port, security = excluded.security,
+            username = excluded.username, password = excluded.password, sender = excluded.sender
+    """, (host.strip(), int(port), security, (username or '').strip() or None, password or None, sender.strip()))
+    conn.commit()
+    conn.close()
+
+def get_smtp_settings():
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM smtp_settings WHERE id = 1").fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_smtp_settings():
+    conn = _connect()
+    conn.execute("DELETE FROM smtp_settings")
+    conn.commit()
+    conn.close()
+
+def save_weekly_email(user_name, enabled, recipient):
+    user = get_user_data(user_name)
+    if not user:
+        return
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO weekly_email (user_id, enabled, recipient) VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, recipient = excluded.recipient
+    """, (user['id'], 1 if enabled else 0, recipient.strip()))
+    conn.commit()
+    conn.close()
+
+def get_weekly_email(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return None
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM weekly_email WHERE user_id = ?", (user['id'],)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def users_with_weekly_email():
+    """Names of the users whose weekly e-mail is switched on."""
+    conn = _connect()
+    rows = conn.execute("""SELECT u.name FROM weekly_email w JOIN users u ON u.id = w.user_id
+                           WHERE w.enabled = 1 ORDER BY u.name""").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def claim_weekly_email(user_name, week):
+    """
+    Reserves the e-mail of the week starting `week` (ISO date) for this process. True for exactly one caller:
+    the update only matches while last_week is older, so two browser tabs or two users of one server never send
+    the same week twice. Read get_weekly_email()['last_week'] first if you may need to release the claim.
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return False
+    conn = _connect()
+    cur = conn.execute("""UPDATE weekly_email SET last_week = ?, last_status = 'sending', last_attempt = ?
+                          WHERE user_id = ? AND enabled = 1 AND (last_week IS NULL OR last_week < ?)""",
+                       (week, pd.Timestamp.now().isoformat(timespec='seconds'), user['id'], week))
+    conn.commit()
+    claimed = cur.rowcount == 1
+    conn.close()
+    return claimed
+
+def finish_weekly_email(user_name, status):
+    """Stores the outcome of a send that worked."""
+    user = get_user_data(user_name)
+    if user:
+        conn = _connect()
+        conn.execute("UPDATE weekly_email SET last_status = ? WHERE user_id = ?", (status, user['id']))
+        conn.commit()
+        conn.close()
+
+def release_weekly_email(user_name, status, previous_week):
+    """A send that failed: put last_week back (None = never sent) so the next app visit tries again."""
+    user = get_user_data(user_name)
+    if user:
+        conn = _connect()
+        conn.execute("UPDATE weekly_email SET last_status = ?, last_week = ? WHERE user_id = ?",
+                     (status, previous_week, user['id']))
+        conn.commit()
+        conn.close()
 
 # --- Polar authorization (tokens do not expire; stored like the other providers') ---
 

@@ -135,5 +135,9 @@ def render_user_corner(user_name):
     render_connections()
     st.markdown("---")
 
+    from src.viz.weekly_email import render_weekly_email
+    render_weekly_email(user_name)
+    st.markdown("---")
+
     st.info("Charts and analytics are on the **Training** page, including your critical-power model and the "
             "buttons that save it to your profile.")
