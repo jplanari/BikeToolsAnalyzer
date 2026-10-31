@@ -49,7 +49,7 @@ def test_recompute_backfills_metrics_and_keeps_original_ftp(temp_db):
     assert db.count_rides_needing_update("Rider") == 0
 
     r = _row(temp_db, "strava_1.json")
-    assert r['date_time'] == "2026-09-01T07:00:00"          # date recovered
+    assert r['date_time'] == "2026-09-01T07:00:00+00:00"          # date recovered
     assert r['ftp_at_ride'] == 250                            # not the current 300
     assert r['tss'] == 64 and r['if_factor'] == pytest.approx(0.8)
     assert r['tss_source'] == 'power' and r['metrics_version'] == db.METRICS_VERSION

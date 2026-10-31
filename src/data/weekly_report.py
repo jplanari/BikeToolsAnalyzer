@@ -28,10 +28,10 @@ def week_rides(user_name, monday, sunday):
     rides = db.get_user_rides(user_name)
     out = []
     for r in rides:
-        t = pd.to_datetime(r.get('date_time'), errors='coerce', utc=True)
+        t = pd.to_datetime(r.get('start_local') or r.get('date_time'), errors='coerce')   # the rider's own clock
         if pd.isna(t):
             continue
-        day = t.tz_localize(None).normalize()
+        day = (t.tz_convert(None) if t.tzinfo is not None else t).normalize()
         if monday <= day <= sunday:
             out.append(r)
     return sorted(out, key=lambda r: r['date_time'])

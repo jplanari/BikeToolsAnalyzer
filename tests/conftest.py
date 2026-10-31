@@ -1,10 +1,13 @@
 # tests/conftest.py
 import importlib.util
+import os
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
+
+os.environ.setdefault("BIKETOOLS_TZ", "UTC")      # the rider's day follows this computer's zone by default: tests use UTC
 
 # The data modules import UI/parsing libraries at module level. CI installs
 # them from requirements.txt; when one is missing locally, stub it so the

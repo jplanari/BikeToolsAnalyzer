@@ -234,7 +234,7 @@ def test_import_history(connected, fake_strava):
 
     rides = {r["filename"]: r for r in db.get_user_rides("Rider")}
     r = rides["strava_10.json"]
-    assert r["date_time"] == "2026-09-01T07:00:00"
+    assert r["date_time"] == "2026-09-01T07:00:00+00:00"
     assert r["distance_km"] == pytest.approx(14.4, rel=0.02)   # 1800 s at 8 m/s
     # ~30 min at 200 W with FTP 250: IF 0.8 -> TSS = 0.5 h * 0.64 * 100 = 32
     # (duration is last-first sample = 1799 s; TSS is stored rounded)

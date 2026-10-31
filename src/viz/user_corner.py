@@ -24,6 +24,7 @@ def render_history(user_name):
     hist_df = pd.DataFrame(history)
     st.info("Here is a log of your past rides.")
 
+    hist_df['date_time'] = hist_df['start_local'] if 'start_local' in hist_df.columns else hist_df['date_time']
     cols = ['date_time', 'filename', 'distance_km', 'elevation_m', 'moving_s', 'norm_power',
             'tss', 'tss_source', 'vi', 'ef', 'decoupling_pct']
     view = hist_df[[c for c in cols if c in hist_df.columns]].copy()
@@ -71,6 +72,24 @@ def _render_history_update(user_name, user_data):
 def _by_hand(new, old, auto):
     """The value to store as a manual choice; an untouched estimated value keeps following the data."""
     return int(new) if int(new) != int(old) or not auto else None
+
+
+def _timezone_control(user_name, user):
+    """The rider's time zone: which day a ride belongs to (a 23:30 ride is that evening, not tomorrow in UTC)."""
+    from zoneinfo import available_timezones
+    from src.analysis.dates import resolve_timezone
+    from src.data.db import set_user_timezone
+    zones = sorted(available_timezones()) or ["UTC"]
+    current = resolve_timezone(user.get('timezone'))
+    if current not in zones:
+        zones.append(current)
+    with st.expander(f"🕒 Time zone: {current}"):
+        st.caption("Rides are stored in UTC. Your time zone decides which day each ride counts for in the training "
+                   "load, the weekly report and the period filters. Until you choose, this computer's zone is used.")
+        choice = st.selectbox("Time zone", zones, index=zones.index(current), key="tz_select")
+        if choice != current and st.button("Save time zone", key="tz_save"):
+            set_user_timezone(user_name, choice)
+            st.rerun()
 
 
 def _threshold_controls(user_name, user):
@@ -122,6 +141,7 @@ def render_user_corner(user_name):
     c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.W_PRIME_HELP)
     c4.metric("Weight", f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
+    _timezone_control(user_name, user_data)
     
     st.markdown("---")
 

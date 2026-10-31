@@ -54,7 +54,7 @@ def test_save_ride_stores_date_distance_elevation(temp_db):
     assert pr_dates == {"2026-10-01T08:00:00+00:00"}
 
     history = db.get_user_tss_history("Rider")
-    assert history == [{'date': "2026-10-01T08:00:00+00:00", 'tss': 71}]
+    assert history == [{'date': "2026-10-01T08:00:00", 'tss': 71}]
 
 
 def test_get_ride_file(temp_db):

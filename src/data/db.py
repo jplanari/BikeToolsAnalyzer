@@ -9,7 +9,7 @@ import secrets
 import time
 from contextlib import contextmanager
 
-from src.analysis.dates import parse_utc
+from src.analysis.dates import (local_day_bounds_utc, parse_utc, resolve_timezone, to_local_naive, to_utc_iso)
 
 # BIKETOOLS_DB lets you keep the database somewhere else, e.g. outside a OneDrive/Dropbox folder:
 # those sync tools (and Windows drives mounted in WSL) lock files unpredictably, which SQLite hates.
@@ -102,8 +102,35 @@ def _migration_per_user_file_hash(conn):
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_hash ON rides(user_id, file_hash)")
 
 
+def _migration_query_indexes(conn):
+    """Indexes for the per-user queries that had none: best power per duration, planned sessions by date."""
+    for name, table, cols in (
+            ("idx_power_records_user_dur", "power_records", "user_id, duration_sec, watts"),
+            ("idx_power_records_kj_user", "power_records_kj", "user_id, kj, duration_sec, watts"),
+            ("idx_planned_sessions_user_date", "planned_sessions", "user_id, date")):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
+
+
+def _migration_utc_dates(conn):
+    """
+    Ride start times were stored in mixed forms (with an offset, or naive). They are all rewritten as UTC
+    instants ('2026-10-01T07:00:00+00:00'), so text comparison orders them and the day filters can use the
+    rider's local day. A naive time was always read as UTC, so nothing moves.
+    """
+    for table in ("rides", "power_records", "power_records_kj"):
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+            continue
+        for (old,) in conn.execute(f"SELECT DISTINCT date_time FROM {table} WHERE date_time IS NOT NULL").fetchall():
+            new = to_utc_iso(old)
+            if new != old:
+                conn.execute(f"UPDATE {table} SET date_time = ? WHERE date_time = ?", (new, old))
+
+
 MIGRATIONS = [
     (1, _migration_per_user_file_hash),
+    (2, _migration_query_indexes),
+    (3, _migration_utc_dates),
 ]
 
 
@@ -165,6 +192,7 @@ def migrate_db():
         c = conn.cursor()
     
         _add_column(c, 'users', 'cp', 'INTEGER DEFAULT 0')
+        _add_column(c, 'users', 'timezone', 'TEXT')       # IANA name; NULL = this computer's zone
 
         _add_column(c, 'users', 'w_prime', 'REAL DEFAULT 20000')
 
@@ -468,6 +496,12 @@ def set_user_thresholds(user_name, ftp=None, lthr=None, auto_ftp=None, auto_lthr
         if auto_lthr:
             conn.execute("UPDATE users SET lthr_auto = 1 WHERE name = ?", (user_name,))
 
+def set_user_timezone(user_name, timezone):
+    """The rider's IANA time zone ('Europe/Madrid'); None or an unknown name goes back to this computer's zone."""
+    from src.analysis.dates import valid_timezone
+    with connect() as conn:
+        conn.execute("UPDATE users SET timezone = ? WHERE name = ?", (valid_timezone(timezone), user_name))
+
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
     with connect() as conn:
@@ -486,11 +520,12 @@ def get_hr20(user_name, start=None):
     user = get_user_data(user_name)
     if not user:
         return []
-    where, params = _date_filter(start, None)
+    where, params = _date_filter(start, None, user)
     with connect() as conn:
         rows = conn.execute(f"""SELECT date_time, hr20_bpm FROM rides r WHERE user_id = ? AND hr20_bpm > 0{where}
                                 ORDER BY date_time""", [user['id'], *params]).fetchall()
-    return [(r[0], r[1]) for r in rows]
+    days = to_local_naive(pd.Series([r[0] for r in rows], dtype=object), user.get('timezone'))
+    return [(None if pd.isna(d) else d.isoformat(), r[1]) for d, r in zip(days, rows)]
 
 def get_rides_without_hr20(user_name, limit=25):
     """(id, filename) of the newest rides whose best-20-min HR was never computed."""
@@ -601,6 +636,9 @@ def get_user_data(name):
     return None
 
 def delete_user(name):
+    """Deletes the rider and, by cascade, everything of theirs. A backup is taken first: this cannot be undone."""
+    if get_user_data(name):
+        backup_db("before-delete-user")
     with connect() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM users WHERE name = ?", (name,))
@@ -611,11 +649,8 @@ def strava_id_from_filename(filename):
     return int(m.group(1)) if m else None
 
 def _iso_timestamp(ts):
-    """Ride start time as an ISO-8601 string (UTC when timezone-aware)."""
-    ts = pd.Timestamp(ts)
-    if ts.tzinfo is not None:
-        ts = ts.tz_convert("UTC")
-    return ts.isoformat()
+    """Ride start time as a UTC ISO-8601 string (a naive time is taken as UTC), the one format stored."""
+    return to_utc_iso(ts)
 
 # Bump when the per-ride calculations change; older rides get offered a recompute
 # 2: joint power/HR/cadence histograms, HR recovery
@@ -760,7 +795,7 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
         c.executemany('''
             INSERT INTO power_records (user_id, ride_id, duration_sec, watts, date_time)
             VALUES (?, ?, ?, ?, ?)
-        ''', [(user_id, ride_id, int(d), float(w), metadata.get('date'))
+        ''', [(user_id, ride_id, int(d), float(w), to_utc_iso(metadata.get('date')))
               for d, w in power_curve_dict.items() if w is not None and pd.notna(w)])
     zones = metadata.get('zones') or {}
     c.executemany("INSERT INTO ride_zones (ride_id, kind, zone, seconds) VALUES (?, ?, ?, ?)",
@@ -769,7 +804,7 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     fatigued = metadata.get('fatigued') or {}
     c.executemany("""INSERT INTO power_records_kj (ride_id, user_id, kj, duration_sec, watts, date_time)
                      VALUES (?, ?, ?, ?, ?, ?)""",
-                  [(ride_id, user_id, int(kj), int(d), float(w), metadata.get('date'))
+                  [(ride_id, user_id, int(kj), int(d), float(w), to_utc_iso(metadata.get('date')))
                    for kj, curve in fatigued.items() for d, w in curve.items()
                    if w is not None and pd.notna(w)])
     hist = metadata.get('hist') or {}
@@ -791,7 +826,7 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
             cols = ['user_id', 'filename', 'file_hash', 'date_time',
                     'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
                     'tss', 'if_factor', 'avg_hr', 'strava_activity_id', 'bike_id'] + _METRIC_COLUMNS
-            vals = [user['id'], filename, file_hash, metadata.get('date'),
+            vals = [user['id'], filename, file_hash, to_utc_iso(metadata.get('date')),
                     metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
                     metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
                     metadata.get('if', 0), metadata.get('avg_hr', 0),
@@ -830,7 +865,11 @@ def get_user_rides(user_name):
             ORDER BY date_time DESC
         ''', (user['id'],))
         rows = c.fetchall()
-    return [dict(row) for row in rows]
+    out = [dict(row) for row in rows]
+    local = to_local_naive(pd.Series([r['date_time'] for r in out], dtype=object), user.get('timezone'))
+    for r, t in zip(out, local):
+        r['start_local'] = None if pd.isna(t) else t.isoformat()        # the rider's own clock, naive
+    return out
 
 def get_ride_file(ride_id):
     """(filename, original file bytes) of a stored ride, or (None, None)."""
@@ -889,8 +928,9 @@ def get_user_tss_history(user_name):
     
         rows = c.fetchall()
     
-    # Return raw list of dicts
-    return [{'date': row[0], 'tss': row[1]} for row in rows]
+    # Dates on the rider's own clock (naive, so the training-load day buckets are their days)
+    days = to_local_naive(pd.Series([r[0] for r in rows], dtype=object), user.get('timezone'))
+    return [{'date': (None if pd.isna(d) else d.isoformat()), 'tss': row[1]} for d, row in zip(days, rows)]
 
 
 # --- Recompute history ------------------------------------------------------
@@ -930,7 +970,7 @@ def update_ride_metrics(ride_id, metadata, power_curve_dict):
         user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
         cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
                 'avg_power', 'tss', 'if_factor', 'avg_hr'] + _METRIC_COLUMNS
-        vals = [metadata.get('date'), metadata.get('dist', 0), metadata.get('ele', 0),
+        vals = [to_utc_iso(metadata.get('date')), metadata.get('dist', 0), metadata.get('ele', 0),
                 metadata.get('speed', 0), metadata.get('np', 0), metadata.get('avg_p', 0),
                 metadata.get('tss', 0), metadata.get('if', 0), metadata.get('avg_hr', 0)] + [
                 metadata.get(k) for k in _METRIC_COLUMNS]
@@ -1290,18 +1330,20 @@ def get_ride_start_times(user_name):
 
 # --- Deeper analytics queries ------------------------------------------------
 
-def _parse_dates(series):
-    """Stored ISO strings (with or without offset) -> naive UTC datetimes."""
-    return parse_utc(series)
+def _parse_dates(series, user=None):
+    """Stored UTC instants -> naive datetimes on the rider's own clock (their local day is what they mean)."""
+    return to_local_naive(series, (user or {}).get('timezone'))
 
-def _date_filter(start, end):
+def _date_filter(start, end, user=None):
+    """SQL for rides in [start, end] (inclusive LOCAL dates of the rider): their day boundaries in UTC."""
+    first, after = local_day_bounds_utc(start, end, (user or {}).get('timezone'))
     sql, params = "", []
-    if start is not None:
+    if first is not None:
         sql += " AND r.date_time >= ?"
-        params.append(pd.Timestamp(start).strftime("%Y-%m-%d"))
-    if end is not None:
+        params.append(first)
+    if after is not None:
         sql += " AND r.date_time < ?"
-        params.append((pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+        params.append(after)
     return sql, params
 
 def get_hist(user_name, pair, start=None, end=None):
@@ -1313,13 +1355,13 @@ def get_hist(user_name, pair, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame(columns=cols)
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         df = pd.read_sql_query(f"""SELECT h.ride_id, r.date_time AS date, h.x, h.y, h.seconds
                                    FROM ride_hist h JOIN rides r ON r.id = h.ride_id
                                    WHERE r.user_id = ? AND h.pair = ?{where}""",
                                conn, params=[user['id'], pair, *params])
-    df['date'] = _parse_dates(df['date'])
+    df['date'] = _parse_dates(df['date'], user)
     return df
 
 def get_ride_stats(user_name, start=None, end=None):
@@ -1327,7 +1369,7 @@ def get_ride_stats(user_name, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame()
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
                                           r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
@@ -1335,7 +1377,7 @@ def get_ride_stats(user_name, start=None, end=None):
                                           r.distance_km, r.elevation_m, r.kj
                                    FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
                                    ORDER BY r.date_time""", conn, params=[user['id'], *params])
-    df['date'] = _parse_dates(df['date'])
+    df['date'] = _parse_dates(df['date'], user)
     return df
 
 def update_user_crank(user_name, crank_mm):
@@ -1348,7 +1390,7 @@ def period_coverage(user_name, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return out
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         out['rides'], out['needs_update'] = conn.execute(
             f"""SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.metrics_version IS NULL
@@ -1367,14 +1409,14 @@ def get_power_records(user_name, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame(columns=cols)
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         df = pd.read_sql_query(f"""SELECT p.duration_sec AS duration, p.watts, r.date_time AS date, r.id AS ride_id
                                    FROM power_records p JOIN rides r ON r.id = p.ride_id
                                    WHERE r.user_id = ? AND r.date_time IS NOT NULL
                                      AND p.watts IS NOT NULL{where}""",
                                conn, params=[user['id'], *params])
-    df['date'] = _parse_dates(df['date'])
+    df['date'] = _parse_dates(df['date'], user)
     return df[cols]
 
 def get_kj_records(user_name, start=None, end=None):
@@ -1383,14 +1425,14 @@ def get_kj_records(user_name, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame(columns=cols)
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         df = pd.read_sql_query(f"""SELECT k.kj, k.duration_sec AS duration, k.watts, r.date_time AS date,
                                           r.id AS ride_id
                                    FROM power_records_kj k JOIN rides r ON r.id = k.ride_id
                                    WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}""",
                                conn, params=[user['id'], *params])
-    df['date'] = _parse_dates(df['date'])
+    df['date'] = _parse_dates(df['date'], user)
     return df[cols]
 
 def get_zone_rows(user_name, kind, start=None, end=None):
@@ -1399,13 +1441,13 @@ def get_zone_rows(user_name, kind, start=None, end=None):
     user = get_user_data(user_name)
     if not user:
         return pd.DataFrame(columns=cols)
-    where, params = _date_filter(start, end)
+    where, params = _date_filter(start, end, user)
     with connect() as conn:
         df = pd.read_sql_query(f"""SELECT z.ride_id, r.date_time AS date, z.zone, z.seconds
                                    FROM ride_zones z JOIN rides r ON r.id = z.ride_id
                                    WHERE r.user_id = ? AND z.kind = ? AND r.date_time IS NOT NULL{where}""",
                                conn, params=[user['id'], kind, *params])
-    df['date'] = _parse_dates(df['date'])
+    df['date'] = _parse_dates(df['date'], user)
     return df[cols]
 
 def get_planned_sessions(user_name, after=None, structured=None):

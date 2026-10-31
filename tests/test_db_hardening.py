@@ -123,7 +123,7 @@ def test_migration_rebuilds_rides_keeping_rows_children_and_indexes(path):
 
     db.init_db(force=True)
 
-    assert _scalar(path, "PRAGMA user_version") == 1
+    assert _scalar(path, "PRAGMA user_version") == db.MIGRATIONS[-1][0]
     assert "UNIQUE" not in _scalar(path, "SELECT sql FROM sqlite_master WHERE name = 'rides'")
     assert _scalar(path, "SELECT COUNT(*) FROM rides") == 3
     assert _scalar(path, "SELECT tss FROM rides WHERE id = 11") == 51
@@ -148,3 +148,78 @@ def test_failed_migration_leaves_the_database_untouched(path, monkeypatch):
         db.init_db(force=True)
     assert _scalar(path, "PRAGMA user_version") == 0
     assert _scalar(path, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'rides'") == 1
+
+
+# --- dates: UTC storage, the rider's own day ---------------------------------------------------
+
+def _ride(db_, name, start, f):
+    return db_.save_ride(name, f"{f}.gpx", f.encode(), {'date': start, 'tss': 50, 'dist': 10.0}, {60: 100.0})
+
+
+def test_dates_are_stored_as_utc_instants(path):
+    db.init_db()
+    db.save_user("Ana", 250, 170, 70.0)
+    _ride(db, "Ana", "2026-10-31T23:30:00+01:00", "a")               # an aware time in another offset
+    _ride(db, "Ana", "2026-11-01T08:00:00", "b")                     # a naive time is UTC
+    stored = {_scalar(path, f"SELECT date_time FROM rides WHERE filename = '{n}.gpx'") for n in "ab"}
+    assert stored == {"2026-10-31T22:30:00+00:00", "2026-11-01T08:00:00+00:00"}
+    assert _scalar(path, "SELECT date_time FROM power_records LIMIT 1").endswith("+00:00")
+
+
+def test_period_filter_uses_the_riders_local_day(path):
+    db.init_db()
+    db.save_user("Ana", 250, 170, 70.0)
+    db.set_user_timezone("Ana", "Europe/Madrid")
+    _ride(db, "Ana", "2026-10-25T23:30:00+00:00", "late")           # 00:30 on 26 Oct in Madrid (CET, UTC+1)
+    _ride(db, "Ana", "2026-10-26T12:00:00+00:00", "noon")
+    sunday = db.get_ride_stats("Ana", "2026-10-19", "2026-10-25")
+    monday = db.get_ride_stats("Ana", "2026-10-26", "2026-10-26")
+    assert len(sunday) == 0 and len(monday) == 2                     # the late ride is Monday for her
+    assert monday['date'].dt.day.tolist() == [26, 26]
+    assert db.period_coverage("Ana", "2026-10-26", "2026-10-26")['rides'] == 2
+    history = db.get_user_tss_history("Ana")
+    assert history[0]['date'] == "2026-10-26T00:30:00"                # training-load days are hers too
+    assert db.get_user_rides("Ana")[-1]['start_local'] == "2026-10-26T00:30:00"
+
+
+def test_other_zones_and_the_computer_default(path):
+    db.init_db()
+    db.save_user("Ana", 250, 170, 70.0)
+    _ride(db, "Ana", "2026-10-25T22:30:00+00:00", "x")
+    assert len(db.get_ride_stats("Ana", "2026-10-25", "2026-10-25")) == 1          # BIKETOOLS_TZ=UTC in tests
+    db.set_user_timezone("Ana", "Pacific/Auckland")                                  # already the 26th there
+    assert len(db.get_ride_stats("Ana", "2026-10-25", "2026-10-25")) == 0
+    db.set_user_timezone("Ana", "Not/AZone")                                         # unknown: back to the default
+    assert db.get_user_data("Ana")['timezone'] is None
+
+
+def test_migration_normalizes_old_date_formats(path):
+    db.init_db()
+    db.save_user("Ana", 250, 170, 70.0)
+    _ride(db, "Ana", "2026-10-01T07:00:00+00:00", "old")
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE rides SET date_time = '2026-10-01T09:00:00+02:00'")     # as an older version stored it
+    conn.execute("UPDATE power_records SET date_time = '2026-10-01T07:00:00'")
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+    db.init_db(force=True)
+    assert _scalar(path, "SELECT date_time FROM rides") == "2026-10-01T07:00:00+00:00"
+    assert _scalar(path, "SELECT date_time FROM power_records") == "2026-10-01T07:00:00+00:00"
+
+
+def test_new_indexes_exist(path):
+    db.init_db()
+    names = {r for r in (sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE type = 'index'"))}
+    names = {n[0] for n in names}
+    assert {"idx_power_records_user_dur", "idx_power_records_kj_user", "idx_planned_sessions_user_date",
+            "idx_rides_user_hash"} <= names
+
+
+def test_delete_user_takes_a_backup_first(path):
+    import glob
+    db.init_db()
+    db.save_user("Ana", 250, 170, 70.0)
+    db.delete_user("Ana")
+    assert len(glob.glob(str(path.parent / "backups" / "*before-delete-user.db"))) == 1
+    assert db.get_user_data("Ana") is None
