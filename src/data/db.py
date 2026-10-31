@@ -7,6 +7,7 @@ import hashlib
 import re
 import secrets
 import time
+from contextlib import contextmanager
 
 from src.analysis.dates import parse_utc
 
@@ -20,253 +21,376 @@ def _connect():
     """
     Every connection goes through here. SQLite only enforces foreign keys (and so
     ON DELETE CASCADE) when asked to, per connection; without this, deleting a user
-    left their rides, records and histograms behind.
+    left their rides, records and histograms behind. synchronous=NORMAL is the safe, faster
+    setting for WAL (a crash can lose the last commit, never corrupt the file).
     """
     conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
+
+
+@contextmanager
+def connect(row_factory=None):
+    """
+    `with connect() as conn:` commits when the block ends, rolls back when it raises, and always closes,
+    so an early return or an exception cannot leak a connection or leave a half-written change.
+    """
+    conn = _connect()
+    if row_factory is not None:
+        conn.row_factory = row_factory
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _add_column(c, table, column, definition):
+    """ALTER TABLE ... ADD COLUMN when the column is missing. Any other error is a real one and propagates."""
+    existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _enable_wal():
+    """
+    Write-ahead logging: readers no longer block the writer (the background weekly e-mail writes while the
+    page reads). It needs shared memory, which network and some synced/mounted drives lack: when SQLite
+    stays on its default journal there, that is fine, the app just works as before.
+    """
+    conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
+    try:
+        return conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+
+
+# --- numbered migrations -------------------------------------------------------------------
+# The schema version lives in PRAGMA user_version. Each migration runs once, in order, in its own transaction
+# (with a backup first), and the version moves up only when it succeeded: a failure stops the app start with
+# the real error instead of being swallowed. Add new migrations at the END; never edit one that has shipped.
+
+def _migration_per_user_file_hash(conn):
+    """
+    rides.file_hash was UNIQUE across all users, so a second rider could not save a file another rider had
+    (a club ride, say). Duplicates are now detected per rider: UNIQUE(user_id, file_hash). SQLite cannot drop
+    a column constraint, so the table is rebuilt the way the SQLite documentation prescribes.
+    """
+    import re
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rides'").fetchone()
+    if row and 'file_hash TEXT UNIQUE' in row[0]:
+        indexes = [r[0] for r in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'rides' AND sql IS NOT NULL")]
+        cols = ", ".join(f'"{r[1]}"' for r in conn.execute("PRAGMA table_info(rides)"))
+        seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'rides'").fetchone()
+        new_sql = re.sub(r'^CREATE TABLE\s+"?rides"?', 'CREATE TABLE rides_new', row[0].replace(
+            'file_hash TEXT UNIQUE', 'file_hash TEXT'), count=1)
+        conn.execute(new_sql)
+        conn.execute(f"INSERT INTO rides_new ({cols}) SELECT {cols} FROM rides")
+        conn.execute("DROP TABLE rides")
+        conn.execute("ALTER TABLE rides_new RENAME TO rides")
+        for sql in indexes:
+            conn.execute(sql)
+        if seq:
+            conn.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'rides'", (seq[0],))
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_hash ON rides(user_id, file_hash)")
+
+
+MIGRATIONS = [
+    (1, _migration_per_user_file_hash),
+]
+
+
+def schema_version():
+    conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def run_migrations():
+    """Applies the migrations newer than the database's user_version. Returns the versions applied."""
+    done = []
+    current = schema_version()
+    pending = [(v, fn) for v, fn in MIGRATIONS if v > current]
+    if not pending:
+        return done
+    if _has_rides():
+        backup_db("before-migration")
+    for version, fn in pending:
+        # Rebuilding a table needs foreign keys off (changing it is impossible inside a transaction), so
+        # this connection is not the usual one and manages its own transaction.
+        conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S, isolation_level=None)
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                fn(conn)
+                broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+                if broken:
+                    raise sqlite3.IntegrityError(f"migration {version} left {len(broken)} broken foreign keys")
+                conn.execute(f"PRAGMA user_version = {int(version)}")
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        finally:
+            conn.close()
+        done.append(version)
+    return done
+
+
+def _has_rides():
+    conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
+    try:
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'rides'").fetchone() is not None and \
+            conn.execute("SELECT 1 FROM rides LIMIT 1").fetchone() is not None
+    finally:
+        conn.close()
+
 
 def migrate_db():
     """
     Adds new columns (cp, w_prime) to the users table if they don't exist.
     Run this once safely; it catches errors if columns already exist.
     """
-    conn = _connect()
-    c = conn.cursor()
+    with connect() as conn:
+        c = conn.cursor()
     
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN cp INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass # Column likely exists already
+        _add_column(c, 'users', 'cp', 'INTEGER DEFAULT 0')
 
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN w_prime REAL DEFAULT 20000")
-    except sqlite3.OperationalError:
-        pass
+        _add_column(c, 'users', 'w_prime', 'REAL DEFAULT 20000')
 
-    # 1 = FTP / LTHR were left empty and follow the rider's data (see src/data/thresholds.py)
-    for col in ("ftp_auto", "lthr_auto"):
-        try:
-            c.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+        # 1 = FTP / LTHR were left empty and follow the rider's data (see src/data/thresholds.py)
+        for col in ("ftp_auto", "lthr_auto"):
+            _add_column(c, 'users', col, 'INTEGER DEFAULT 0')
 
-    try:
-        c.execute("ALTER TABLE rides ADD COLUMN strava_activity_id INTEGER")
-    except sqlite3.OperationalError:
-        pass
-    # Phase 1 per-ride metrics. metrics_version marks rides whose stored
-    # metrics predate the current calculation (0 = legacy) so they can be
-    # recomputed from their stored files.
-    for col, typ in [("duration_s", "INTEGER"), ("moving_s", "INTEGER"), ("kj", "REAL"),
-                     ("ftp_at_ride", "INTEGER"), ("lthr_at_ride", "INTEGER"),
-                     ("vi", "REAL"), ("ef", "REAL"), ("decoupling_pct", "REAL"),
-                     ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0"),
-                     ("hrr60_bpm", "REAL"), ("hrr_efforts", "INTEGER"),
-                     ("hr20_bpm", "REAL")]:          # best 20-min mean HR; NULL = not computed yet, 0 = no HR data
-        try:
-            c.execute(f"ALTER TABLE rides ADD COLUMN {col} {typ}")
-        except sqlite3.OperationalError:
-            pass
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS ride_zones (
-            ride_id INTEGER NOT NULL,
-            kind TEXT NOT NULL,          -- 'power' or 'hr'
-            zone TEXT NOT NULL,
-            seconds INTEGER NOT NULL,
-            PRIMARY KEY (ride_id, kind, zone),
-            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
-        )
-    ''')
+        _add_column(c, 'rides', 'strava_activity_id', 'INTEGER')
+        # Phase 1 per-ride metrics. metrics_version marks rides whose stored
+        # metrics predate the current calculation (0 = legacy) so they can be
+        # recomputed from their stored files.
+        for col, typ in [("duration_s", "INTEGER"), ("moving_s", "INTEGER"), ("kj", "REAL"),
+                         ("ftp_at_ride", "INTEGER"), ("lthr_at_ride", "INTEGER"),
+                         ("vi", "REAL"), ("ef", "REAL"), ("decoupling_pct", "REAL"),
+                         ("tss_source", "TEXT"), ("metrics_version", "INTEGER DEFAULT 0"),
+                         ("hrr60_bpm", "REAL"), ("hrr_efforts", "INTEGER"),
+                         ("hr20_bpm", "REAL")]:          # best 20-min mean HR; NULL = not computed yet, 0 = no HR data
+            _add_column(c, 'rides', col, typ)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ride_zones (
+                ride_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,          -- 'power' or 'hr'
+                zone TEXT NOT NULL,
+                seconds INTEGER NOT NULL,
+                PRIMARY KEY (ride_id, kind, zone),
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
 
-    # Joint distributions per ride (sparse 2D histograms, seconds per cell)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS ride_hist (
-            ride_id INTEGER NOT NULL,
-            pair TEXT NOT NULL,          -- 'p_hr' (power x HR) or 'p_cad' (power x cadence)
-            x INTEGER NOT NULL,          -- lower edge of the power bin (W)
-            y INTEGER NOT NULL,          -- lower edge of the HR (bpm) / cadence (rpm) bin
-            seconds INTEGER NOT NULL,
-            PRIMARY KEY (ride_id, pair, x, y),
-            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
-        )
-    ''')
-    # Planned sessions (TSS) for the PMC forecast on the Training page
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS planned_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            date TEXT NOT NULL,          -- YYYY-MM-DD
-            tss REAL NOT NULL,
-            note TEXT,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    ''')
+        # Joint distributions per ride (sparse 2D histograms, seconds per cell)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ride_hist (
+                ride_id INTEGER NOT NULL,
+                pair TEXT NOT NULL,          -- 'p_hr' (power x HR) or 'p_cad' (power x cadence)
+                x INTEGER NOT NULL,          -- lower edge of the power bin (W)
+                y INTEGER NOT NULL,          -- lower edge of the HR (bpm) / cadence (rpm) bin
+                seconds INTEGER NOT NULL,
+                PRIMARY KEY (ride_id, pair, x, y),
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
+        # Planned sessions (TSS) for the PMC forecast on the Training page
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS planned_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,          -- YYYY-MM-DD
+                tss REAL NOT NULL,
+                note TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
 
-    # Mean-maximal power of the part of each ride after `kj` of work (durability)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS power_records_kj (
-            ride_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            kj INTEGER NOT NULL,
-            duration_sec INTEGER NOT NULL,
-            watts REAL NOT NULL,
-            date_time TEXT,
-            PRIMARY KEY (ride_id, kj, duration_sec),
-            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
-        )
-    ''')
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN crank_mm REAL DEFAULT 172.5")
-    except sqlite3.OperationalError:
-        pass
-    try:   # structured sessions keep their interval blocks (JSON); quick entries leave it NULL
-        c.execute("ALTER TABLE planned_sessions ADD COLUMN blocks TEXT")
-    except sqlite3.OperationalError:
-        pass
+        # Mean-maximal power of the part of each ride after `kj` of work (durability)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS power_records_kj (
+                ride_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                kj INTEGER NOT NULL,
+                duration_sec INTEGER NOT NULL,
+                watts REAL NOT NULL,
+                date_time TEXT,
+                PRIMARY KEY (ride_id, kj, duration_sec),
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
+        _add_column(c, 'users', 'crank_mm', 'REAL DEFAULT 172.5')
+        _add_column(c, 'planned_sessions', 'blocks', 'TEXT')
 
-    # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
-    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
-                 ON rides(user_id, strava_activity_id)""")
+        # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
+        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
+                     ON rides(user_id, strava_activity_id)""")
 
-    # rides.file_content (the original ride file) sits in the middle of each row, so a
-    # query that needs a column stored after it has to read through the whole file. These
-    # covering indexes answer the per-rerun queries (TSS history, "needs update" count,
-    # period filters) from the index alone.
-    c.execute("""CREATE INDEX IF NOT EXISTS idx_rides_user_date
-                 ON rides(user_id, date_time, tss, metrics_version)""")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_power_records_ride ON power_records(ride_id)")
+        # rides.file_content (the original ride file) sits in the middle of each row, so a
+        # query that needs a column stored after it has to read through the whole file. These
+        # covering indexes answer the per-rerun queries (TSS history, "needs update" count,
+        # period filters) from the index alone.
+        c.execute("""CREATE INDEX IF NOT EXISTS idx_rides_user_date
+                     ON rides(user_id, date_time, tss, metrics_version)""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_power_records_ride ON power_records(ride_id)")
 
-    # Original ride files live in their own table, compressed, so ride rows stay small.
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS ride_files (
-            ride_id INTEGER PRIMARY KEY,
-            codec TEXT NOT NULL,         -- 'zlib' or 'raw'
-            content BLOB NOT NULL,
-            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
-        )
-    ''')
+        # Original ride files live in their own table, compressed, so ride rows stay small.
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS ride_files (
+                ride_id INTEGER PRIMARY KEY,
+                codec TEXT NOT NULL,         -- 'zlib' or 'raw'
+                content BLOB NOT NULL,
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS strava_auth (
-            user_id INTEGER PRIMARY KEY,
-            athlete_id INTEGER,
-            athlete_name TEXT,
-            access_token TEXT NOT NULL,
-            refresh_token TEXT NOT NULL,
-            expires_at INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS wahoo_auth (
-            user_id INTEGER PRIMARY KEY,
-            wahoo_user_id INTEGER,
-            wahoo_name TEXT,
-            access_token TEXT NOT NULL,
-            refresh_token TEXT NOT NULL,
-            expires_at INTEGER NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS app_credentials (
-            provider TEXT PRIMARY KEY,           -- 'strava' | 'wahoo' | 'polar'
-            client_id TEXT NOT NULL,
-            client_secret TEXT NOT NULL,
-            redirect_uri TEXT,
-            timezone TEXT
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS polar_auth (
-            user_id INTEGER PRIMARY KEY,
-            polar_user_id TEXT,
-            access_token TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS wahoo_sent (
-            session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
-            plan_id INTEGER NOT NULL,
-            workout_id INTEGER NOT NULL,
-            starts TEXT NOT NULL,                -- UTC ISO sent to Wahoo
-            sent_at TEXT NOT NULL,
-            FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS oauth_states (
-            state TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            created_at INTEGER NOT NULL
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS strava_auth (
+                user_id INTEGER PRIMARY KEY,
+                athlete_id INTEGER,
+                athlete_name TEXT,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS wahoo_auth (
+                user_id INTEGER PRIMARY KEY,
+                wahoo_user_id INTEGER,
+                wahoo_name TEXT,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS app_credentials (
+                provider TEXT PRIMARY KEY,           -- 'strava' | 'wahoo' | 'polar'
+                client_id TEXT NOT NULL,
+                client_secret TEXT NOT NULL,
+                redirect_uri TEXT,
+                timezone TEXT
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS polar_auth (
+                user_id INTEGER PRIMARY KEY,
+                polar_user_id TEXT,
+                access_token TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS wahoo_sent (
+                session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
+                plan_id INTEGER NOT NULL,
+                workout_id INTEGER NOT NULL,
+                starts TEXT NOT NULL,                -- UTC ISO sent to Wahoo
+                sent_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS oauth_states (
+                state TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        ''')
 
-    conn.commit()
-    conn.close()
 
-def init_db():
+_init_lock = threading.Lock()
+_initialised = set()
+
+
+def init_db(force=False):
+    """
+    Creates the tables, applies the numbered migrations and switches on WAL. Streamlit runs the script (and so
+    this call) on every interaction, so after the first success per database file it returns at once;
+    force=True does the work again.
+    """
+    with _init_lock:
+        if not force and DB_FILE in _initialised and os.path.exists(DB_FILE):
+            return
+        if _init_db():
+            _initialised.add(DB_FILE)           # not when the file migration was postponed: retry next run
+
+
+def _init_db():
     """Initializes the database with users, rides, and power_records tables."""
-    conn = _connect()
-    c = conn.cursor()
+    _enable_wal()
+    with connect() as conn:
+        c = conn.cursor()
     
-    # Users Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            ftp INTEGER DEFAULT 200,
-            lthr INTEGER DEFAULT 170,
-            weight REAL DEFAULT 70.0,
-            height REAL DEFAULT 175.0,
-            cp INTEGER DEFAULT 0,
-            w_prime REAL DEFAULT 20000
-        )
-    ''')
+        # Users Table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                ftp INTEGER DEFAULT 200,
+                lthr INTEGER DEFAULT 170,
+                weight REAL DEFAULT 70.0,
+                height REAL DEFAULT 175.0,
+                cp INTEGER DEFAULT 0,
+                w_prime REAL DEFAULT 20000
+            )
+        ''')
 
-    # Rides Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS rides (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            filename TEXT,
-            file_hash TEXT UNIQUE,
-            file_content BLOB,
-            date_time TEXT,
-            distance_km REAL,
-            elevation_m REAL,
-            avg_speed_kph REAL,
-            norm_power INTEGER,
-            avg_power INTEGER,
-            tss INTEGER,
-            if_factor REAL,
-            avg_hr INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    ''')
+        # Rides Table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS rides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                filename TEXT,
+                file_hash TEXT,
+                file_content BLOB,
+                date_time TEXT,
+                distance_km REAL,
+                elevation_m REAL,
+                avg_speed_kph REAL,
+                norm_power INTEGER,
+                avg_power INTEGER,
+                tss INTEGER,
+                if_factor REAL,
+                avg_hr INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
 
-    # Power Records Table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS power_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            ride_id INTEGER,
-            duration_sec INTEGER,
-            watts REAL,
-            date_time TEXT,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
-        )
-    ''')
+        # Power Records Table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS power_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                ride_id INTEGER,
+                duration_sec INTEGER,
+                watts REAL,
+                date_time TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
     
-    conn.commit()
-    conn.close()
     
     # Run migration to ensure existing databases get the new columns
     migrate_db()
-    _move_ride_files()
+    run_migrations()
+    return _move_ride_files() is not None
 
 DEFAULT_FTP, DEFAULT_LTHR = 200, 170
 DEFAULT_W_PRIME = 20000          # joules, when the rider has not given theirs
@@ -276,56 +400,46 @@ def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0, w_prime=None
     ftp / lthr None: stored as the defaults but flagged to be estimated from the rider's rides.
     w_prime (joules) None: DEFAULT_W_PRIME; a ride that uses more than it raises the figure (see the Power section).
     """
-    conn = _connect()
-    c = conn.cursor()
     try:
-        c.execute("""INSERT INTO users (name, ftp, lthr, weight, height, ftp_auto, lthr_auto, w_prime)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (name, DEFAULT_FTP if ftp is None else ftp, DEFAULT_LTHR if lthr is None else lthr,
-                   weight, height, int(ftp is None), int(lthr is None),
-                   DEFAULT_W_PRIME if not w_prime else float(w_prime)))
-        conn.commit()
+        with connect() as conn:
+            conn.execute("""INSERT INTO users (name, ftp, lthr, weight, height, ftp_auto, lthr_auto, w_prime)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (name, DEFAULT_FTP if ftp is None else ftp, DEFAULT_LTHR if lthr is None else lthr,
+                          weight, height, int(ftp is None), int(lthr is None),
+                          DEFAULT_W_PRIME if not w_prime else float(w_prime)))
         return True, "User saved successfully!"
     except sqlite3.IntegrityError:
         return False, "User already exists."
     except Exception as e:
         return False, f"Database Error: {e}"
-    finally:
-        conn.close()
 
 def set_user_thresholds(user_name, ftp=None, lthr=None, auto_ftp=None, auto_lthr=None):
     """
     Sets FTP and/or LTHR by hand (which stops them following the data), or switches them back to
     "estimate from my rides" with auto_ftp / auto_lthr=True (the value stays until the next estimate).
     """
-    conn = _connect()
-    if ftp is not None:
-        conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
-    if lthr is not None:
-        conn.execute("UPDATE users SET lthr = ?, lthr_auto = 0 WHERE name = ?", (int(round(lthr)), user_name))
-    if auto_ftp:
-        conn.execute("UPDATE users SET ftp_auto = 1 WHERE name = ?", (user_name,))
-    if auto_lthr:
-        conn.execute("UPDATE users SET lthr_auto = 1 WHERE name = ?", (user_name,))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        if ftp is not None:
+            conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
+        if lthr is not None:
+            conn.execute("UPDATE users SET lthr = ?, lthr_auto = 0 WHERE name = ?", (int(round(lthr)), user_name))
+        if auto_ftp:
+            conn.execute("UPDATE users SET ftp_auto = 1 WHERE name = ?", (user_name,))
+        if auto_lthr:
+            conn.execute("UPDATE users SET lthr_auto = 1 WHERE name = ?", (user_name,))
 
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
-    conn = _connect()
-    conn.execute("UPDATE users SET w_prime = ? WHERE name = ?", (float(w_prime), user_name))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("UPDATE users SET w_prime = ? WHERE name = ?", (float(w_prime), user_name))
 
 def set_auto_thresholds(user_name, ftp=None, lthr=None):
     """Stores an estimate without turning the 'estimated' flag off."""
-    conn = _connect()
-    if ftp is not None:
-        conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
-    if lthr is not None:
-        conn.execute("UPDATE users SET lthr = ? WHERE name = ?", (int(round(lthr)), user_name))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        if ftp is not None:
+            conn.execute("UPDATE users SET ftp = ? WHERE name = ?", (int(round(ftp)), user_name))
+        if lthr is not None:
+            conn.execute("UPDATE users SET lthr = ? WHERE name = ?", (int(round(lthr)), user_name))
 
 def get_hr20(user_name, start=None):
     """Best-20-minute mean HR of each ride (> 0 only), newest rides last: list of (date, bpm)."""
@@ -333,10 +447,9 @@ def get_hr20(user_name, start=None):
     if not user:
         return []
     where, params = _date_filter(start, None)
-    conn = _connect()
-    rows = conn.execute(f"""SELECT date_time, hr20_bpm FROM rides r WHERE user_id = ? AND hr20_bpm > 0{where}
-                            ORDER BY date_time""", [user['id'], *params]).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute(f"""SELECT date_time, hr20_bpm FROM rides r WHERE user_id = ? AND hr20_bpm > 0{where}
+                                ORDER BY date_time""", [user['id'], *params]).fetchall()
     return [(r[0], r[1]) for r in rows]
 
 def get_rides_without_hr20(user_name, limit=25):
@@ -344,48 +457,41 @@ def get_rides_without_hr20(user_name, limit=25):
     user = get_user_data(user_name)
     if not user:
         return []
-    conn = _connect()
-    rows = conn.execute("""SELECT id, filename FROM rides WHERE user_id = ? AND hr20_bpm IS NULL
-                           ORDER BY date_time DESC LIMIT ?""", (user['id'], limit)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("""SELECT id, filename FROM rides WHERE user_id = ? AND hr20_bpm IS NULL
+                               ORDER BY date_time DESC LIMIT ?""", (user['id'], limit)).fetchall()
     return [(r[0], r[1]) for r in rows]
 
 def set_ride_hr20(ride_id, bpm):
-    conn = _connect()
-    conn.execute("UPDATE rides SET hr20_bpm = ? WHERE id = ?", (float(bpm or 0.0), ride_id))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("UPDATE rides SET hr20_bpm = ? WHERE id = ?", (float(bpm or 0.0), ride_id))
 
 def update_user_ftp(user_name, ftp):
     """Sets the FTP only. Rides already saved keep the FTP they were scored with."""
-    conn = _connect()
-    conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("UPDATE users SET ftp = ?, ftp_auto = 0 WHERE name = ?", (int(round(ftp)), user_name))
 
 def update_user_physics(user_name, cp, w_prime, update_ftp=False):
     """
     Updates the user's physiological metrics.
     Optionally updates FTP to match CP.
     """
-    conn = _connect()
-    c = conn.cursor()
+    with connect() as conn:
+        c = conn.cursor()
     
-    if update_ftp:
-        c.execute('''
-            UPDATE users 
-            SET cp = ?, w_prime = ?, ftp = ?, ftp_auto = 0 
-            WHERE name = ?
-        ''', (cp, w_prime, cp, user_name))
-    else:
-        c.execute('''
-            UPDATE users 
-            SET cp = ?, w_prime = ? 
-            WHERE name = ?
-        ''', (cp, w_prime, user_name))
+        if update_ftp:
+            c.execute('''
+                UPDATE users 
+                SET cp = ?, w_prime = ?, ftp = ?, ftp_auto = 0 
+                WHERE name = ?
+            ''', (cp, w_prime, cp, user_name))
+        else:
+            c.execute('''
+                UPDATE users 
+                SET cp = ?, w_prime = ? 
+                WHERE name = ?
+            ''', (cp, w_prime, user_name))
         
-    conn.commit()
-    conn.close()
 
 BACKUP_KEEP = 3
 
@@ -438,30 +544,26 @@ def data_stamp():
     return tuple(stamp)
 
 def get_all_users():
-    conn = _connect()
-    c = conn.cursor()
-    c.execute("SELECT name FROM users")
-    users = [row[0] for row in c.fetchall()]
-    conn.close()
+    with connect() as conn:
+        c = conn.cursor()
+        c.execute("SELECT name FROM users")
+        users = [row[0] for row in c.fetchall()]
     return users
 
 def get_user_data(name):
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE name = ?", (name,))
-    row = c.fetchone()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE name = ?", (name,))
+        row = c.fetchone()
     if row:
         return dict(row)
     return None
 
 def delete_user(name):
-    conn = _connect()
-    c = conn.cursor()
-    c.execute("DELETE FROM users WHERE name = ?", (name,))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM users WHERE name = ?", (name,))
 
 def strava_id_from_filename(filename):
     """'strava_123.json' -> 123 (rides imported through the Strava API)."""
@@ -537,7 +639,7 @@ def _move_ride_files(batch=10):
             return _do_move_ride_files(batch)
         except sqlite3.OperationalError as e:
             warnings.warn(f"Ride-file migration postponed ({e}); it will be retried on the next run.")
-            return 0
+            return None
 
 def _do_move_ride_files(batch):
     """
@@ -642,29 +744,27 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
 
     file_hash = hashlib.md5(file_content).hexdigest()
     
-    conn = _connect()
-    c = conn.cursor()
-    
     try:
-        # 1. Insert Ride Metadata
-        cols = ['user_id', 'filename', 'file_hash', 'date_time',
-                'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
-                'tss', 'if_factor', 'avg_hr', 'strava_activity_id'] + _METRIC_COLUMNS
-        vals = [user['id'], filename, file_hash, metadata.get('date'),
-                metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
-                metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
-                metadata.get('if', 0), metadata.get('avg_hr', 0),
-                metadata.get('strava_activity_id')] + [
-                metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
-        c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
-        ride_id = c.lastrowid
-        codec, blob = _pack(file_content)
-        c.execute("INSERT INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)", (ride_id, codec, blob))
+        with connect() as conn:
+            c = conn.cursor()
+            # 1. Insert Ride Metadata
+            cols = ['user_id', 'filename', 'file_hash', 'date_time',
+                    'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
+                    'tss', 'if_factor', 'avg_hr', 'strava_activity_id'] + _METRIC_COLUMNS
+            vals = [user['id'], filename, file_hash, metadata.get('date'),
+                    metadata.get('dist', 0), metadata.get('ele', 0), metadata.get('speed', 0),
+                    metadata.get('np', 0), metadata.get('avg_p', 0), metadata.get('tss', 0),
+                    metadata.get('if', 0), metadata.get('avg_hr', 0),
+                    metadata.get('strava_activity_id')] + [
+                    metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
+            c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+            ride_id = c.lastrowid
+            codec, blob = _pack(file_content)
+            c.execute("INSERT INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)", (ride_id, codec, blob))
 
-        # 2. Power records (curve) and time in zones
-        _insert_children(c, user['id'], ride_id, metadata, power_curve_dict)
+            # 2. Power records (curve) and time in zones
+            _insert_children(c, user['id'], ride_id, metadata, power_curve_dict)
             
-        conn.commit()
         return True, "Ride saved successfully!"
         
     except sqlite3.IntegrityError:
@@ -673,35 +773,31 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     except Exception as e:
         return False, f"Database Error: {e}"
         
-    finally:
-        conn.close()
 
 def get_user_rides(user_name):
     user = get_user_data(user_name)
     if not user:
         return []
     
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute('''
-        SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss,
-               moving_s, tss_source, vi, ef, decoupling_pct, kj, metrics_version
-        FROM rides 
-        WHERE user_id = ? 
-        ORDER BY date_time DESC
-    ''', (user['id'],))
-    rows = c.fetchall()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute('''
+            SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss,
+                   moving_s, tss_source, vi, ef, decoupling_pct, kj, metrics_version
+            FROM rides 
+            WHERE user_id = ? 
+            ORDER BY date_time DESC
+        ''', (user['id'],))
+        rows = c.fetchall()
     return [dict(row) for row in rows]
 
 def get_ride_file(ride_id):
     """(filename, original file bytes) of a stored ride, or (None, None)."""
-    conn = _connect()
-    row = conn.execute("""SELECT r.filename, f.codec, f.content, r.file_content
-                          FROM rides r LEFT JOIN ride_files f ON f.ride_id = r.id
-                          WHERE r.id = ?""", (ride_id,)).fetchone()
-    conn.close()
+    with connect() as conn:
+        row = conn.execute("""SELECT r.filename, f.codec, f.content, r.file_content
+                              FROM rides r LEFT JOIN ride_files f ON f.ride_id = r.id
+                              WHERE r.id = ?""", (ride_id,)).fetchone()
     if not row:
         return None, None
     filename, codec, blob, legacy = row
@@ -714,20 +810,19 @@ def get_user_best_power(user_name):
     if not user:
         return {}
     
-    conn = _connect()
-    c = conn.cursor()
+    with connect() as conn:
+        c = conn.cursor()
     
-    # Query: Find the maximum watts for each duration across ALL rides for this user
-    c.execute('''
-        SELECT duration_sec, MAX(watts) 
-        FROM power_records 
-        WHERE user_id = ? 
-        GROUP BY duration_sec
-        ORDER BY duration_sec ASC
-    ''', (user['id'],))
+        # Query: Find the maximum watts for each duration across ALL rides for this user
+        c.execute('''
+            SELECT duration_sec, MAX(watts) 
+            FROM power_records 
+            WHERE user_id = ? 
+            GROUP BY duration_sec
+            ORDER BY duration_sec ASC
+        ''', (user['id'],))
     
-    rows = c.fetchall()
-    conn.close()
+        rows = c.fetchall()
     
     # Convert to dict {duration: watts}
     return {row[0]: row[1] for row in rows}
@@ -741,19 +836,18 @@ def get_user_tss_history(user_name):
     if not user:
         return []
     
-    conn = _connect()
-    c = conn.cursor()
+    with connect() as conn:
+        c = conn.cursor()
     
-    # Just select the columns we need
-    c.execute('''
-        SELECT date_time, tss 
-        FROM rides 
-        WHERE user_id = ? 
-        ORDER BY date_time ASC
-    ''', (user['id'],))
+        # Just select the columns we need
+        c.execute('''
+            SELECT date_time, tss 
+            FROM rides 
+            WHERE user_id = ? 
+            ORDER BY date_time ASC
+        ''', (user['id'],))
     
-    rows = c.fetchall()
-    conn.close()
+        rows = c.fetchall()
     
     # Return raw list of dicts
     return [{'date': row[0], 'tss': row[1]} for row in rows]
@@ -770,10 +864,9 @@ def count_rides_needing_update(user_name):
     user = get_user_data(user_name)
     if not user:
         return 0
-    conn = _connect()
-    n = conn.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_NEEDS_UPDATE_SQL}",
-                     (user['id'], METRICS_VERSION)).fetchone()[0]
-    conn.close()
+    with connect() as conn:
+        n = conn.execute(f"SELECT COUNT(*) FROM rides WHERE user_id = ? AND {_NEEDS_UPDATE_SQL}",
+                         (user['id'], METRICS_VERSION)).fetchone()[0]
     return n
 
 def get_rides_for_recompute(user_name, all_rides=False):
@@ -781,46 +874,42 @@ def get_rides_for_recompute(user_name, all_rides=False):
     user = get_user_data(user_name)
     if not user:
         return []
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
-    params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
-    rows = conn.execute(f"""SELECT id, filename, date_time, norm_power, if_factor,
-                                   ftp_at_ride, lthr_at_ride
-                            FROM rides WHERE {where} ORDER BY date_time""", params).fetchall()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
+        params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
+        rows = conn.execute(f"""SELECT id, filename, date_time, norm_power, if_factor,
+                                       ftp_at_ride, lthr_at_ride
+                                FROM rides WHERE {where} ORDER BY date_time""", params).fetchall()
     return [dict(r) for r in rows]
 
 def update_ride_metrics(ride_id, metadata, power_curve_dict):
     """Overwrites a ride's computed fields, power records and zone times."""
-    conn = _connect()
-    c = conn.cursor()
-    user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
-    cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
-            'avg_power', 'tss', 'if_factor', 'avg_hr'] + _METRIC_COLUMNS
-    vals = [metadata.get('date'), metadata.get('dist', 0), metadata.get('ele', 0),
-            metadata.get('speed', 0), metadata.get('np', 0), metadata.get('avg_p', 0),
-            metadata.get('tss', 0), metadata.get('if', 0), metadata.get('avg_hr', 0)] + [
-            metadata.get(k) for k in _METRIC_COLUMNS]
-    c.execute(f"UPDATE rides SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?", vals + [ride_id])
-    c.execute("DELETE FROM power_records WHERE ride_id = ?", (ride_id,))
-    c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
-    c.execute("DELETE FROM ride_hist WHERE ride_id = ?", (ride_id,))
-    c.execute("DELETE FROM power_records_kj WHERE ride_id = ?", (ride_id,))
-    _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        c = conn.cursor()
+        user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
+        cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
+                'avg_power', 'tss', 'if_factor', 'avg_hr'] + _METRIC_COLUMNS
+        vals = [metadata.get('date'), metadata.get('dist', 0), metadata.get('ele', 0),
+                metadata.get('speed', 0), metadata.get('np', 0), metadata.get('avg_p', 0),
+                metadata.get('tss', 0), metadata.get('if', 0), metadata.get('avg_hr', 0)] + [
+                metadata.get(k) for k in _METRIC_COLUMNS]
+        c.execute(f"UPDATE rides SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?", vals + [ride_id])
+        c.execute("DELETE FROM power_records WHERE ride_id = ?", (ride_id,))
+        c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
+        c.execute("DELETE FROM ride_hist WHERE ride_id = ?", (ride_id,))
+        c.execute("DELETE FROM power_records_kj WHERE ride_id = ?", (ride_id,))
+        _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
 
 def get_ride_zones(ride_ids, kind):
     """{zone: total seconds} summed over the given rides."""
     if not ride_ids:
         return {}
-    conn = _connect()
-    q = ",".join("?" * len(ride_ids))
-    rows = conn.execute(f"""SELECT zone, SUM(seconds) FROM ride_zones
-                            WHERE kind = ? AND ride_id IN ({q}) GROUP BY zone ORDER BY zone""",
-                        (kind, *ride_ids)).fetchall()
-    conn.close()
+    with connect() as conn:
+        q = ",".join("?" * len(ride_ids))
+        rows = conn.execute(f"""SELECT zone, SUM(seconds) FROM ride_zones
+                                WHERE kind = ? AND ride_id IN ({q}) GROUP BY zone ORDER BY zone""",
+                            (kind, *ride_ids)).fetchall()
     return {z: s for z, s in rows}
 
 
@@ -833,40 +922,35 @@ def save_strava_auth(user_name, auth):
     user = get_user_data(user_name)
     if not user:
         return False
-    conn = _connect()
-    conn.execute('''
-        INSERT INTO strava_auth (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            athlete_id = COALESCE(excluded.athlete_id, strava_auth.athlete_id),
-            athlete_name = COALESCE(excluded.athlete_name, strava_auth.athlete_name),
-            access_token = excluded.access_token,
-            refresh_token = excluded.refresh_token,
-            expires_at = excluded.expires_at
-    ''', (user['id'], auth.get('athlete_id'), auth.get('athlete_name'),
-          auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute('''
+            INSERT INTO strava_auth (user_id, athlete_id, athlete_name, access_token, refresh_token, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                athlete_id = COALESCE(excluded.athlete_id, strava_auth.athlete_id),
+                athlete_name = COALESCE(excluded.athlete_name, strava_auth.athlete_name),
+                access_token = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                expires_at = excluded.expires_at
+        ''', (user['id'], auth.get('athlete_id'), auth.get('athlete_name'),
+              auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
     return True
 
 def get_strava_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return dict(row) if row else None
 
 def delete_strava_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return
-    conn = _connect()
-    conn.execute("DELETE FROM strava_auth WHERE user_id = ?", (user['id'],))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM strava_auth WHERE user_id = ?", (user['id'],))
 
 # --- Wahoo authorization (same storage rules; Wahoo refresh tokens are single-use) ---
 
@@ -874,66 +958,56 @@ def save_wahoo_auth(user_name, auth):
     user = get_user_data(user_name)
     if not user:
         return False
-    conn = _connect()
-    conn.execute('''
-        INSERT INTO wahoo_auth (user_id, wahoo_user_id, wahoo_name, access_token, refresh_token, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            wahoo_user_id = COALESCE(excluded.wahoo_user_id, wahoo_auth.wahoo_user_id),
-            wahoo_name = COALESCE(excluded.wahoo_name, wahoo_auth.wahoo_name),
-            access_token = excluded.access_token,
-            refresh_token = excluded.refresh_token,
-            expires_at = excluded.expires_at
-    ''', (user['id'], auth.get('wahoo_user_id'), auth.get('wahoo_name'),
-          auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute('''
+            INSERT INTO wahoo_auth (user_id, wahoo_user_id, wahoo_name, access_token, refresh_token, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                wahoo_user_id = COALESCE(excluded.wahoo_user_id, wahoo_auth.wahoo_user_id),
+                wahoo_name = COALESCE(excluded.wahoo_name, wahoo_auth.wahoo_name),
+                access_token = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                expires_at = excluded.expires_at
+        ''', (user['id'], auth.get('wahoo_user_id'), auth.get('wahoo_name'),
+              auth['access_token'], auth['refresh_token'], int(auth['expires_at'])))
     return True
 
 def get_wahoo_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM wahoo_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM wahoo_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return dict(row) if row else None
 
 def delete_wahoo_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return
-    conn = _connect()
-    conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
 
 # --- API app credentials entered in the app (instead of .streamlit/secrets.toml) ---
 
 def save_app_credentials(provider, client_id, client_secret, redirect_uri=None, timezone=None):
-    conn = _connect()
-    conn.execute('''
-        INSERT INTO app_credentials (provider, client_id, client_secret, redirect_uri, timezone)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(provider) DO UPDATE SET client_id = excluded.client_id, client_secret = excluded.client_secret,
-            redirect_uri = excluded.redirect_uri, timezone = excluded.timezone
-    ''', (provider, client_id.strip(), client_secret.strip(), redirect_uri, timezone))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute('''
+            INSERT INTO app_credentials (provider, client_id, client_secret, redirect_uri, timezone)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(provider) DO UPDATE SET client_id = excluded.client_id, client_secret = excluded.client_secret,
+                redirect_uri = excluded.redirect_uri, timezone = excluded.timezone
+        ''', (provider, client_id.strip(), client_secret.strip(), redirect_uri, timezone))
 
 def get_app_credentials(provider):
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM app_credentials WHERE provider = ?", (provider,)).fetchone()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM app_credentials WHERE provider = ?", (provider,)).fetchone()
     return dict(row) if row else None
 
 def delete_app_credentials(provider):
-    conn = _connect()
-    conn.execute("DELETE FROM app_credentials WHERE provider = ?", (provider,))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM app_credentials WHERE provider = ?", (provider,))
 
 # --- Polar authorization (tokens do not expire; stored like the other providers') ---
 
@@ -941,33 +1015,28 @@ def save_polar_auth(user_name, auth):
     user = get_user_data(user_name)
     if not user:
         return False
-    conn = _connect()
-    conn.execute('''
-        INSERT INTO polar_auth (user_id, polar_user_id, access_token) VALUES (?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET polar_user_id = excluded.polar_user_id, access_token = excluded.access_token
-    ''', (user['id'], auth.get('polar_user_id'), auth['access_token']))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute('''
+            INSERT INTO polar_auth (user_id, polar_user_id, access_token) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET polar_user_id = excluded.polar_user_id, access_token = excluded.access_token
+        ''', (user['id'], auth.get('polar_user_id'), auth['access_token']))
     return True
 
 def get_polar_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT * FROM polar_auth WHERE user_id = ?", (user['id'],)).fetchone()
-    conn.close()
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM polar_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return dict(row) if row else None
 
 def delete_polar_auth(user_name):
     user = get_user_data(user_name)
     if not user:
         return
-    conn = _connect()
-    conn.execute("DELETE FROM polar_auth WHERE user_id = ?", (user['id'],))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM polar_auth WHERE user_id = ?", (user['id'],))
 
 def polar_id_from_filename(filename):
     """'polar_aB3x9.fit' -> 'aB3x9' (rides imported through Polar AccessLink)."""
@@ -978,10 +1047,9 @@ def get_imported_polar_ids(user_name):
     user = get_user_data(user_name)
     if not user:
         return set()
-    conn = _connect()
-    rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\'",
-                        (user['id'],)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\'",
+                            (user['id'],)).fetchall()
     return {i for i in (polar_id_from_filename(r[0]) for r in rows) if i is not None}
 
 def get_wahoo_sent(user_name):
@@ -989,28 +1057,23 @@ def get_wahoo_sent(user_name):
     user = get_user_data(user_name)
     if not user:
         return {}
-    conn = _connect()
-    rows = conn.execute("""SELECT w.session_id, w.plan_id, w.workout_id, w.starts, w.sent_at
-                           FROM wahoo_sent w JOIN planned_sessions p ON p.id = w.session_id
-                           WHERE p.user_id = ?""", (user['id'],)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("""SELECT w.session_id, w.plan_id, w.workout_id, w.starts, w.sent_at
+                               FROM wahoo_sent w JOIN planned_sessions p ON p.id = w.session_id
+                               WHERE p.user_id = ?""", (user['id'],)).fetchall()
     return {r[0]: {'plan_id': r[1], 'workout_id': r[2], 'starts': r[3], 'sent_at': r[4]} for r in rows}
 
 def save_wahoo_sent(session_id, plan_id, workout_id, starts, sent_at):
-    conn = _connect()
-    conn.execute("""INSERT INTO wahoo_sent (session_id, plan_id, workout_id, starts, sent_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(session_id) DO UPDATE SET plan_id = excluded.plan_id,
-                        workout_id = excluded.workout_id, starts = excluded.starts, sent_at = excluded.sent_at""",
-                 (int(session_id), int(plan_id), int(workout_id), starts, sent_at))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("""INSERT INTO wahoo_sent (session_id, plan_id, workout_id, starts, sent_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(session_id) DO UPDATE SET plan_id = excluded.plan_id,
+                            workout_id = excluded.workout_id, starts = excluded.starts, sent_at = excluded.sent_at""",
+                     (int(session_id), int(plan_id), int(workout_id), starts, sent_at))
 
 def delete_wahoo_sent(session_id):
-    conn = _connect()
-    conn.execute("DELETE FROM wahoo_sent WHERE session_id = ?", (int(session_id),))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM wahoo_sent WHERE session_id = ?", (int(session_id),))
 
 def wahoo_id_from_filename(filename):
     """'wahoo_123.fit' -> 123 (rides imported through the Wahoo Cloud API)."""
@@ -1021,10 +1084,9 @@ def get_imported_wahoo_ids(user_name):
     user = get_user_data(user_name)
     if not user:
         return set()
-    conn = _connect()
-    rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'",
-                        (user['id'],)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'",
+                            (user['id'],)).fetchall()
     return {i for i in (wahoo_id_from_filename(r[0]) for r in rows) if i is not None}
 
 def latest_wahoo_ride_date(user_name):
@@ -1032,10 +1094,9 @@ def latest_wahoo_ride_date(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND date_time IS NOT NULL "
-                       "AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'", (user['id'],)).fetchone()
-    conn.close()
+    with connect() as conn:
+        row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND date_time IS NOT NULL "
+                           "AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'", (user['id'],)).fetchone()
     if not row or not row[0]:
         return None
     ts = pd.to_datetime(row[0], errors='coerce', utc=True)
@@ -1054,23 +1115,19 @@ def create_oauth_state(user_name):
         return None
     state = secrets.token_urlsafe(24)
     now = int(time.time())
-    conn = _connect()
-    conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (now - OAUTH_STATE_TTL_S,))
-    conn.execute("INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)",
-                 (state, user['id'], now))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM oauth_states WHERE created_at < ?", (now - OAUTH_STATE_TTL_S,))
+        conn.execute("INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)",
+                     (state, user['id'], now))
     return state
 
 def consume_oauth_state(state):
     """Returns the user name the state was issued for (once), else None."""
     now = int(time.time())
-    conn = _connect()
-    row = conn.execute('''SELECT u.name, s.created_at FROM oauth_states s
-                          JOIN users u ON u.id = s.user_id WHERE s.state = ?''', (state,)).fetchone()
-    conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        row = conn.execute('''SELECT u.name, s.created_at FROM oauth_states s
+                              JOIN users u ON u.id = s.user_id WHERE s.state = ?''', (state,)).fetchone()
+        conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
     if not row or now - row[1] > OAUTH_STATE_TTL_S:
         return None
     return row[0]
@@ -1079,10 +1136,9 @@ def get_imported_strava_ids(user_name):
     user = get_user_data(user_name)
     if not user:
         return set()
-    conn = _connect()
-    rows = conn.execute("SELECT strava_activity_id FROM rides WHERE user_id = ? "
-                        "AND strava_activity_id IS NOT NULL", (user['id'],)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("SELECT strava_activity_id FROM rides WHERE user_id = ? "
+                            "AND strava_activity_id IS NOT NULL", (user['id'],)).fetchall()
     return {r[0] for r in rows}
 
 def latest_strava_ride_date(user_name):
@@ -1090,10 +1146,9 @@ def latest_strava_ride_date(user_name):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND strava_activity_id IS NOT NULL "
-                       "AND date_time IS NOT NULL", (user['id'],)).fetchone()
-    conn.close()
+    with connect() as conn:
+        row = conn.execute("SELECT MAX(date_time) FROM rides WHERE user_id = ? AND strava_activity_id IS NOT NULL "
+                           "AND date_time IS NOT NULL", (user['id'],)).fetchone()
     if not row or not row[0]:
         return None
     ts = pd.to_datetime(row[0], errors='coerce', utc=True)
@@ -1104,10 +1159,9 @@ def get_ride_start_times(user_name):
     user = get_user_data(user_name)
     if not user:
         return []
-    conn = _connect()
-    rows = conn.execute("SELECT date_time FROM rides WHERE user_id = ? AND date_time IS NOT NULL",
-                        (user['id'],)).fetchall()
-    conn.close()
+    with connect() as conn:
+        rows = conn.execute("SELECT date_time FROM rides WHERE user_id = ? AND date_time IS NOT NULL",
+                            (user['id'],)).fetchall()
     out = []
     for (d,) in rows:
         ts = pd.to_datetime(d, errors='coerce', utc=True)
@@ -1142,12 +1196,11 @@ def get_hist(user_name, pair, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = _connect()
-    df = pd.read_sql_query(f"""SELECT h.ride_id, r.date_time AS date, h.x, h.y, h.seconds
-                               FROM ride_hist h JOIN rides r ON r.id = h.ride_id
-                               WHERE r.user_id = ? AND h.pair = ?{where}""",
-                           conn, params=[user['id'], pair, *params])
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT h.ride_id, r.date_time AS date, h.x, h.y, h.seconds
+                                   FROM ride_hist h JOIN rides r ON r.id = h.ride_id
+                                   WHERE r.user_id = ? AND h.pair = ?{where}""",
+                               conn, params=[user['id'], pair, *params])
     df['date'] = _parse_dates(df['date'])
     return df
 
@@ -1157,22 +1210,19 @@ def get_ride_stats(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame()
     where, params = _date_filter(start, end)
-    conn = _connect()
-    df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
-                                      r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
-                                      r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source,
-                                      r.distance_km, r.elevation_m, r.kj
-                               FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
-                               ORDER BY r.date_time""", conn, params=[user['id'], *params])
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
+                                          r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
+                                          r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source,
+                                          r.distance_km, r.elevation_m, r.kj
+                                   FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
+                                   ORDER BY r.date_time""", conn, params=[user['id'], *params])
     df['date'] = _parse_dates(df['date'])
     return df
 
 def update_user_crank(user_name, crank_mm):
-    conn = _connect()
-    conn.execute("UPDATE users SET crank_mm = ? WHERE name = ?", (float(crank_mm), user_name))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("UPDATE users SET crank_mm = ? WHERE name = ?", (float(crank_mm), user_name))
 
 def period_coverage(user_name, start=None, end=None):
     """Why analytics may be empty: rides in the period and what they contain."""
@@ -1181,17 +1231,16 @@ def period_coverage(user_name, start=None, end=None):
     if not user:
         return out
     where, params = _date_filter(start, end)
-    conn = _connect()
-    out['rides'], out['needs_update'] = conn.execute(
-        f"""SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.metrics_version IS NULL
-                                               OR r.metrics_version < ? THEN 1 ELSE 0 END), 0)
-            FROM rides r WHERE r.user_id = ?{where}""",
-        [METRICS_VERSION, user['id'], *params]).fetchone()
-    for pair in ('p_hr', 'p_cad'):
-        out[pair] = conn.execute(
-            f"""SELECT COUNT(DISTINCT h.ride_id) FROM ride_hist h JOIN rides r ON r.id = h.ride_id
-                WHERE r.user_id = ? AND h.pair = ?{where}""", [user['id'], pair, *params]).fetchone()[0]
-    conn.close()
+    with connect() as conn:
+        out['rides'], out['needs_update'] = conn.execute(
+            f"""SELECT COUNT(*), COALESCE(SUM(CASE WHEN r.metrics_version IS NULL
+                                                   OR r.metrics_version < ? THEN 1 ELSE 0 END), 0)
+                FROM rides r WHERE r.user_id = ?{where}""",
+            [METRICS_VERSION, user['id'], *params]).fetchone()
+        for pair in ('p_hr', 'p_cad'):
+            out[pair] = conn.execute(
+                f"""SELECT COUNT(DISTINCT h.ride_id) FROM ride_hist h JOIN rides r ON r.id = h.ride_id
+                    WHERE r.user_id = ? AND h.pair = ?{where}""", [user['id'], pair, *params]).fetchone()[0]
     return out
 
 def get_power_records(user_name, start=None, end=None):
@@ -1201,13 +1250,12 @@ def get_power_records(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = _connect()
-    df = pd.read_sql_query(f"""SELECT p.duration_sec AS duration, p.watts, r.date_time AS date, r.id AS ride_id
-                               FROM power_records p JOIN rides r ON r.id = p.ride_id
-                               WHERE r.user_id = ? AND r.date_time IS NOT NULL
-                                 AND p.watts IS NOT NULL{where}""",
-                           conn, params=[user['id'], *params])
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT p.duration_sec AS duration, p.watts, r.date_time AS date, r.id AS ride_id
+                                   FROM power_records p JOIN rides r ON r.id = p.ride_id
+                                   WHERE r.user_id = ? AND r.date_time IS NOT NULL
+                                     AND p.watts IS NOT NULL{where}""",
+                               conn, params=[user['id'], *params])
     df['date'] = _parse_dates(df['date'])
     return df[cols]
 
@@ -1218,13 +1266,12 @@ def get_kj_records(user_name, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = _connect()
-    df = pd.read_sql_query(f"""SELECT k.kj, k.duration_sec AS duration, k.watts, r.date_time AS date,
-                                      r.id AS ride_id
-                               FROM power_records_kj k JOIN rides r ON r.id = k.ride_id
-                               WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}""",
-                           conn, params=[user['id'], *params])
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT k.kj, k.duration_sec AS duration, k.watts, r.date_time AS date,
+                                          r.id AS ride_id
+                                   FROM power_records_kj k JOIN rides r ON r.id = k.ride_id
+                                   WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}""",
+                               conn, params=[user['id'], *params])
     df['date'] = _parse_dates(df['date'])
     return df[cols]
 
@@ -1235,12 +1282,11 @@ def get_zone_rows(user_name, kind, start=None, end=None):
     if not user:
         return pd.DataFrame(columns=cols)
     where, params = _date_filter(start, end)
-    conn = _connect()
-    df = pd.read_sql_query(f"""SELECT z.ride_id, r.date_time AS date, z.zone, z.seconds
-                               FROM ride_zones z JOIN rides r ON r.id = z.ride_id
-                               WHERE r.user_id = ? AND z.kind = ? AND r.date_time IS NOT NULL{where}""",
-                           conn, params=[user['id'], kind, *params])
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT z.ride_id, r.date_time AS date, z.zone, z.seconds
+                                   FROM ride_zones z JOIN rides r ON r.id = z.ride_id
+                                   WHERE r.user_id = ? AND z.kind = ? AND r.date_time IS NOT NULL{where}""",
+                               conn, params=[user['id'], kind, *params])
     df['date'] = _parse_dates(df['date'])
     return df[cols]
 
@@ -1261,9 +1307,8 @@ def get_planned_sessions(user_name, after=None, structured=None):
         params.append(pd.Timestamp(after).strftime("%Y-%m-%d"))
     if structured is not None:
         sql += " AND blocks IS NOT NULL" if structured else " AND blocks IS NULL"
-    conn = _connect()
-    df = pd.read_sql_query(sql + " ORDER BY date, id", conn, params=params)
-    conn.close()
+    with connect() as conn:
+        df = pd.read_sql_query(sql + " ORDER BY date, id", conn, params=params)
     df['date'] = pd.to_datetime(df['date'], errors='coerce')
     return df[cols]
 
@@ -1273,23 +1318,19 @@ def add_structured_session(user_name, date, blocks, tss, note=None):
     user = get_user_data(user_name)
     if not user:
         return None
-    conn = _connect()
-    cur = conn.execute("INSERT INTO planned_sessions (user_id, date, tss, note, blocks) VALUES (?, ?, ?, ?, ?)",
-                       (user['id'], pd.Timestamp(date).strftime("%Y-%m-%d"), float(tss),
-                        note or None, json.dumps(blocks)))
-    conn.commit()
-    new_id = cur.lastrowid
-    conn.close()
+    with connect() as conn:
+        cur = conn.execute("INSERT INTO planned_sessions (user_id, date, tss, note, blocks) VALUES (?, ?, ?, ?, ?)",
+                           (user['id'], pd.Timestamp(date).strftime("%Y-%m-%d"), float(tss),
+                            note or None, json.dumps(blocks)))
+        new_id = cur.lastrowid
     return new_id
 
 def delete_planned_session(user_name, session_id):
     user = get_user_data(user_name)
     if not user:
         return False
-    conn = _connect()
-    cur = conn.execute("DELETE FROM planned_sessions WHERE id = ? AND user_id = ?", (int(session_id), user['id']))
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM planned_sessions WHERE id = ? AND user_id = ?", (int(session_id), user['id']))
     return cur.rowcount > 0
 
 def replace_planned_sessions(user_name, sessions, after):
@@ -1313,10 +1354,8 @@ def replace_planned_sessions(user_name, sessions, after):
         note = r.get('note')
         rows.append((user['id'], d.strftime("%Y-%m-%d"), float(t),
                      None if note is None or (isinstance(note, float) and pd.isna(note)) else str(note)))
-    conn = _connect()
-    conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ? AND blocks IS NULL",
-                 (user['id'], cutoff.strftime("%Y-%m-%d")))
-    conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)
-    conn.commit()
-    conn.close()
+    with connect() as conn:
+        conn.execute("DELETE FROM planned_sessions WHERE user_id = ? AND date > ? AND blocks IS NULL",
+                     (user['id'], cutoff.strftime("%Y-%m-%d")))
+        conn.executemany("INSERT INTO planned_sessions (user_id, date, tss, note) VALUES (?, ?, ?, ?)", rows)
     return len(rows)
