@@ -34,15 +34,19 @@ CDA_VALID = (0.10, 0.80)         # outside this a fitted CdA is a sign of bad da
 _RD, _RV = 287.058, 461.495      # gas constants of dry air and water vapour, J/(kg K)
 
 
-def get_air_density(elevation_m, temp_c=None, rel_humidity=0.0):
+def get_air_density(elevation_m, temp_c=None, rel_humidity=0.0, pressure_pa=None):
     """
-    Air density (kg/m³) at an altitude, from the standard-atmosphere pressure, the temperature and
-    the humidity. Without a temperature the standard-atmosphere one for that altitude is used.
+    Air density (kg/m³) at an altitude, from the pressure, the temperature and the humidity. The pressure
+    is the standard-atmosphere one for that altitude unless the measured one (Pa) is given: a low-pressure
+    day changes the density by several percent. Without a temperature the standard-atmosphere one is used.
     Works on scalars and arrays. (Sea level, 15 °C, dry: 1.225.)
     """
     h = np.asarray(elevation_m, dtype=float)
     t0, lapse, p0 = 288.15, 0.0065, 101325.0
     pressure = p0 * (1.0 - lapse * h / t0) ** (G / (_RD * lapse))
+    if pressure_pa is not None:
+        measured = np.asarray(pressure_pa, dtype=float)
+        pressure = np.where(np.isfinite(measured), measured, pressure)
     t_k = (t0 - lapse * h) if temp_c is None else np.asarray(temp_c, dtype=float) + 273.15
     rh = np.clip(np.asarray(rel_humidity, dtype=float), 0.0, 1.0)
     p_sat = 610.94 * np.exp(17.625 * (t_k - 273.15) / (t_k - 273.15 + 243.04))      # Magnus, Pa
@@ -56,8 +60,11 @@ def _density(df, ele):
     ele = pd.Series(ele, index=df.index).ffill().bfill().fillna(0.0)
     temp = df['temp_c'] if 'temp_c' in df.columns and df['temp_c'].notna().any() else None
     hum = df['relative_humidity'].fillna(0.0) if 'relative_humidity' in df.columns else 0.0
+    press = None
+    if 'pressure' in df.columns and df['pressure'].notna().any():
+        press = df['pressure'].ffill().bfill().to_numpy(dtype=float) * 100.0        # hPa -> Pa
     rho = get_air_density(ele.to_numpy(), None if temp is None else temp.ffill().bfill().to_numpy(),
-                          hum.to_numpy() if hasattr(hum, 'to_numpy') else hum)
+                          hum.to_numpy() if hasattr(hum, 'to_numpy') else hum, pressure_pa=press)
     return pd.Series(rho, index=df.index)
 
 

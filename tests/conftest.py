@@ -73,3 +73,15 @@ def synthetic_climb_df():
         'ele': ele
     })
     return df
+
+
+@pytest.fixture(autouse=True)
+def no_real_weather_requests(monkeypatch):
+    """Tests never reach the weather service: a ride that asks for weather gets 'not reachable' at once."""
+    import requests
+    from src.data import weather
+
+    def unreachable(*a, **k):
+        raise requests.exceptions.ConnectionError("tests are offline")
+    monkeypatch.setattr(weather.requests, "get", unreachable)
+    monkeypatch.setattr(weather.time, "sleep", lambda s: None)
