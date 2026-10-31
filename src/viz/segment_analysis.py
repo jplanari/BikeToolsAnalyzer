@@ -116,12 +116,22 @@ def _metrics(s):
             col.metric(label, value, help=help_)
 
 
+_LAP_FORMATS = {'Start (km)': "{:.1f}", 'Distance (km)': "{:.2f}", 'Ascent (m)': "{:.0f}", 'Grade (%)': "{:.1f}",
+                'Speed (km/h)': "{:.1f}", 'Avg power (W)': "{:.0f}", 'NP (W)': "{:.0f}", 'Avg HR': "{:.0f}",
+                'Cadence': "{:.0f}"}
+
+
 def _lap_table(df, spans, ftp, weight):
     t = sg.stats_table(df, spans, ftp, weight)
     t['Time'] = t['Time'].map(_time)
-    return t.style.format({'Start (km)': "{:.1f}", 'Distance (km)': "{:.2f}", 'Ascent (m)': "{:.0f}", 'Grade (%)': "{:.1f}",
-                           'Speed (km/h)': "{:.1f}", 'Avg power (W)': "{:.0f}", 'NP (W)': "{:.0f}", 'Avg HR': "{:.0f}",
-                           'Cadence': "{:.0f}"}, na_rep="–")
+    try:
+        return t.style.format(_LAP_FORMATS, na_rep="–")
+    except ImportError:                    # DataFrame.style needs a recent jinja2; show the table rounded instead
+        out = t.copy()
+        for col, spec in _LAP_FORMATS.items():
+            if col in out.columns:
+                out[col] = out[col].map(lambda v, spec=spec: "–" if pd.isna(v) else spec.format(v))
+        return out
 
 
 def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride_id="0"):

@@ -167,3 +167,20 @@ def test_selection_range_ignores_nothing_and_slivers():
     assert selection_range(None, 0.0, 40.0) is None and selection_range({}, 0.0, 40.0) is None
     assert selection_range({'box': [], 'points': []}, 0.0, 40.0) is None
     assert selection_range({'box': [{'x': [3.0, 3.01]}]}, 0.0, 40.0) is None                 # narrower than two steps
+
+
+def test_lap_table_still_renders_without_a_recent_jinja2(monkeypatch):
+    """pandas' Styler raises ImportError with an old jinja2; the comparison tables must not crash the page."""
+    pytest.importorskip("streamlit")
+    pytest.importorskip("streamlit_folium")
+    pytest.importorskip("plotly")
+    from src.viz import segment_analysis as sa
+    t = pd.DataFrame({'Start (km)': [1.234], 'Distance (km)': [5.678], 'Time': ['00:10:00'], 'Avg HR': [float('nan')]})
+    monkeypatch.setattr(sa.sg, 'stats_table', lambda *a, **k: t.copy())
+
+    class Boom:
+        def __get__(self, obj, cls):
+            raise ImportError("Pandas requires version '3.1.2' or newer of 'jinja2'")
+    monkeypatch.setattr(pd.DataFrame, 'style', Boom(), raising=False)
+    out = sa._lap_table(None, [], None, None)
+    assert out['Distance (km)'].iloc[0] == "5.68" and out['Avg HR'].iloc[0] == "–"
