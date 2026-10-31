@@ -1,0 +1,82 @@
+\chapter{Streamlit mechanics}
+
+Streamlit re-runs the whole script from top to bottom every time the user touches a widget. Almost every surprising
+behaviour in this app comes from that fact. This chapter lists the four mechanisms the code uses to cope.
+
+\section{Cached reads and \texttt{data\_stamp}}
+
+Querying the database and recomputing analytics on every click would be slow with a long history. The module
+\code{src/data/cached.py} wraps the read functions of \code{db.py} with \code{st.cache_data}. The cache key
+includes \code{db.data_stamp()}, which changes whenever the database file is written, so anything saved shows up on the
+next run without manual invalidation.
+
+\begin{lstlisting}
+# src/data/cached.py
+get_user_rides = _cached('get_user_rides')       # wraps db.get_user_rides
+get_power_records = _cached('get_power_records')
+\end{lstlisting}
+
+\textbf{Rule:} pages \emph{read} through \code{cached.py}; code that \emph{writes} calls \code{db} directly. When you add
+a new read function to \code{db.py} that a page will call, add one line to \code{cached.py}.
+
+Analytics that depend only on their inputs (the performance management chart, critical-power history) are cached on
+those inputs instead, as small functions at the bottom of the same file.
+
+\section{Sections instead of tabs}
+
+\texttt{st.tabs()} runs the code of \emph{every} tab on every interaction and sends every tab's charts to the
+browser. Pages here use a horizontal selector and an \texttt{if}, so only the visible section is built:
+
+\begin{lstlisting}
+from src.viz.sections import section_picker, remembered
+
+sections = ["Load", "Power profile", "My new section"]
+section = section_picker(sections, key="training_section")
+if section == sections[0]:
+    _render_load(...)
+elif section == sections[2]:
+    _render_my_section(...)
+\end{lstlisting}
+
+Streamlit forgets the value of a widget that is not drawn in a run. A widget inside a section must therefore be
+created with \code{remembered()} so its value survives while another section is showing:
+
+\begin{lstlisting}
+period = remembered(st.selectbox, "my_period", "90 days", "Period", ["30 days", "90 days", "1 year"])
+\end{lstlisting}
+
+Do not pass \texttt{index=} or \texttt{value=} to the widget; the starting value is the third argument of
+\texttt{remembered}.
+
+The ride page's sections are drawn inside an \code{st.fragment}, so switching section does not repeat the expensive
+analysis above it.
+
+\section{Session state}
+
+\code{st.session_state} holds things that must survive a re-run: the chosen user (\code{current_user}),
+the file being analysed, a downloaded PDF waiting for its button. It does \emph{not} survive an OAuth redirect (the
+browser comes back in a new session), which is why sign-in tokens are stored in the database
+(\code{db.create_oauth_state}) and not in session state.
+
+\section{Charts: automatic title and legend placement}\label{sec:figstyle}
+
+Every function named \code{plot_*} in \code{plots.py} and \code{training_plots.py} is wrapped, at the end of the
+module, by \code{figstyle.tidy_builders(globals())}. The wrapper pins the title to the top-left, puts a horizontal legend
+under it and grows the top margin to fit both, so titles never overlap the plot or the legend.
+
+\begin{itemize}
+\item In those two modules, simply name your function \code{plot_something}; the tidy-up is automatic.
+\item A chart built anywhere else (for example inside a page) must be wrapped by hand:
+  \code{st.plotly_chart(tidy(fig))}, importing \code{tidy} from \code{src.viz.figstyle}.
+\item Do not set a manual top margin or title position; they are overwritten.
+\end{itemize}
+
+\section{The look}\label{sec:theme}
+
+\code{theme.py} holds three looks (Compact, Dashboard, Classic) as small CSS packs layered on Streamlit's theme, with
+colours derived from the text colour so they work in light and dark mode. The accent colour \texttt{ACCENT} matches
+\texttt{primaryColor} in \texttt{.streamlit/config.toml}; change both together. The welcome page, the FTP/LTHR help
+texts and the default thresholds are in the same file.
+
+Chart colours are a separate palette in \code{training_plots.py} (\texttt{PALETTES}), with its own light and dark
+steps; plots read the current mode and call \texttt{palette(mode)}.

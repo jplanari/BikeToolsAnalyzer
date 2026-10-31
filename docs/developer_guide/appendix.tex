@@ -1,0 +1,71 @@
+\appendix
+\chapter{Module reference}
+
+\begingroup\small
+\begin{longtable}{@{}p{4.6cm}p{10.2cm}@{}}
+\toprule
+Module & Main entry points\\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\textbf{src/data}}\\
+\code{pipeline.py} & \code{prepare_ride}, \code{summarize_ride}, \code{metrics_for_storage}, \code{moving_mask}, \code{ride_kind}\\
+\code{db.py} & \code{init_db}, \code{save_ride}, \code{update_ride_metrics}, \code{get_user_rides}, \code{get_power_records}, \code{backup_db}, \code{data_stamp}, \code{METRICS_VERSION}\\
+\code{cached.py} & cached versions of the page reads; \code{compute_pmc}, \code{cp_history}\\
+\code{history.py} & \code{recompute_history}, \code{ftp_used_for_ride}\\
+\code{thresholds.py} & \code{estimate_ftp}, \code{estimate_lthr}, \code{refresh_auto_thresholds}\\
+\code{cleaning.py} & \code{clean_channels}\\
+\code{fit.py}, \code{gpx.py}, \code{tcx.py} & parsers; \code{compute_distance_and_ascent}, \code{resample_to_seconds}, \code{compute_grade}\\
+\code{upload.py}, \code{upload_import.py} & unpack zip/gz uploads; \code{import_activities}\\
+\code{strava.py}, \code{wahoo.py}, \code{polar.py} & service clients\\
+\code{*_import.py} & per-service import workflows, \texttt{ImportResult}\\
+\code{wahoo_send.py} & send a planned workout to a Wahoo head unit\\
+\code{credentials.py} & \texttt{PROVIDERS}, \texttt{resolve}\\
+\code{weather.py} & wind and temperature for a ride (Open-Meteo)\\
+\code{report_data.py}, \code{ride_report_data.py} & numbers for the PDF reports\\
+\midrule
+\multicolumn{2}{@{}l}{\textbf{src/analysis}}\\
+\code{power.py} & \texttt{NP}, \texttt{IF}, \texttt{TSS}, \code{power_curve}, \code{coggan_zones}, \code{estimate_critical_power}\\
+\code{ride_metrics.py} & \code{variability_index}, \code{efficiency_factor}, \code{aerobic_decoupling}, \code{training_stress}, \code{zone_seconds}\\
+\code{training_load.py} & \code{compute_pmc} (CTL 42\,d, ATL 7\,d, TSB)\\
+\code{power_profile.py} & records, critical-power history, \code{suggest_threshold}\\
+\code{durability.py} & \code{fatigued_curves} (after 1000/2000/3000\,kJ)\\
+\code{intensity.py}, \code{correlations.py} & intensity distribution; power-HR and power-cadence relations\\
+\code{climbs.py}, \code{segments.py} & climb detection; segment analysis\\
+\code{workout.py}, \code{wahoo_plan.py} & structured workouts and their export format\\
+\code{labels.py}, \code{dates.py} & plain-language status texts; date parsing\\
+\midrule
+\multicolumn{2}{@{}l}{\textbf{src/physics}}\\
+\code{aerodyn.py} & power balance, CdA fit\\
+\code{climb_model.py} & predicted climb time from power and mass\\
+\code{thermal.py} & heat-balance model of the rider\\
+\midrule
+\multicolumn{2}{@{}l}{\textbf{src/viz}}\\
+\code{sidebar.py} & \code{render_sidebar}, \code{handle_strava_callback}\\
+\code{ride_analysis.py} & \code{process_and_display_analysis}\\
+\code{training_page.py} & \code{render_training_page}\\
+\code{user_corner.py} & \code{render_user_corner}, \code{render_history}\\
+\code{connections.py} & \code{get_credentials}, \code{credentials_form}, \code{setup_box}\\
+\code{plots.py}, \code{training_plots.py} & \code{plot_*} chart builders, \texttt{palette}\\
+\code{figstyle.py} & \texttt{tidy}, \code{tidy_builders}\\
+\code{sections.py} & \code{section_picker}, \texttt{remembered}\\
+\code{theme.py} & look, welcome page, help texts\\
+\code{report_pdf.py}, \code{ride_report_pdf.py} & \code{build_report_pdf} and the single-ride equivalent\\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\chapter{Quick answers}
+
+\begin{description}[style=nextline,leftmargin=1.2em]
+\item[The Training page says some rides are outdated.] Their \code{metrics_version} is below the current one. Run
+  \emph{User Corner $\rightarrow$ Update ride history}.
+\item[A new metric is empty for old rides.] Raise \code{METRICS_VERSION} and recompute.
+\item[My change does not show up after saving.] A cached read is stale only if the database file was not written;
+  check that the write goes through \code{db.py}. Restart \texttt{streamlit run} after editing a module the server
+  already imported.
+\item[A chart title overlaps the legend.] The builder is not named \code{plot_*}, or it is outside the two chart
+  modules; wrap it with \texttt{tidy()}.
+\item[Sign-in goes to the wrong port.] The app started on 8502; free port 8501.
+\item[Where is the rider's data?] Source run: the database file in the folder you started from (or
+  \code{BIKETOOLS_DB}). Desktop app: the per-user data folder.
+\end{description}

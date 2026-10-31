@@ -6,6 +6,8 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 
 A standalone version with its own window (no terminal, no Python install) can be built for Windows, macOS and Linux: see [desktop/README.md](desktop/README.md). Your data is kept in a per-user folder, separate from the program.
 
+**Extending the code:** see the [developer guide (PDF)](docs/developer_guide/BikeTools-Developer-Guide.pdf); its LaTeX source is in `docs/developer_guide/` (`latexmk -pdf main.tex`).
+
 ## Key Features
 
 📊 Performance Metrics
