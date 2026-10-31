@@ -93,7 +93,7 @@ And, if stored, a round trip through the database using the \code{temp_db} fixtu
 \begin{enumerate}
 \item \textbf{Calculate.} A pure function in \code{src/analysis/} that takes the tables the page already reads
   (rides, power records, zone rows) and returns a DataFrame or dictionary. Example shape: \code{training_load.compute_pmc}.
-\item \textbf{Read.} If you need new rows from the database, add a function to \code{db.py} and one line to
+\item \textbf{Read.} If you need new rows from the database, add a function to the matching file of \code{src/data/db/} and one line to
   \code{cached.py}.
 \item \textbf{Chart.} Add \code{plot_my_chart(data, pal)} to \code{training_plots.py} (\S\ref{rec:plot}).
 \item \textbf{Page.} In \code{training_page.py}, write \code{_render_my_section(user_name, today, mode)} and add it to

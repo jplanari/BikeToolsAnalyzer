@@ -1,10 +1,13 @@
 # tests/conftest.py
 import importlib.util
+import os
 import sys
 import types
 from unittest.mock import MagicMock
 
 import pytest
+
+os.environ.setdefault("BIKETOOLS_TZ", "UTC")      # the rider's day follows this computer's zone by default: tests use UTC
 
 # The data modules import UI/parsing libraries at module level. CI installs
 # them from requirements.txt; when one is missing locally, stub it so the
@@ -70,3 +73,15 @@ def synthetic_climb_df():
         'ele': ele
     })
     return df
+
+
+@pytest.fixture(autouse=True)
+def no_real_weather_requests(monkeypatch):
+    """Tests never reach the weather service: a ride that asks for weather gets 'not reachable' at once."""
+    import requests
+    from src.data import weather
+
+    def unreachable(*a, **k):
+        raise requests.exceptions.ConnectionError("tests are offline")
+    monkeypatch.setattr(weather.requests, "get", unreachable)
+    monkeypatch.setattr(weather.time, "sleep", lambda s: None)

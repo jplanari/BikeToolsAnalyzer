@@ -132,14 +132,43 @@ profile never rewrites the past.
 \section{Reading and writing}
 
 \begin{itemize}
-\item All SQL lives in \code{db.py}. Pages and analysis code call its functions; they never open the database.
+\item All SQL lives in the package \code{src/data/db/}. Pages and analysis code call its functions; they never open
+  the database. \code{from src.data import db} still gives every function: the files are only a split by subject
+  (\code{core}, \code{schema}, \code{users}, \code{rides}, \code{stats}, \code{auth}, \code{weekly}, \code{planning},
+  \code{bikes}). Put a new function in the file of its subject.
 \item Functions that write are called directly. Functions that \emph{read for a page} are called through
   \code{src/data/cached.py} (next chapter).
-\item Dates are stored as ISO text. Use \code{src.analysis.dates.parse_utc} to read a column that may mix values with and
-  without time zones.
-\item Duplicate protection: the ride file's hash is unique, and imports also skip a ride that starts within two minutes
-  of one already saved (the same ride arriving from Strava and from a head unit).
+\item Open a connection with \code{with connect() as conn:}. It commits when the block ends, rolls back if it raises,
+  and always closes. Do not call \code{conn.close()} by hand.
+\item Duplicate protection: the ride file's hash is unique \emph{per rider} (two riders may save the same club ride),
+  and imports also skip a ride that starts within two minutes of one already saved (the same ride arriving from
+  Strava and from a head unit).
 \end{itemize}
+
+\subsection*{Schema changes}
+
+Never edit a shipped migration. Add a new one at the end of \code{MIGRATIONS} in \code{db/schema.py}: a function that
+receives a connection, registered with the next number. The database keeps its version in \code{PRAGMA user_version};
+each migration runs once, in its own transaction, after an automatic backup, and a failure rolls back and stops the
+start with the real error. Adding a column to an existing table is the one thing that does not need a number: call
+\code{_add_column(c, table, column, definition)} in \code{migrate_db}, which checks \code{PRAGMA table\_info} first.
+
+\subsection*{Dates and time zones}
+
+A ride's start is stored as a UTC instant, always \texttt{YYYY-MM-DDTHH:MM:SS+00:00} (\code{to\_utc\_iso}); a time
+without a zone is read as UTC. The \emph{day} a ride belongs to is the rider's: \code{users.timezone} (an IANA name,
+set in the User Corner; this computer's zone when empty). The queries that filter by period turn the rider's local
+day boundaries into UTC (\code{local\_day\_bounds\_utc}), and what they return in a \code{date} column, in
+\code{get\_user\_tss\_history} and in \code{start\_local} is the rider's own wall-clock time, naive. In tests set
+\texttt{BIKETOOLS\_TZ=UTC}; \code{tests/conftest.py} does.
+
+\subsection*{Secrets}
+
+OAuth tokens, client secrets and the SMTP password are stored as \texttt{enc:v1:...} (\code{secrets\_store}); the
+getters in \code{db/auth.py} and \code{db/weekly.py} return plain text, so callers never see the difference. A new
+secret column needs two things: \code{encrypt()} when you save and an entry in \code{\_SECRET\_COLUMNS}. The key is
+\texttt{BIKETOOLS\_SECRET\_KEY} or the file \texttt{biketools.key} next to the database; do not put that file where
+the database is synced or backed up.
 
 \section{Headless modules and Streamlit}\label{sec:headless}
 

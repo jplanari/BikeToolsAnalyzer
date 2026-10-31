@@ -8,7 +8,7 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 datas, binaries, hiddenimports = [(os.path.join(ROOT, 'app.py'), '.'), (os.path.join(ROOT, 'src'), 'src'),
                                     (os.path.join(ROOT, '.streamlit', 'config.toml'), '.streamlit')], [], []
 for pkg in ('streamlit', 'streamlit_folium', 'folium', 'plotly', 'fitparse', 'gpxpy', 'geographiclib',
-            'matplotlib', 'altair'):
+            'matplotlib', 'altair', 'cryptography'):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hiddenimports += h
 # app.py and src/ travel as data files, so PyInstaller does not see their imports: list them here

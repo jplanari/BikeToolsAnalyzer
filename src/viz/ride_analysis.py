@@ -18,13 +18,14 @@ from src.viz.plots import (plot_elevation,
 from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, w_prime_needed
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
-from src.data.db import save_ride, build_ride_metadata, get_ride_start_times, set_user_w_prime
+from src.data.db import (save_ride, build_ride_metadata, get_ride_start_times, set_user_w_prime, get_ride_bike,
+                         get_ride_weather, save_ride_weather)
 from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR
-from src.data.weather import fetch_ride_weather
+from src.data.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.segment_analysis import render_segment_analysis
@@ -80,15 +81,19 @@ def process_and_display_analysis(file_obj, user_name, settings):
     bike_mass, crr = bike_physics(bike)
     settings['bike_mass'], settings['crr'], settings['bike_name'] = bike_mass, crr, bike_label(bike)
 
+    saved = get_ride_bike(user_name, file_bytes) if user_name else None
+    stored_weather = get_ride_weather(saved[0]) if saved else None
+    wind_override = _wind_control(hashlib.md5(file_bytes).hexdigest()[:10], stored_weather)
+
     with st.spinner(f"Processing {file_obj.name} and fetching weather..."):
         try:
             df, total_dist, total_ascent = prepare_ride(filename, file_bytes)
             laps_df = get_fit_laps(file_bytes) if ride_kind(filename, file_bytes) == "fit" else None
             lap_spans = get_fit_lap_spans(file_bytes) if ride_kind(filename, file_bytes) == "fit" else None
 
-            # Physics prep + automatic weather fetch (df unchanged if it fails)
+            # Physics prep + weather: the stored one if the ride was saved, else the service (df unchanged on failure)
             df['bearing'] = calculate_bearing(df)
-            df = fetch_ride_weather(df)
+            df, weather, weather_message = load_or_fetch(df, stored_weather, wind_override)
         except Exception as e:
             st.error(f"Error parsing ride file: {e}")
             return
@@ -120,6 +125,10 @@ def process_and_display_analysis(file_obj, user_name, settings):
         # Auto-Save
         if user_name:
              _save_ride_to_db(user_name, file_obj.name, file_bytes, df, total_dist, total_ascent, summary, bike_id)
+             _keep_weather(user_name, file_bytes, weather, stored_weather)
+
+    if weather_message and not wind_override:
+        st.caption(f"🌫️ {weather_message} The aerodynamics use no wind.")
 
     # Detect Climbs
     detected_climbs = climbs
@@ -174,10 +183,9 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
     st.subheader("Ride Summary")
     
     # Display Weather Badge if data exists
-    if 'wind_speed' in df.columns:
-        avg_w = df['wind_speed'].mean() * 3.6
-        avg_t = df['temp_c'].mean()
-        st.caption(f"🌤️ Weather Data Integrated: {avg_t:.1f}°C, Wind ~{avg_w:.1f} km/h")
+    wx = weather_summary(df)
+    if wx:
+        st.caption(f"🌤️ Weather ({df.attrs.get('weather_source', 'service')}): {wx}")
     
     dHHMMSS = format_duration(duration_s)
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -268,6 +276,37 @@ def _already_in_history(user_name, stats):
     if pd.isna(start):
         return False
     return _is_near(start.tz_convert(None), get_ride_start_times(user_name), DUPLICATE_START_TOLERANCE_S)
+
+
+def _wind_control(key, stored):
+    """
+    The 'Wind' control: automatic (weather service), a wind typed in, or no wind. Returns the override
+    {'wind_ms', 'wind_deg'} or None for automatic. A saved ride's earlier choice is the starting point.
+    """
+    prior = (stored or {}).get('override')
+    options = ["Automatic (weather service)", "Set the wind myself", "No wind"]
+    start = 0 if not prior else (2 if prior.get('wind_ms', 0) == 0 else 1)
+    with st.expander("🌬️ Wind", expanded=False):
+        mode = st.radio("Wind for the aerodynamics", options, index=start, key=f"wind_mode_{key}", horizontal=True)
+        if mode == options[2]:
+            return {'wind_ms': 0.0, 'wind_deg': 0.0}
+        if mode == options[1]:
+            c1, c2 = st.columns(2)
+            kmh = c1.number_input("Wind speed (km/h)", 0.0, 120.0, round((prior or {}).get('wind_ms', 0.0) * 3.6, 1),
+                                  step=1.0, key=f"wind_kmh_{key}")
+            deg = c2.number_input("Blowing from (°, 0 = north, 90 = east)", 0.0, 360.0,
+                                  float((prior or {}).get('wind_deg', 0.0)), step=5.0, key=f"wind_deg_{key}")
+            return {'wind_ms': kmh / 3.6, 'wind_deg': float(deg) % 360.0}
+    return None
+
+
+def _keep_weather(user_name, file_bytes, payload, stored):
+    """Saves the ride's weather with the ride (once saved), so reopening it and the weekly report need no network."""
+    if payload is None or payload == stored:
+        return
+    found = get_ride_bike(user_name, file_bytes)
+    if found:
+        save_ride_weather(found[0], payload)
 
 
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bike_id=None):

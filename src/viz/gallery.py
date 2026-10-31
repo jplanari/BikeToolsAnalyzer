@@ -23,7 +23,7 @@ def ride_title(filename):
 
 
 def _when(row):
-    ts = pd.to_datetime(row.get("date_time"), errors="coerce")
+    ts = pd.to_datetime(row.get("start_local") or row.get("date_time"), errors="coerce")   # the rider's own clock
     return None if pd.isna(ts) else ts
 
 

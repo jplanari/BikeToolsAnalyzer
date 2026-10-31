@@ -50,7 +50,7 @@ exceed what a free tier allows; put the relevant limits in the module docstring.
 
 \subsection*{2. Store the rider's token}
 
-In \code{db.py}, create \code{acme_auth} in \code{migrate_db} (copy \code{polar_auth}) and add
+In \code{db/auth.py}, create \code{acme_auth} in \code{migrate_db} (copy \code{polar_auth}; encrypt the token with \code{secrets\_store.encrypt}) and add
 \code{save_acme_auth}, \code{get_acme_auth}, \code{delete_acme_auth}. Add
 \code{get_imported_acme_ids(user)} and \code{acme_id_from_filename} on the model of the Polar pair: the
 \emph{file name carries the service's activity ID}, which is how a repeated sync knows what it already has.

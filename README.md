@@ -109,7 +109,8 @@ BikeToolsAnalyzer/
     │   ├── ride_metrics.py   # per-ride VI, EF, decoupling, zones, histograms
     │   └── training_load.py  # PMC, forecast, ramp, ACWR, monotony, volume
     ├── data/               # IO, Database, & Parsing
-    │   ├── db.py
+    │   ├── db/               # SQLite layer: core, schema (migrations), users, rides, stats, auth, weekly, planning, bikes
+    │   ├── secrets_store.py  # encryption of stored tokens and passwords
     │   ├── fit.py
     │   ├── gpx.py
     │   ├── pipeline.py       # Shared parse → 1 Hz → metrics pipeline

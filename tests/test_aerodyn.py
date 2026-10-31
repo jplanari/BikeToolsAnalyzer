@@ -151,6 +151,8 @@ def test_wind_is_converted_to_metres_per_second(monkeypatch, unit, factor):
     asked = {}
 
     class Resp:
+        status_code = 200
+
         def json(self):
             hours = [f"2026-10-01T{h:02d}:00" for h in range(24)]
             return {"hourly_units": {"wind_speed_10m": unit},
@@ -162,10 +164,10 @@ def test_wind_is_converted_to_metres_per_second(monkeypatch, unit, factor):
         asked.update(params)
         return Resp()
     monkeypatch.setattr(weather.requests, "get", fake_get)
-    getattr(weather.fetch_ride_weather, 'clear', lambda: None)()      # st.cache_data would replay the other case
+    getattr(weather.fetch_hourly, 'clear', lambda: None)()      # st.cache_data would replay the other case
     df = pd.DataFrame({'time': pd.date_range("2026-10-01 08:00", periods=60, freq="1s"),
                        'lat': 41.0, 'lon': 2.0})
-    out = weather.fetch_ride_weather(df)
+    out, _, _ = weather.load_or_fetch(df)
     assert asked["wind_speed_unit"] == "ms"                                       # the documented name
     assert out['wind_speed'].iloc[0] == pytest.approx(10.0 * factor)
     assert out['relative_humidity'].iloc[0] == pytest.approx(0.5)

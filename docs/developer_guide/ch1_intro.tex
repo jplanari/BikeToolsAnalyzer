@@ -17,13 +17,13 @@ recipes for the changes people most often want.
 \toprule
 I want to\ldots & Read & Touches mostly\\
 \midrule
-add a per-ride number (metric) & \S\ref{rec:metric} & \code{analysis/}, \code{pipeline.py}, \code{db.py}\\
+add a per-ride number (metric) & \S\ref{rec:metric} & \code{analysis/}, \code{pipeline.py}, \code{db/}\\
 add an analysis to the Training page & \S\ref{rec:training} & \code{analysis/}, \code{viz/training_page.py}\\
 add a section to the ride page & \S\ref{rec:ridesection} & \code{viz/ride_analysis.py}\\
 add a chart & \S\ref{rec:plot} & \code{viz/plots.py}, \code{training_plots.py}\\
 read a new file format & \S\ref{rec:format} & \code{data/}, \code{pipeline.py}\\
 connect a new online service & Chapter~\ref{ch:providers} & \code{data/}, \code{viz/sidebar.py}\\
-add a profile setting & \S\ref{rec:setting} & \code{db.py}, \code{viz/user_corner.py}\\
+add a profile setting & \S\ref{rec:setting} & \code{db/users.py}, \code{viz/user_corner.py}\\
 add something to the PDF report & \S\ref{rec:report} & \code{report_data.py}, \code{report_pdf.py}\\
 change the look & \S\ref{sec:theme} & \code{viz/theme.py}\\
 \bottomrule
@@ -125,7 +125,7 @@ The code is four layers. A module may import from the layers to its right, never
 
 \begin{description}[style=nextline,leftmargin=1.2em]
 \item[\code{src/data}] Everything that is read or written: file parsers (\code{fit.py}, \code{gpx.py}, \code{tcx.py}),
-  service clients (\code{strava.py}, \code{wahoo.py}, \code{polar.py}), the SQLite layer (\code{db.py}) and the
+  service clients (\code{strava.py}, \code{wahoo.py}, \code{polar.py}), the SQLite layer (\code{db/}) and the
   \emph{pipeline} (\code{pipeline.py}) that turns a file into a standard table and its summary numbers.
 \item[\code{src/analysis}] Pure functions: normalized power and TSS (\code{power.py}), per-ride quality metrics
   (\code{ride_metrics.py}), the performance management chart (\code{training_load.py}), power profile and critical
@@ -158,7 +158,7 @@ Path & Role\\
 \code{src/viz/theme.py} & Look (CSS), welcome page, help texts.\\
 \code{src/viz/report_pdf.py}, \code{ride_report_pdf.py} & PDF writers (matplotlib).\\
 \code{src/data/pipeline.py} & File $\rightarrow$ standard table $\rightarrow$ summary dict.\\
-\code{src/data/db.py} & Schema, migrations, every read and write.\\
+\code{src/data/db/} & Schema, migrations, every read and write.\\
 \code{src/data/cached.py} & Cached reads for the pages.\\
 \code{src/data/credentials.py} & Where service client IDs and secrets come from.\\
 \code{src/data/*_import.py} & Import workflows per source.\\

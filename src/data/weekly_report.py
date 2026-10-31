@@ -28,13 +28,29 @@ def week_rides(user_name, monday, sunday):
     rides = db.get_user_rides(user_name)
     out = []
     for r in rides:
-        t = pd.to_datetime(r.get('date_time'), errors='coerce', utc=True)
+        t = pd.to_datetime(r.get('start_local') or r.get('date_time'), errors='coerce')   # the rider's own clock
         if pd.isna(t):
             continue
-        day = t.tz_localize(None).normalize()
+        day = (t.tz_convert(None) if t.tzinfo is not None else t).normalize()
         if monday <= day <= sunday:
             out.append(r)
     return sorted(out, key=lambda r: r['date_time'])
+
+
+def _with_weather(df, ride_id):
+    """The ride with its weather, as on the ride page: the stored one, else fetched now and kept for next time.
+    A ride whose weather cannot be had (offline, no GPS) is reported without wind, never failed."""
+    from src.data import weather
+    from src.data.gpx import calculate_bearing
+    try:
+        df['bearing'] = calculate_bearing(df)
+        stored = db.get_ride_weather(ride_id)
+        out, payload, _ = weather.load_or_fetch(df, stored, (stored or {}).get('override'))
+        if payload is not None and stored is None:
+            db.save_ride_weather(ride_id, payload)
+        return out
+    except Exception:
+        return df
 
 
 def _ride_figures(user, ride):
@@ -51,6 +67,7 @@ def _ride_figures(user, ride):
     if content is None:
         raise ValueError("original file not stored")
     df, dist_m, ascent_m = prepare_ride(filename or "", content)
+    df = _with_weather(df, ride['id'])
     ftp = ftp_used_for_ride(ride, user['ftp'])
     lthr = ride.get('lthr_at_ride') or user['lthr']
     summary = summarize_ride(df, ftp, lthr)

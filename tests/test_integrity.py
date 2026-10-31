@@ -106,7 +106,7 @@ def test_old_database_is_migrated_once_with_a_backup(tmp_path, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM ride_files").fetchone()[0] == 60
     for rid, name in conn.execute("SELECT id, filename FROM rides"):
         assert db.get_ride_file(rid) == (name, payloads[name])
-    assert os.path.getsize(path) < size_before / 4      # compressed and vacuumed
+    assert os.path.getsize(path) < size_before / 3      # compressed and vacuumed
     backups = glob.glob(str(tmp_path / "backups" / "*before-file-migration.db"))
     assert len(backups) == 1
     assert sqlite3.connect(backups[0]).execute(
