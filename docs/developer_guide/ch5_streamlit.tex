@@ -6,7 +6,7 @@ behaviour in this app comes from that fact. This chapter lists the four mechanis
 \section{Cached reads and \texttt{data\_stamp}}
 
 Querying the database and recomputing analytics on every click would be slow with a long history. The module
-\code{src/data/cached.py} wraps the read functions of \code{db.py} with \code{st.cache_data}. The cache key
+\code{src/data/cached.py} wraps the read functions of \code{db/} with \code{st.cache_data}. The cache key
 includes \code{db.data_stamp()}, which changes whenever the database file is written, so anything saved shows up on the
 next run without manual invalidation.
 
@@ -17,7 +17,7 @@ get_power_records = _cached('get_power_records')
 \end{lstlisting}
 
 \textbf{Rule:} pages \emph{read} through \code{cached.py}; code that \emph{writes} calls \code{db} directly. When you add
-a new read function to \code{db.py} that a page will call, add one line to \code{cached.py}.
+a new read function to \code{db/} that a page will call, add one line to \code{cached.py}.
 
 Analytics that depend only on their inputs (the performance management chart, critical-power history) are cached on
 those inputs instead, as small functions at the bottom of the same file.

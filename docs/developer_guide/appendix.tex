@@ -9,7 +9,7 @@ Module & Main entry points\\
 \endhead
 \multicolumn{2}{@{}l}{\textbf{src/data}}\\
 \code{pipeline.py} & \code{prepare_ride}, \code{summarize_ride}, \code{metrics_for_storage}, \code{moving_mask}, \code{ride_kind}\\
-\code{db.py} & \code{init_db}, \code{save_ride}, \code{update_ride_metrics}, \code{get_user_rides}, \code{get_power_records}, \code{backup_db}, \code{data_stamp}, \code{METRICS_VERSION}\\
+\code{db/} & \code{init_db}, \code{save_ride}, \code{update_ride_metrics}, \code{get_user_rides}, \code{get_power_records}, \code{backup_db}, \code{data_stamp}, \code{METRICS_VERSION}\\
 \code{cached.py} & cached versions of the page reads; \code{compute_pmc}, \code{cp_history}\\
 \code{history.py} & \code{recompute_history}, \code{ftp_used_for_ride}\\
 \code{thresholds.py} & \code{estimate_ftp}, \code{estimate_lthr}, \code{refresh_auto_thresholds}\\
@@ -61,7 +61,7 @@ Module & Main entry points\\
   \emph{User Corner $\rightarrow$ Update ride history}.
 \item[A new metric is empty for old rides.] Raise \code{METRICS_VERSION} and recompute.
 \item[My change does not show up after saving.] A cached read is stale only if the database file was not written;
-  check that the write goes through \code{db.py}. Restart \texttt{streamlit run} after editing a module the server
+  check that the write goes through \code{db/}. Restart \texttt{streamlit run} after editing a module the server
   already imported.
 \item[A chart title overlaps the legend.] The builder is not named \code{plot_*}, or it is outside the two chart
   modules; wrap it with \texttt{tidy()}.
