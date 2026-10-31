@@ -23,6 +23,7 @@ A standalone version with its own window (no terminal, no Python install) can be
 - **Durability:** how much of your fresh power you keep after 1, 2 and 3 MJ of work.
 - **Intensity:** weekly/monthly easy / moderate / hard distribution (power or HR) and the polarization index.
 - **PDF report:** the "📄 PDF report" box at the top builds a 6-page A4 report (summary and load chart, volume and ramp, power profile and CP, durability and records, intensity, recent rides and planned sessions) for the period you pick.
+- **Weekly e-mail:** in the User Corner, set up a mail server (Gmail, Outlook, iCloud or any SMTP account, with an app password) and switch on "Send me the weekly report". The first time the app is opened in a new week, the previous Monday-to-Sunday week arrives as one PDF: training analytics, all the deeper analytics, and a section for each ride. It is sent only while the app is open; "Send last week now" and a test e-mail are in the same place.
 
 📐 Segment analysis (bottom of the ride page)
 
