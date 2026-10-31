@@ -170,6 +170,15 @@ def migrate_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS app_credentials (
+            provider TEXT PRIMARY KEY,           -- 'strava' | 'wahoo' | 'polar'
+            client_id TEXT NOT NULL,
+            client_secret TEXT NOT NULL,
+            redirect_uri TEXT,
+            timezone TEXT
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS polar_auth (
             user_id INTEGER PRIMARY KEY,
             polar_user_id TEXT,
@@ -885,6 +894,32 @@ def delete_wahoo_auth(user_name):
         return
     conn = _connect()
     conn.execute("DELETE FROM wahoo_auth WHERE user_id = ?", (user['id'],))
+    conn.commit()
+    conn.close()
+
+# --- API app credentials entered in the app (instead of .streamlit/secrets.toml) ---
+
+def save_app_credentials(provider, client_id, client_secret, redirect_uri=None, timezone=None):
+    conn = _connect()
+    conn.execute('''
+        INSERT INTO app_credentials (provider, client_id, client_secret, redirect_uri, timezone)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(provider) DO UPDATE SET client_id = excluded.client_id, client_secret = excluded.client_secret,
+            redirect_uri = excluded.redirect_uri, timezone = excluded.timezone
+    ''', (provider, client_id.strip(), client_secret.strip(), redirect_uri, timezone))
+    conn.commit()
+    conn.close()
+
+def get_app_credentials(provider):
+    conn = _connect()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM app_credentials WHERE provider = ?", (provider,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_app_credentials(provider):
+    conn = _connect()
+    conn.execute("DELETE FROM app_credentials WHERE provider = ?", (provider,))
     conn.commit()
     conn.close()
 

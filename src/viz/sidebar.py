@@ -17,6 +17,7 @@ from src.data.db import (save_user,
                          consume_oauth_state,
                          data_stamp)
 from src.viz import theme
+from src.viz.connections import get_credentials, setup_box
 from src.data.upload import expand_upload, UPLOAD_TYPES
 from src.data.upload_import import import_activities
 from src.data.thresholds import backfill_hr20, refresh_auto_thresholds
@@ -150,16 +151,9 @@ def render_sidebar():
 
 
 def _strava_config():
-    """App credentials from .streamlit/secrets.toml ([strava] section), or None."""
-    try:
-        sec = st.secrets["strava"]
-        return sv.StravaConfig(
-            client_id=str(sec["client_id"]),
-            client_secret=str(sec["client_secret"]),
-            redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
-        )
-    except Exception:
-        return None
+    """Strava API app credentials (entered in the app or in secrets.toml), or None."""
+    c = get_credentials("strava")
+    return sv.StravaConfig(c["client_id"], c["client_secret"], c["redirect_uri"]) if c else None
 
 
 def _strava_usage():
@@ -217,17 +211,9 @@ WAHOO_STATE_PREFIX = "wahoo."      # tells the shared redirect which provider is
 
 
 def _wahoo_config():
-    """App credentials from .streamlit/secrets.toml ([wahoo] section), or None."""
-    try:
-        sec = st.secrets["wahoo"]
-        return wh.WahooConfig(
-            client_id=str(sec["client_id"]),
-            client_secret=str(sec["client_secret"]),
-            redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")),
-            timezone=str(sec.get("timezone", "")),
-        )
-    except Exception:
-        return None
+    """Wahoo API app credentials (entered in the app or in secrets.toml), or None."""
+    c = get_credentials("wahoo")
+    return wh.WahooConfig(c["client_id"], c["client_secret"], c["redirect_uri"], c["timezone"]) if c else None
 
 
 def _finish_wahoo_callback(state, code, error):
@@ -256,13 +242,9 @@ POLAR_STATE_PREFIX = "polar."
 
 
 def _polar_config():
-    """App credentials from .streamlit/secrets.toml ([polar] section), or None."""
-    try:
-        sec = st.secrets["polar"]
-        return pl.PolarConfig(client_id=str(sec["client_id"]), client_secret=str(sec["client_secret"]),
-                              redirect_uri=str(sec.get("redirect_uri", "http://localhost:8501/")))
-    except Exception:
-        return None
+    """Polar AccessLink client credentials (entered in the app or in secrets.toml), or None."""
+    c = get_credentials("polar")
+    return pl.PolarConfig(c["client_id"], c["client_secret"], c["redirect_uri"]) if c else None
 
 
 def _finish_polar_callback(state, code, error):
@@ -296,8 +278,7 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
     """Returns a file-like ride (the FIT file Polar Flow holds) to analyse, or None."""
     cfg = _polar_config()
     if cfg is None:
-        st.sidebar.warning("Polar isn't set up yet. Register a client at admin.polaraccesslink.com and add its "
-                           "`client_id` and `client_secret` to `.streamlit/secrets.toml` (see README).")
+        setup_box("polar")
         return None
     if not user_name:
         st.sidebar.info("Select or create a user profile first.")
@@ -459,8 +440,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
     """Returns a file-like ride to analyse, or None."""
     cfg = _strava_config()
     if cfg is None:
-        st.sidebar.warning("Strava isn't set up yet. Add your API app's `client_id` and "
-                           "`client_secret` to `.streamlit/secrets.toml` (see README).")
+        setup_box("strava")
         return None
     if not user_name:
         st.sidebar.info("Select or create a user profile first.")
@@ -555,8 +535,7 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
     """Returns a file-like ride (the original FIT file) to analyse, or None."""
     cfg = _wahoo_config()
     if cfg is None:
-        st.sidebar.warning("Wahoo isn't set up yet. Register an app at developers.wahooligan.com and add its "
-                           "`client_id` and `client_secret` to `.streamlit/secrets.toml` (see README).")
+        setup_box("wahoo")
         return None
     if not user_name:
         st.sidebar.info("Select or create a user profile first.")

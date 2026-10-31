@@ -122,5 +122,9 @@ def render_user_corner(user_name):
 
     _render_history_update(user_name, user_data)
 
+    from src.viz.connections import render_connections
+    render_connections()
+    st.markdown("---")
+
     st.info("Charts and analytics are on the **Training** page, including your critical-power model and the "
             "buttons that save it to your profile.")
