@@ -415,3 +415,33 @@ def test_lag_sweep_runs_and_restores_the_factor():
 def ae_factor():
     from src.physics import aerodyn as ae
     return ae.WIND_HEIGHT_FACTOR
+
+
+def test_random_wind_direction_error_makes_a_correct_factor_look_too_low():
+    """Why the sweep cannot identify the factor: a ride-to-ride scatter of the model wind direction, which a constant
+    offset cannot undo, moves the crossing well below the true 0.7 and the ratio at 0.7 below 1."""
+    from src.physics import aerodyn as ae
+    from validation import wind_factor_sweep as ws
+    factors = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+
+    def rides(sd, n=24, seed=0):
+        rng = np.random.default_rng(seed)
+        saved, out = ae.WIND_HEIGHT_FACTOR, []
+        try:
+            ae.WIND_HEIGHT_FACTOR = 0.7
+            for i in range(n):
+                sc = dict(terrain='hilly' if i % 2 else 'flat', route='out_and_back',
+                          wind10=float(rng.uniform(2, 6)), wind_from=float(rng.uniform(0, 360)))
+                df, kw = sim.observe(sim.simulate(sc), sim.Errors(wind_dir_deg=float(rng.normal(0, sd))), rng)
+                out.append(dict(df=df, rider_mass=kw['rider_mass'], bike_mass=kw['bike_mass'], crr=kw['crr'],
+                                ride_id=i, date=f"2026-01-{i % 28 + 1:02d}", name=f"r{i}", bike="Road"))
+        finally:
+            ae.WIND_HEIGHT_FACTOR = saved
+        return out
+
+    exact = ws.analyse(ws.sweep(rides(0), factors), factors)
+    noisy = ws.analyse(ws.sweep(rides(90), factors), factors)
+    assert exact['crossing'] == pytest.approx(0.7, abs=0.06)
+    assert noisy['crossing'] is not None and noisy['crossing'] < 0.45
+    t = noisy['table']
+    assert t[t['factor'] == 0.7]['median_ratio'].iloc[0] < 0.9
