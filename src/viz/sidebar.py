@@ -101,11 +101,11 @@ def render_sidebar():
         with st.form("user_form"):
             new_name = st.text_input(t("Name"))
             new_ftp = st.number_input(t("FTP (Watts) · optional"), value=None, min_value=1, step=5,
-                                      placeholder=t("estimated from your rides"), help=theme.FTP_HELP)
+                                      placeholder=t("estimated from your rides"), help=theme.ftp_help())
             new_lthr = st.number_input(t("LTHR (bpm) · optional"), value=None, min_value=1, step=1,
-                                       placeholder=t("estimated from your rides"), help=theme.LTHR_HELP)
+                                       placeholder=t("estimated from your rides"), help=theme.lthr_help())
             new_wprime = st.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5,
-                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.W_PRIME_HELP)
+                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.w_prime_help())
             new_weight = st.number_input(t("Weight (kg)"), value=70.0)
             new_height = st.number_input(t("Height (cm)"), value=175)
             submitted = st.form_submit_button(t("Save User"))
@@ -282,7 +282,7 @@ def _finish_polar_callback(state, code, error):
 def _polar_label(e):
     when = (e.get("start_time") or "")[:10]
     km = float(e.get("distance") or 0) / 1000
-    return f"{when} · {(e.get('detailed_sport_info') or e.get('sport') or 'Ride').replace('_', ' ').title()} · {km:.0f} km · {pl.duration_minutes(e)} min"
+    return f"{when} · {(e.get('detailed_sport_info') or e.get('sport') or t('Ride')).replace('_', ' ').title()} · {km:.0f} km · {pl.duration_minutes(e)} min"
 
 
 def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
@@ -327,7 +327,7 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
 
         if st.sidebar.button(t("⟳ Sync new rides"), key="polar_sync",
                              help=t("Imports the rides Polar lists that are not in your history yet.")):
-            bar = st.sidebar.progress(0.0, text="Checking Polar...")
+            bar = st.sidebar.progress(0.0, text=t("Checking Polar..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -356,13 +356,13 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
 
 def _wahoo_label(w):
     when = (w.get("starts") or "")[:10]
-    return f"{when} · {w.get('name') or 'Ride'} · {w.get('minutes') or 0} min"
+    return f"{when} · {w.get('name') or t('Ride')} · {w.get('minutes') or 0} min"
 
 
 def _activity_label(a):
     when = (a.get("start_date_local") or a.get("start_date") or "")[:10]
     km = (a.get("distance") or 0) / 1000
-    return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
+    return f"{when} · {a.get('name') or t('Ride')} · {km:.0f} km"
 
 
 def _search_by_date(provider, user_name, search):
@@ -435,12 +435,12 @@ def _show_import_result(res):
     """Summary of an ImportResult in the sidebar."""
     st.sidebar.success(t('Imported {imported} of {found} rides.', imported=res.imported, found=res.found))
     skipped = []
-    if res.already_imported: skipped.append(f"{res.already_imported} already imported")
-    if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
-    if res.no_data: skipped.append(f"{res.no_data} without recorded data or not cycling")
-    if res.not_completed: skipped.append(f"{res.not_completed} planned but not ridden")
+    if res.already_imported: skipped.append(t("{n} already imported", n=res.already_imported))
+    if res.duplicates_of_uploads: skipped.append(t("{n} matched uploaded files", n=res.duplicates_of_uploads))
+    if res.no_data: skipped.append(t("{n} without recorded data or not cycling", n=res.no_data))
+    if res.not_completed: skipped.append(t("{n} planned but not ridden", n=res.not_completed))
     if skipped:
-        st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")
+        st.sidebar.caption(t("Skipped: {reasons}.", reasons=", ".join(skipped)))
     if res.failed:
         st.sidebar.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
     if res.stopped_reason:
@@ -466,7 +466,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
         st.sidebar.caption(t("Strava opens in a new tab; you'll continue there after approving."))
         return None
 
-    who = auth.get("athlete_name") or "your account"
+    who = auth.get("athlete_name") or t("your account")
     st.sidebar.caption(t('Connected to Strava as **{who}**', who=who))
     usage = _strava_usage()
     current_file = None
@@ -496,7 +496,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
 
         if st.sidebar.button(t("⟳ Sync new rides"), help=t("Imports rides added to Strava since the last one "
                              "you imported (a few days of overlap catch late uploads).")):
-            bar = st.sidebar.progress(0.0, text="Checking Strava...")
+            bar = st.sidebar.progress(0.0, text=t("Checking Strava..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -514,7 +514,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
                        "(PMC, power records). Rides already saved are skipped."))
             since = st.date_input(t("Since"), value=pd.Timestamp.today().date() - pd.Timedelta(days=90))
             if st.button(t("Import history")):
-                bar = st.progress(0.0, text="Listing activities...")
+                bar = st.progress(0.0, text=t("Listing activities..."))
 
                 def _progress(done, total, name):
                     frac = done / total if total else 1.0
@@ -589,7 +589,7 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
 
         if st.sidebar.button(t("⟳ Sync new rides"), key="wahoo_sync",
                              help=t("Imports workouts added to Wahoo since the last one you imported.")):
-            bar = st.sidebar.progress(0.0, text="Checking Wahoo...")
+            bar = st.sidebar.progress(0.0, text=t("Checking Wahoo..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -608,7 +608,7 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
             since = st.date_input(t("Since"), value=pd.Timestamp.today().date() - pd.Timedelta(days=90),
                                   key="wahoo_since")
             if st.button(t("Import history"), key="wahoo_history"):
-                bar = st.progress(0.0, text="Listing workouts...")
+                bar = st.progress(0.0, text=t("Listing workouts..."))
 
                 def _progress(done, total, name):
                     bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])

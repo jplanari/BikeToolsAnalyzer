@@ -14,6 +14,7 @@ all usable samples instead of an average of per-second ratios, which is biased o
 """
 import numpy as np
 import pandas as pd
+from src.i18n import mark
 
 G = 9.80665                      # m/s²
 BIKE_MASS_KG = 8.0
@@ -29,9 +30,9 @@ STALL_SPEED_MS = 0.5             # below this the recorded speed is "zero" (GPS 
 MIN_STALL_S = 10                 # a frozen stretch shorter than this is not bridged
 MAX_STALL_S = 900                # ... and neither is one longer than this (a pause, not a tunnel)
 MIN_JUMP_M = 50.0                # the position must jump at least this far when the fix comes back
-CDA_ESTIMATE_NOTE = ("An estimate, not a measurement: with realistic errors in weight, rolling resistance, gradient and "
+CDA_ESTIMATE_NOTE = mark("An estimate, not a measurement: with realistic errors in weight, rolling resistance, gradient and "
                      "wind it is typically within ±10 % in calm conditions and ±20–30 % in wind. Compare rides on "
-                     "similar routes rather than reading the absolute value.")   # from the validation report (error budget)
+                     "similar routes rather than reading the absolute value.")   # shown through tr(); from the validation report (error budget)
 CDA_VALID = (0.10, 0.80)         # outside this a fitted CdA is a sign of bad data, not a rider
 
 _RD, _RV = 287.058, 461.495      # gas constants of dry air and water vapour, J/(kg K)

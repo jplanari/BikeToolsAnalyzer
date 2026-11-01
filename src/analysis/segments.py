@@ -3,6 +3,7 @@ Analysis of any stretch of a ride (a custom selection, a lap, a detected climb):
 whole ride, computed on that slice. Pure functions on the 1 Hz ride DataFrame; positions are row numbers
 (iloc), both ends included.
 """
+from src.i18n import mark
 import numpy as np
 import pandas as pd
 
@@ -140,7 +141,7 @@ def as_climb(df, i0, i1):
     length = (s.get('dist_km') or 0.0) * 1000.0
     return {'start_idx': df.index[i0], 'end_idx': df.index[i1], 'length_m': length,
             'elev_gain_m': s.get('ascent_m', 0.0), 'avg_gradient_pct': s.get('avg_grade_pct', 0.0),
-            'vam_mph': s.get('vam_m_h', 0.0) or 0.0, 'type': 'Selected segment'}
+            'vam_mph': s.get('vam_m_h', 0.0) or 0.0, 'type': mark('Selected segment')}
 
 
 def lap_spans(df, spans):
@@ -172,6 +173,13 @@ def climb_spans(df, climbs):
             continue
         out.append((f"Climb {n}", i0, max(i0, i1), c))
     return out
+
+
+# column headers of stats_table and of the FIT lap table, translated where shown (tr)
+TABLE_HEADERS = (mark('Start (km)'), mark('Distance (km)'), mark('Time'), mark('Ascent (m)'), mark('Grade (%)'),
+                 mark('Speed (km/h)'), mark('Avg power (W)'), mark('NP (W)'), mark('Avg HR'), mark('Cadence'),
+                 mark('Duration'), mark('Avg Power (W)'), mark('Max Power (W)'), mark('Max HR'),
+                 mark('Avg Cadence (rpm)'))
 
 
 def stats_table(df, spans, ftp=None, weight=None):

@@ -2,7 +2,7 @@
 rule-of-thumb status labels (no Streamlit, no plotting)."""
 import pandas as pd
 
-from src.i18n import mark
+from src.i18n import mark, t
 
 PERIODS = {mark('6 weeks'): 42, mark('3 months'): 91, mark('6 months'): 182, mark('1 year'): 365, mark('All'): None}
 
@@ -29,51 +29,51 @@ def ramp_status(v):
     if v is None or pd.isna(v):
         return None
     if v > 8:
-        return "⚠️ Aggressive"
+        return t("⚠️ Aggressive")
     if v >= 3:
-        return "↗ Building"
+        return t("↗ Building")
     if v > -3:
-        return "→ Maintaining"
-    return "↘ Losing fitness"
+        return t("→ Maintaining")
+    return t("↘ Losing fitness")
 
 
 def acwr_status(v):
     if v is None or pd.isna(v):
         return None
     if v < 0.8:
-        return "↘ Low load"
+        return t("↘ Low load")
     if v <= 1.3:
-        return "✅ In range"
+        return t("✅ In range")
     if v <= 1.5:
-        return "⚠️ High"
-    return "⛔ Spike"
+        return t("⚠️ High")
+    return t("⛔ Spike")
 
 
 def form_status(v):
     if v is None or pd.isna(v):
         return None
     if v > 25:
-        return "Very fresh"
+        return t("Very fresh")
     if v > 5:
-        return "✅ Fresh"
+        return t("✅ Fresh")
     if v >= -10:
-        return "Neutral"
+        return t("Neutral")
     if v >= -30:
-        return "Productive fatigue"
-    return "⚠️ Very fatigued"
+        return t("Productive fatigue")
+    return t("⚠️ Very fatigued")
 
 
 def monotony_status(v):
     if v is None or pd.isna(v):
         return None
-    return "⚠️ High" if v > 2.0 else "✅ Varied"
+    return t("⚠️ High") if v > 2.0 else t("✅ Varied")
 
 
 def tid_label(low, mid, high, pi):
     if pi is not None and pi > 2.0:
-        return "Polarized"
+        return t("Polarized")
     if low >= mid >= high:
-        return "Pyramidal"
+        return t("Pyramidal")
     if mid > low and mid > high:
-        return "Threshold-focused"
-    return "Non-polarized"
+        return t("Threshold-focused")
+    return t("Non-polarized")

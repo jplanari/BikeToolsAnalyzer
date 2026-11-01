@@ -93,15 +93,17 @@ def scan_file(path):
         return [], [], []
     translated, untranslated, problems = [], [], []
     wrapped_nodes = set()
-    imports_t = any(isinstance(n, ast.ImportFrom) and any(a.name in TRANSLATE for a in n.names)
-                    and ((n.module or "").startswith("src.i18n") or (n.level >= 1 and not n.module)) for n in ast.walk(tree))
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                and ((n.module or "").startswith("src.i18n") or (n.level >= 1 and not n.module))
+                for a in n.names if a.name in TRANSLATE}
+    imports_t = bool(imported)
     if imports_t:                                  # t / tn must mean the translation function in this file
         for n in ast.walk(tree):
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in TRANSLATE:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in imported:
                 problems.append((n.lineno, f"'{n.name}' is redefined here and hides the translation function"))
-            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in TRANSLATE:
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in imported:
                 problems.append((n.lineno, f"'{n.id}' is assigned here and hides the translation function"))
-            elif isinstance(n, ast.arg) and n.arg in TRANSLATE:
+            elif isinstance(n, ast.arg) and n.arg in imported:
                 problems.append((n.lineno, f"'{n.arg}' is an argument here and hides the translation function"))
     for node in ast.walk(tree):
         if imports_t and isinstance(node, ast.Call) and _call_name(node) in TRANSLATE and isinstance(node.func, ast.Name):

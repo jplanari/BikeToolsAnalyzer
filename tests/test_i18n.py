@@ -327,3 +327,35 @@ def test_plot_labels_follow_the_language():
     finally:
         set_language("en")
     assert ts._x(df)[1] == "Distance (km)"
+
+
+# --- dates and language-independent checks ------------------------------------------------------------------------------
+
+def test_month_and_day_names_follow_the_language(locales):
+    import datetime as dt
+    day = dt.date(2026, 3, 2)                                   # a Monday in March
+    locales("ca", {"Mon": "dl", "March": "març", "Mar": "mar"}, name="Català")
+    assert i18n.fdate(day, "%a %d %b") == "Mon 02 Mar"
+    i18n.set_language("ca")
+    assert i18n.fdate(day, "%a %d %b") == "dl 02 mar"
+    assert i18n.fdate(day, "%B %Y") == "març 2026"
+    assert i18n.t("Week of {d:%d %b}", d=day) == "Week of 02 mar"       # placeholders get the same treatment
+    assert i18n.t("{d:%Y-%m-%d}", d=day) == "2026-03-02"               # numeric formats are untouched
+
+
+def test_the_duplicate_ride_answer_is_recognised_in_every_language(monkeypatch):
+    from pathlib import Path
+    from src.data.db import rides
+    monkeypatch.setattr(catalog, "LOCALES_DIR", Path(catalog.__file__).parent / "locales")
+    monkeypatch.setattr(catalog, "_cache", {})
+    monkeypatch.setenv("BIKETOOLS_I18N_PREVIEW", "1")
+    try:
+        for code in ("en", "es", "ca"):
+            i18n.set_language(code)
+            message = i18n.tr(rides.DUPLICATE_MESSAGE)
+            assert rides.is_duplicate_message(message)
+            assert not rides.is_duplicate_message("Database Error: x")
+        i18n.set_language("es")
+        assert i18n.tr(rides.DUPLICATE_MESSAGE) != rides.DUPLICATE_MESSAGE
+    finally:
+        i18n.set_language("en")

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 import requests
+from src.i18n import t
 
 AUTHORIZE_URL = "https://api.wahooligan.com/oauth/authorize"
 TOKEN_URL = "https://api.wahooligan.com/oauth/token"
@@ -32,6 +33,10 @@ PER_PAGE = 100
 
 class WahooError(Exception):
     pass
+
+
+class WahooNoData(WahooError):
+    """The workout has no recorded data file."""
 
 
 class WahooAuthError(WahooError):
@@ -87,13 +92,13 @@ def _token_request(data):
     try:
         r = requests.post(TOKEN_URL, data=data, timeout=TIMEOUT_S)
     except requests.RequestException as e:
-        raise WahooError(f"Could not reach Wahoo: {e}") from e
+        raise WahooError(t('Could not reach Wahoo: {e}', e=e)) from e
     if r.status_code in (400, 401):
-        raise WahooAuthError(f"Wahoo rejected the request ({r.status_code}): {r.text[:200]}")
+        raise WahooAuthError(t('Wahoo rejected the request ({status_code}): {detail}', status_code=r.status_code, detail=r.text[:200]))
     if r.status_code == 429:
-        raise WahooRateLimitError("Wahoo rate limit reached; try again in a few minutes.")
+        raise WahooRateLimitError(t("Wahoo rate limit reached; try again in a few minutes."))
     if not r.ok:
-        raise WahooError(f"Wahoo token endpoint error {r.status_code}")
+        raise WahooError(t('Wahoo token endpoint error {status_code}', status_code=r.status_code))
     return r.json()
 
 
@@ -151,24 +156,24 @@ def api_request(method, path, access_token, params=None, data=None, usage=None):
         r = requests.request(method, f"{API_BASE}{path}", params=params, data=data,
                              headers={"Authorization": f"Bearer {access_token}"}, timeout=TIMEOUT_S)
     except requests.RequestException as e:
-        raise WahooError(f"Could not reach Wahoo: {e}") from e
+        raise WahooError(t('Could not reach Wahoo: {e}', e=e)) from e
     if usage is not None:
         usage.update(r.headers)
     if r.status_code == 401:
-        raise WahooAuthError("Wahoo authorization expired or was revoked. Please reconnect.")
+        raise WahooAuthError(t("Wahoo authorization expired or was revoked. Please reconnect."))
     if r.status_code == 403:
-        raise WahooAuthError("Wahoo did not allow this (reconnect Wahoo to grant the new permissions).")
+        raise WahooAuthError(t("Wahoo did not allow this (reconnect Wahoo to grant the new permissions)."))
     if r.status_code == 404:
         raise WahooNotFound("Not found on Wahoo.")
     if r.status_code == 429:
-        raise WahooRateLimitError("Wahoo rate limit reached; try again in a few minutes.")
+        raise WahooRateLimitError(t("Wahoo rate limit reached; try again in a few minutes."))
     if not r.ok:
         detail = ""
         try:
             detail = f": {r.text[:200]}"
         except Exception:
             pass
-        raise WahooError(f"Wahoo API error {r.status_code}{detail}")
+        raise WahooError(t('Wahoo API error {status_code}{detail}', status_code=r.status_code, detail=detail))
     return None if r.status_code == 204 or not r.content else r.json()
 
 
@@ -229,9 +234,9 @@ def download_fit(url):
     try:
         r = requests.get(url, timeout=TIMEOUT_S * 2, allow_redirects=True)
     except requests.RequestException as e:
-        raise WahooError(f"Could not download the FIT file: {e}") from e
+        raise WahooError(t('Could not download the FIT file: {e}', e=e)) from e
     if not r.ok or not r.content:
-        raise WahooError(f"FIT download failed ({r.status_code})")
+        raise WahooError(t('FIT download failed ({status_code})', status_code=r.status_code))
     return r.content
 
 

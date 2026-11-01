@@ -1,3 +1,4 @@
+from src.i18n import mark
 import numpy as np
 import pandas as pd
 
@@ -35,12 +36,12 @@ def hr_effort_zones(threshold_hr):
     were never counted.)
     """
     upper = [
-        ("Z1 (Recovery)", 0.81),
-        ("Z2 (Aerobic)", 0.90),
-        ("Z3 (Tempo)", 0.94),
-        ("Z4 (Threshold)", 1.00),
-        ("Z5 (VO2 Max)", 1.06),
-        ("Z6 (Anaerobic)", np.inf),
+        (mark("Z1 (Recovery)"), 0.81),
+        (mark("Z2 (Aerobic)"), 0.90),
+        (mark("Z3 (Tempo)"), 0.94),
+        (mark("Z4 (Threshold)"), 1.00),
+        (mark("Z5 (VO2 Max)"), 1.06),
+        (mark("Z6 (Anaerobic)"), np.inf),
     ]
     zones = {}
     low = 0.0

@@ -11,7 +11,7 @@ from src.analysis import correlations as co
 from src.data.db import update_user_crank
 from src.data.cached import get_ride_stats, get_hist, period_coverage
 from src.viz.sections import section_picker, remembered
-from src.i18n import t, mark, tr
+from src.i18n import t, fdate, mark, tr
 
 
 def _fmt_delta(a, b, fmt="{:+.1f}"):
@@ -31,8 +31,8 @@ def render_deeper_analytics(user_name, user_data):
                          help=t("The same number of days immediately before the selected period."))
     span = (a1 - a0) + pd.Timedelta(days=1)
     b0, b1 = a0 - span, a0 - pd.Timedelta(days=1)
-    lab_a = f"{a0:%d %b} – {a1:%d %b %Y}"
-    lab_b = f"{b0:%d %b} – {b1:%d %b %Y}"
+    lab_a = f"{fdate(a0, '%d %b')} – {fdate(a1, '%d %b %Y')}"
+    lab_b = f"{fdate(b0, '%d %b')} – {fdate(b1, '%d %b %Y')}"
 
     ftp, lthr = user_data['ftp'], user_data['lthr']
     hr_a = get_hist(user_name, 'p_hr', a0, a1)
@@ -48,11 +48,11 @@ def render_deeper_analytics(user_name, user_data):
 
     def _empty_reason(what):
         if cov['rides'] == 0:
-            return "No rides in this period."
+            return t("No rides in this period.")
         if cov['needs_update'] == cov['rides']:
-            return f"None of the {cov['rides']} rides in this period has been updated yet (run **Update ride history** in the User Corner)."
-        return (f"None of the {cov['rides'] - cov['needs_update']} up-to-date rides in this period "
-                f"has both power and {what} while pedalling.")
+            return t("None of the {rides} rides in this period has been updated yet (run **Update ride history** in the User Corner).", rides=cov['rides'])
+        return t("None of the {n} up-to-date rides in this period has both power and {what} while pedalling.",
+                 n=cov['rides'] - cov['needs_update'], what=what)
 
     sections = [mark("❤️ Power ↔ Heart rate"), mark("🦵 Power ↔ Cadence"), mark("🔁 Recovery & Efficiency")]
     section = section_picker(sections, key="da_section")
@@ -60,7 +60,7 @@ def render_deeper_analytics(user_name, user_data):
     # ---- Power vs HR ----
     if section == sections[0]:
         if hr_a.empty:
-            st.info(_empty_reason("heart rate"))
+            st.info(_empty_reason(t("heart rate")))
         else:
             fit_a = co.linear_fit(hr_a)
             fit_b = co.linear_fit(hr_b) if compare else None
@@ -69,17 +69,17 @@ def render_deeper_analytics(user_name, user_data):
             hr_ref_b = co.y_at_power(hr_b, ref_p) if compare else None
 
             m1, m2, m3 = st.columns(3)
-            m1.metric(t("Correlation (r)"), f"{fit_a['r']:.2f}" if fit_a else "N/A",
+            m1.metric(t("Correlation (r)"), f"{fit_a['r']:.2f}" if fit_a else t("N/A"),
                       delta=_fmt_delta(fit_a and fit_a['r'], fit_b and fit_b['r'], "{:+.2f}"),
                       help=t("How tightly heart rate follows power (30 s averages, moving time). "
                            "Close to 1 = HR is a good proxy for effort; lower values usually mean "
                            "lots of short efforts, heat, fatigue or HR sensor noise."))
-            m2.metric(t("HR rise per +10 W"), f"{fit_a['slope'] * 10:.1f} bpm" if fit_a else "N/A",
+            m2.metric(t("HR rise per +10 W"), f"{fit_a['slope'] * 10:.1f} bpm" if fit_a else t("N/A"),
                       delta=_fmt_delta(fit_a and fit_a['slope'] * 10, fit_b and fit_b['slope'] * 10),
                       delta_color="inverse",
                       help=t("Slope of the HR-vs-power line. A flatter slope means each extra watt costs less heart rate."))
             hr_label = t("HR at {ref_p} W", ref_p=ref_p)
-            m3.metric(hr_label, f"{hr_ref_a:.0f} bpm" if hr_ref_a else "N/A",
+            m3.metric(hr_label, f"{hr_ref_a:.0f} bpm" if hr_ref_a else t("N/A"),
                       delta=_fmt_delta(hr_ref_a, hr_ref_b, "{:+.0f} bpm"), delta_color="inverse",
                       help=t('Average HR while riding at {ref_p} W ±15 W (65 % of FTP). Lower for the same power = better '
                                 'aerobic fitness (or more fatigue/heat if it rises).', ref_p=ref_p))
@@ -107,7 +107,7 @@ def render_deeper_analytics(user_name, user_data):
     # ---- Power vs cadence ----
     if section == sections[1]:
         if cad_a.empty:
-            st.info(_empty_reason("cadence"))
+            st.info(_empty_reason(t("cadence")))
         else:
             crank_mm = float(user_data.get('crank_mm') or 172.5)
             new_crank = st.number_input(t("Crank length (mm)"), min_value=150.0, max_value=200.0,
@@ -123,17 +123,17 @@ def render_deeper_analytics(user_name, user_data):
             quads_b = co.quadrants(cad_b, ftp, ref_cad) if compare else None
 
             m1, m2, m3 = st.columns(3)
-            m1.metric(t("Median cadence"), f"{ref_cad:.0f} rpm" if ref_cad else "N/A",
+            m1.metric(t("Median cadence"), f"{ref_cad:.0f} rpm" if ref_cad else t("N/A"),
                       delta=_fmt_delta(ref_cad, ref_cad_b, "{:+.0f} rpm"), delta_color="off",
                       help=t("Your typical cadence while pedalling in this period. Used as the quadrant reference."))
             m2.metric(t("High-force time (QI + QII)"),
-                      f"{(quads['QI'] + quads['QII']):.0%}" if quads else "N/A",
+                      f"{(quads['QI'] + quads['QII']):.0%}" if quads else t("N/A"),
                       delta=(f"{(quads['QI'] + quads['QII']) - (quads_b['QI'] + quads_b['QII']):+.0%}"
                              if quads and quads_b else None), delta_color="off",
                       help=t("Share of pedalling time pushing harder than the force that produces FTP at your "
                            "median cadence: climbing, accelerations, hard efforts."))
             fit_c = co.linear_fit(cad_a, y_bin=5)
-            m3.metric(t("Cadence rise per +50 W"), f"{fit_c['slope'] * 50:.1f} rpm" if fit_c else "N/A",
+            m3.metric(t("Cadence rise per +50 W"), f"{fit_c['slope'] * 50:.1f} rpm" if fit_c else t("N/A"),
                       help=t("How much you spin faster as power goes up. Near zero = you mostly push harder "
                            "at the same cadence (often seen on climbs or with a big gear)."))
 
@@ -147,10 +147,10 @@ def render_deeper_analytics(user_name, user_data):
             if quads:
                 st.plotly_chart(plot_quadrants(co.aggregate(cad_a), ftp, ref_cad, crank_mm / 1000),
                                 use_container_width=True)
-                rows = [{"Quadrant": q, "Meaning": tr(co.QUADRANT_NAMES[q]), lab_a: f"{quads[q]:.0%}"} for q in quads]
+                rows = [{t("Quadrant"): q, t("Meaning"): tr(co.QUADRANT_NAMES[q]), lab_a: f"{quads[q]:.0%}"} for q in quads]
                 if quads_b:
                     for r in rows:
-                        r[lab_b] = f"{quads_b[r['Quadrant']]:.0%}"
+                        r[lab_b] = f"{quads_b[r[t('Quadrant')]]:.0%}"
                 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
                 st.caption(t('Lines at your median cadence ({ref_cad:.0f} rpm) and at the pedal force that gives your FTP '
                                 '({ftp} W) at that cadence; the red curve is FTP. QII-heavy riding builds muscular force '
@@ -179,15 +179,15 @@ def render_deeper_analytics(user_name, user_data):
         hrr_a, hrr_b = med(hrr, 'hrr60_bpm'), (med(hrr, 'hrr60_bpm', False) if compare else None)
         ef_a, ef_b = med(endu, 'ef'), (med(endu, 'ef', False) if compare else None)
         dec_a, dec_b = med(endu, 'decoupling_pct'), (med(endu, 'decoupling_pct', False) if compare else None)
-        m1.metric(t("HR recovery (60 s)"), f"{hrr_a:.0f} bpm" if hrr_a else "N/A",
+        m1.metric(t("HR recovery (60 s)"), f"{hrr_a:.0f} bpm" if hrr_a else t("N/A"),
                   delta=_fmt_delta(hrr_a, hrr_b, "{:+.0f} bpm"),
                   help=t("Median heart-rate drop in the minute after hard efforts (≥ 1 min above 105 % FTP "
                        "followed by easy riding). Faster recovery generally reflects fitness; a sudden drop "
                        "can be a sign of accumulated fatigue."))
-        m2.metric(t("EF on endurance rides"), f"{ef_a:.2f}" if ef_a else "N/A",
+        m2.metric(t("EF on endurance rides"), f"{ef_a:.2f}" if ef_a else t("N/A"),
                   delta=_fmt_delta(ef_a, ef_b, "{:+.2f}"),
                   help=t("Median NP / HR on rides of 60+ min with VI ≤ 1.10, so only comparable steady rides count."))
-        m3.metric(t("Decoupling on endurance rides"), f"{dec_a:.1f} %" if dec_a is not None else "N/A",
+        m3.metric(t("Decoupling on endurance rides"), f"{dec_a:.1f} %" if dec_a is not None else t("N/A"),
                   delta=_fmt_delta(dec_a, dec_b, "{:+.1f} pp"), delta_color="inverse",
                   help=t("Median power:HR drift on the same rides. Below ~5 % suggests solid aerobic endurance."))
 

@@ -57,7 +57,7 @@ def import_activities(user_name, activities, ftp, lthr=None, progress=None):
             res.imported += 1
             if start is not None:
                 known_starts.append(start)
-        elif "duplicate" in msg.lower() or "already exists" in msg.lower():
+        elif db.is_duplicate_message(msg):
             res.already_imported += 1
         else:
             res.failed.append(f"{act.name}: {msg}")

@@ -114,23 +114,27 @@ def welcome(has_user=True):
 
 DEFAULT_FTP, DEFAULT_LTHR = 200, 170
 
-FTP_HELP = ("**FTP (functional threshold power)** is the highest power, in watts, you could hold for about an "
-            "hour. It sets your power zones and the TSS / IF of every ride. Quick estimate: 95 % of your best "
-            "20-minute power. If unsure, leave it empty: the app starts from "
-            f"{DEFAULT_FTP} W and then estimates it from your rides (best 20 minutes) as soon as it has some.")
-LTHR_HELP = ("**LTHR (lactate threshold heart rate)** is the average heart rate, in bpm, you can sustain for "
+def ftp_help():
+    return t("**FTP (functional threshold power)** is the highest power, in watts, you could hold for about an "
+             "hour. It sets your power zones and the TSS / IF of every ride. Quick estimate: 95 % of your best "
+             "20-minute power. If unsure, leave it empty: the app starts from "
+             "{default} W and then estimates it from your rides (best 20 minutes) as soon as it has some.",
+             default=DEFAULT_FTP)
+def lthr_help():
+    return t("**LTHR (lactate threshold heart rate)** is the average heart rate, in bpm, you can sustain for "
              "about an hour of hard effort. It sets your heart-rate zones and the HR-based load for rides "
              "without a power meter. Quick estimate: your average HR over the last 20 minutes of a 30-minute "
-             f"all-out effort. If unsure, leave it empty: the app starts from {DEFAULT_LTHR} bpm and then estimates it "
-             "from the best 20-minute heart rate in your rides.")
+             "all-out effort. If unsure, leave it empty: the app starts from {default} bpm and then estimates it "
+             "from the best 20-minute heart rate in your rides.", default=DEFAULT_LTHR)
 
 
 DEFAULT_W_PRIME_KJ = 20
 
-W_PRIME_HELP = ("**W′ (W prime)** is the amount of work, in kilojoules, you can do above your threshold power before "
-                "you are exhausted: your anaerobic battery. It drives the W′ balance chart of every ride. Typical "
-                f"values are 15 to 30 kJ. If unsure, leave it empty: the app starts from {DEFAULT_W_PRIME_KJ} kJ and, "
-                "when a ride uses more than that, offers to raise it.")
+def w_prime_help():
+    return t("**W′ (W prime)** is the amount of work, in kilojoules, you can do above your threshold power before "
+             "you are exhausted: your anaerobic battery. It drives the W′ balance chart of every ride. Typical "
+             "values are 15 to 30 kJ. If unsure, leave it empty: the app starts from {default} kJ and, "
+             "when a ride uses more than that, offers to raise it.", default=DEFAULT_W_PRIME_KJ)
 
 
 def w_prime_from_kj(kj):
@@ -144,20 +148,20 @@ def _first_profile():
     st.subheader(t("Welcome — create your profile"))
     st.caption(t("Only the name is required. You can fill in or change the rest later in the sidebar."))
     with st.expander(t("What are FTP, LTHR and W′?"), expanded=True):
-        st.markdown(FTP_HELP)
-        st.markdown(LTHR_HELP)
-        st.markdown(W_PRIME_HELP)
+        st.markdown(ftp_help())
+        st.markdown(lthr_help())
+        st.markdown(w_prime_help())
     with st.form("first_profile_form"):
         name = st.text_input(t("Name"), key="first_profile_name")
         c1, c2, c3, c4, c5 = st.columns(5)
         ftp = c1.number_input(t("FTP (Watts) · optional"), value=None, min_value=1, step=5, key="first_profile_ftp",
-                              placeholder=t("estimated from your rides"), help=FTP_HELP)
+                              placeholder=t("estimated from your rides"), help=ftp_help())
         lthr = c2.number_input(t("LTHR (bpm) · optional"), value=None, min_value=1, step=1, key="first_profile_lthr",
-                               placeholder=t("estimated from your rides"), help=LTHR_HELP)
+                               placeholder=t("estimated from your rides"), help=lthr_help())
         weight = c3.number_input(t("Weight (kg)"), value=70.0)
         height = c4.number_input(t("Height (cm)"), value=175)
         wprime = c5.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5, key="first_profile_wprime",
-                                 placeholder=f"{DEFAULT_W_PRIME_KJ} kJ", help=W_PRIME_HELP)
+                                 placeholder=f"{DEFAULT_W_PRIME_KJ} kJ", help=w_prime_help())
         if st.form_submit_button(t("Create profile"), type="primary"):
             if not name.strip():
                 st.error(t("Enter a name first."))

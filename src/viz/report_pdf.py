@@ -21,6 +21,8 @@ from src.analysis import workout as wo
 from src.analysis.labels import (acwr_status, dur_label, form_status, monotony_status, ramp_status,
                                  tid_label)
 from src.viz.training_plots import palette
+from src.i18n import t
+from src.analysis.power_profile import window_label
 
 PAGE = (8.27, 11.69)                      # A4 portrait, inches
 INK, SOFT = '#2b2a27', '#6b6a66'
@@ -51,7 +53,7 @@ def _new_page(title, subtitle=None):
 
 def _footer(fig, left, n, total):
     fig.text(LEFT, 0.022, left, fontsize=7, color=SOFT)
-    fig.text(RIGHT, 0.022, f"Page {n} of {total}", fontsize=7, color=SOFT, ha='right')
+    fig.text(RIGHT, 0.022, t('Page {n} of {total}', n=n, total=total), fontsize=7, color=SOFT, ha='right')
 
 
 def _axes(fig, top, height, left=LEFT, right=RIGHT):
@@ -79,8 +81,8 @@ def _style(ax, title=None, ylabel=None, grid=True):
 def _legend(ax, handles=None, ncol=4):
     leg = ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(0, 1.0), ncol=ncol, frameon=False,
                     fontsize=7.5, borderaxespad=0.2, handlelength=1.6)
-    for t in leg.get_texts():
-        t.set_color(INK)
+    for label_text in leg.get_texts():
+        label_text.set_color(INK)
 
 
 def _empty(ax, message):
@@ -149,9 +151,9 @@ def _fmt(v, spec, unit=''):
 # --- Charts ------------------------------------------------------------------------------------
 
 def chart_load(ax, pmc, today):
-    _style(ax, 'Fitness, fatigue and form')
+    _style(ax, t('Fitness, fatigue and form'))
     if pmc is None or pmc.empty:
-        return _empty(ax, 'No rides with a training load in this period.')
+        return _empty(ax, t('No rides with a training load in this period.'))
     actual, plan = pmc[~pmc['planned']], pmc[pmc['planned']]
     for part, alpha in ((actual, 0.6), (plan, 0.3)):
         if part.empty:
@@ -164,13 +166,13 @@ def chart_load(ax, pmc, today):
             joined = pd.concat([actual.tail(1), plan])
             ax.plot(joined.index, joined[col], color=color, lw=1.6, ls=(0, (4, 2)))
     ax.axvline(today, color=PAL['muted'], lw=0.8, ls=':')
-    ax.text(today, 1.0, ' today', transform=ax.get_xaxis_transform(), fontsize=7, color=SOFT, va='top')
+    ax.text(today, 1.0, t(' today'), transform=ax.get_xaxis_transform(), fontsize=7, color=SOFT, va='top')
     ax.axhline(0, color=PAL['muted'], lw=0.5)
     _dates(ax)
-    _legend(ax, [plt_line(SERIES[0], 'Fitness (CTL)'), plt_line(SERIES[1], 'Fatigue (ATL)'),
-                 Patch(color=PAL['pos'], alpha=0.6, label='Form (TSB) +'),
-                 Patch(color=PAL['neg'], alpha=0.6, label='Form (TSB) −')]
-            + ([plt_line(PAL['muted'], 'planned (dashed)', dashed=True)] if not plan.empty else []), ncol=5)
+    _legend(ax, [plt_line(SERIES[0], t('Fitness (CTL)')), plt_line(SERIES[1], t('Fatigue (ATL)')),
+                 Patch(color=PAL['pos'], alpha=0.6, label=t('Form (TSB) +')),
+                 Patch(color=PAL['neg'], alpha=0.6, label=t('Form (TSB) −'))]
+            + ([plt_line(PAL['muted'], t('planned (dashed)'), dashed=True)] if not plan.empty else []), ncol=5)
 
 
 def plt_line(color, label, dashed=False):
@@ -178,9 +180,9 @@ def plt_line(color, label, dashed=False):
 
 
 def chart_volume(ax, vol, freq):
-    _style(ax, f"Riding time per {'week' if freq == 'W' else 'month'}", 'hours')
+    _style(ax, t('Riding time per week') if freq == 'W' else t('Riding time per month'), t('hours'))
     if vol is None or vol.empty:
-        return _empty(ax, 'No rides in this period.')
+        return _empty(ax, t('No rides in this period.'))
     width = 5.5 if freq == 'W' else 24
     ax.bar(vol.index + pd.Timedelta(days=width / 2 * 0.2), vol['hours'], width=width, color=SERIES[0],
            edgecolor='white', linewidth=0.8)
@@ -193,22 +195,22 @@ def chart_volume(ax, vol, freq):
 
 
 def chart_ramp(ax, ramp):
-    _style(ax, 'Ramp rate (fitness change per week)', 'CTL points / week')
+    _style(ax, t('Ramp rate (fitness change per week)'), t('CTL points / week'))
     weekly = ramp.resample('W-SUN').last().dropna() if ramp is not None and len(ramp) else pd.Series(dtype=float)
     if weekly.empty:
-        return _empty(ax, 'Needs at least a week of history.')
+        return _empty(ax, t('Needs at least a week of history.'))
     ax.bar(weekly.index, weekly.values, width=5.5, color=SERIES[0], edgecolor='white', linewidth=0.8)
     ax.axhline(8, color=PAL['muted'], lw=0.8, ls=(0, (4, 2)))
-    ax.text(weekly.index[0], 8, ' +8: aggressive', fontsize=7, color=SOFT, va='bottom')
+    ax.text(weekly.index[0], 8, t(' +8: aggressive'), fontsize=7, color=SOFT, va='bottom')
     ax.axhline(0, color=PAL['muted'], lw=0.5)
     _dates(ax)
 
 
 def chart_acwr(ax, ratio):
-    _style(ax, 'Acute : chronic load (ATL / CTL)', 'ratio')
+    _style(ax, t('Acute : chronic load (ATL / CTL)'), t('ratio'))
     r = ratio.dropna() if ratio is not None else pd.Series(dtype=float)
     if r.empty:
-        return _empty(ax, 'Needs 4 weeks of history.')
+        return _empty(ax, t('Needs 4 weeks of history.'))
     ax.axhspan(0.8, 1.3, color=PAL['pos'], alpha=0.12, lw=0)
     ax.text(r.index[0], 1.3, ' 0.8–1.3', fontsize=7, color=SOFT, va='bottom')
     ax.plot(r.index, r.values, color=SERIES[0], lw=1.6)
@@ -216,45 +218,45 @@ def chart_acwr(ax, ratio):
 
 
 def chart_power_windows(ax, curves, weight):
-    _style(ax, 'Best power by period', 'watts')
+    _style(ax, t('Best power by period'), t('watts'))
     drawn = []
     for i, (label, c) in enumerate(curves.items()):
         if c is None or c.empty:
             continue
         c = c.sort_values('duration')
-        ax.plot(c['duration'], c['watts'], color=SERIES[i % 4], lw=2.0 if i == 0 else 1.5, label=label)
+        ax.plot(c['duration'], c['watts'], color=SERIES[i % 4], lw=2.0 if i == 0 else 1.5, label=window_label(label))
         drawn.append(label)
     if not drawn:
-        return _empty(ax, 'No power data yet.')
+        return _empty(ax, t('No power data yet.'))
     ax.set_xscale('log')
     ticks = [1, 5, 15, 60, 300, 1200, 3600, 18000]
     ax.set_xticks(ticks)
     ax.set_xticklabels(['1s', '5s', '15s', '1m', '5m', '20m', '1h', '5h'])
     ax.minorticks_off()
     ax.set_xlim(left=1)
-    ax.set_xlabel('duration', fontsize=7.5, color=SOFT)
+    ax.set_xlabel(t('duration'), fontsize=7.5, color=SOFT)
     _legend(ax, ncol=4)
 
 
 def chart_cp_history(ax, hist):
-    _style(ax, 'Threshold estimates (rolling 90-day best)', 'watts')
+    _style(ax, t('Threshold estimates (rolling 90-day best)'), t('watts'))
     drawn = False
-    for i, (col, name) in enumerate((('cp', 'Critical power'), ('ftp_20min', '95 % of best 20 min'))):
+    for i, (col, name) in enumerate((('cp', t('Critical power')), ('ftp_20min', t('95 % of best 20 min')))):
         s = hist[col].dropna() if hist is not None and not hist.empty else pd.Series(dtype=float)
         if s.empty:
             continue
         ax.plot(s.index, s.values, color=SERIES[i], lw=1.6, marker='o', ms=3.5, label=name)
         drawn = True
     if not drawn:
-        return _empty(ax, 'Needs maximal efforts between 3 and 20 minutes.')
+        return _empty(ax, t('Needs maximal efforts between 3 and 20 minutes.'))
     _dates(ax)
     _legend(ax, ncol=2)
 
 
 def chart_durability(ax, table):
-    _style(ax, 'Power kept after accumulated work', '% of fresh best')
+    _style(ax, t('Power kept after accumulated work'), t('% of fresh best'))
     if table is None or table.empty:
-        return _empty(ax, 'No ride in this period went beyond 1000 kJ.')
+        return _empty(ax, t('No ride in this period went beyond 1000 kJ.'))
     labels = {5: '5 s', 60: '1 min', 300: '5 min', 1200: '20 min', 3600: '60 min'}
     durations = sorted(table['duration'].unique())
     groups = sorted(table['kj'].unique())
@@ -263,7 +265,7 @@ def chart_durability(ax, table):
         g = table[table['kj'] == kj].set_index('duration')['retention_pct']
         xs = [durations.index(d) + (i - (len(groups) - 1) / 2) * w for d in g.index]
         ax.bar(xs, g.values, width=w * 0.92, color=SERIES[i % 4], edgecolor='white', linewidth=0.8,
-               label=f"after {kj / 1000:g} MJ")
+               label=t('after {kj:g} MJ', kj=kj / 1000))
     ax.set_xticks(range(len(durations)))
     ax.set_xticklabels([labels.get(d, f"{d}s") for d in durations])
     ax.axhline(100, color=PAL['muted'], lw=0.8, ls=':')
@@ -272,12 +274,12 @@ def chart_durability(ax, table):
 
 
 def chart_intensity(ax, dist, freq):
-    _style(ax, 'Training intensity distribution', '% of riding time')
+    _style(ax, t('Training intensity distribution'), t('% of riding time'))
     if dist is None or dist.empty:
-        return _empty(ax, 'No zone data in this period.')
+        return _empty(ax, t('No zone data in this period.'))
     width = 5.5 if freq == 'W' else 24
     bottom = np.zeros(len(dist))
-    for (col, name), color in zip((('low', 'Easy (Z1–2)'), ('mid', 'Moderate (Z3–4)'), ('high', 'Hard (Z5+)')),
+    for (col, name), color in zip((('low', t('Easy (Z1–2)')), ('mid', t('Moderate (Z3–4)')), ('high', t('Hard (Z5+)'))),
                                   PAL['intensity']):
         vals = dist[col].to_numpy() * 100
         ax.bar(dist.index, vals, bottom=bottom, width=width, color=color, edgecolor='white', linewidth=0.8,
@@ -289,13 +291,13 @@ def chart_intensity(ax, dist, freq):
 
 
 def chart_polarization(ax, dist):
-    _style(ax, 'Polarization index', 'a.u.')
+    _style(ax, t('Polarization index'), 'a.u.')
     s = dist['pi'].dropna() if dist is not None and not dist.empty else pd.Series(dtype=float)
     if s.empty:
-        return _empty(ax, 'Not defined (more hard than easy time, or no zone data).')
+        return _empty(ax, t('Not defined (more hard than easy time, or no zone data).'))
     ax.plot(s.index, s.values, color=SERIES[0], lw=1.6, marker='o', ms=3.5)
     ax.axhline(2.0, color=PAL['muted'], lw=0.8, ls=(0, (4, 2)))
-    ax.text(s.index[0], 2.0, ' > 2.0: polarized', fontsize=7, color=SOFT, va='bottom')
+    ax.text(s.index[0], 2.0, t(' > 2.0: polarized'), fontsize=7, color=SOFT, va='bottom')
     _dates(ax)
 
 
@@ -304,60 +306,60 @@ def chart_polarization(ax, dist):
 def _period_label(data):
     d, today, start = data['period_days'], data['today'], data['start']
     if start is None:
-        return f"Whole history, to {today:%d %b %Y}"
-    return f"{start:%d %b %Y} – {today:%d %b %Y} ({d} days)"
+        return t("Whole history, to {today:%d %b %Y}", today=today)
+    return t("{start:%d %b %Y} – {today:%d %b %Y} ({d} days)", start=start, today=today, d=d)
 
 
 def _page_summary(data):
-    u, now, t = data['user'], data['now'], data['totals']
-    fig = _new_page('Training report', f"{u['name']}  ·  {_period_label(data)}")
+    u, now, tot = data['user'], data['now'], data['totals']
+    fig = _new_page(t('Training report'), f"{u['name']}  ·  {_period_label(data)}")
     ftp, weight = u['ftp'], u['weight']
     cp = data['cp2']['cp'] if data['cp2'] else None
     _tile_row(fig, 0.895, [
-        ('Fitness (CTL)', _fmt(now.get('ctl'), '.0f'), '42-day load'),
-        ('Fatigue (ATL)', _fmt(now.get('atl'), '.0f'), '7-day load'),
-        ('Form (TSB)', _fmt(now.get('tsb'), '+.0f'), _plain(form_status(now.get('tsb')))),
-        ('Ramp rate', _fmt(now.get('ramp'), '+.1f', '/wk'), _plain(ramp_status(now.get('ramp')))),
-        ('Acute : chronic', _fmt(now.get('acwr'), '.2f'), _plain(acwr_status(now.get('acwr')))),
+        (t('Fitness (CTL)'), _fmt(now.get('ctl'), '.0f'), t('42-day load')),
+        (t('Fatigue (ATL)'), _fmt(now.get('atl'), '.0f'), t('7-day load')),
+        (t('Form (TSB)'), _fmt(now.get('tsb'), '+.0f'), _plain(form_status(now.get('tsb')))),
+        (t('Ramp rate'), _fmt(now.get('ramp'), '+.1f', '/wk'), _plain(ramp_status(now.get('ramp')))),
+        (t('Acute : chronic'), _fmt(now.get('acwr'), '.2f'), _plain(acwr_status(now.get('acwr')))),
         ('FTP', f"{ftp} W", f"{ftp / weight:.2f} W/kg" if weight else ''),
-        ('Critical power', _fmt(cp, '.0f', ' W'), 'last 90 days' if cp else 'no max efforts'),
-        ('Monotony (7 d)', _fmt(now.get('monotony'), '.2f'), _plain(monotony_status(now.get('monotony')))),
-        ('Rides', f"{t['rides']}", f"{t['hours']:.1f} h riding"),
-        ('Distance', f"{t['km']:,.0f} km", f"{t['elevation_m']:,.0f} m climbing"),
+        (t('Critical power'), _fmt(cp, '.0f', ' W'), t('last 90 days') if cp else t('no max efforts')),
+        (t('Monotony (7 d)'), _fmt(now.get('monotony'), '.2f'), _plain(monotony_status(now.get('monotony')))),
+        (t('Rides'), f"{tot['rides']}", t('{hours:.1f} h riding', hours=tot['hours'])),
+        (t('Distance'), f"{tot['km']:,.0f} km", t('{elevation_m:,.0f} m climbing', elevation_m=tot['elevation_m'])),
     ])
     ax = _axes(fig, 0.72, 0.30)
     chart_load(ax, data['pmc'], data['today'])
     y = 0.37
-    fig.text(LEFT, y, 'Notes', fontsize=10, fontweight='bold', color=INK, va='top')
+    fig.text(LEFT, y, t('Notes'), fontsize=10, fontweight='bold', color=INK, va='top')
     y -= 0.025
-    y = _note(fig, y, f"In this period: {t['rides']} rides, {t['hours']:.1f} h, {t['km']:,.0f} km, "
-                      f"{t['elevation_m']:,.0f} m of climbing, {t['kj']:,.0f} kJ of work and {t['tss']:,.0f} TSS.",
+    y = _note(fig, y, t('In this period: {rides} rides, {hours:.1f} h, {km:,.0f} km, {elevation_m:,.0f} m of climbing, '
+                           '{kj:,.0f} kJ of work and {tss:,.0f} TSS.', rides=tot['rides'], hours=tot['hours'], km=tot['km'], elevation_m=tot['elevation_m'], kj=tot['kj'], tss=tot['tss']),
               size=8.5, color=INK)
     fc = data['forecast']
     if fc:
-        y = _note(fig, y, f"With the planned sessions, form on {fc['date']:%a %d %b} would be {fc['tsb']:+.0f} "
-                          f"({_plain(form_status(fc['tsb']))}) with fitness at {fc['ctl']:.0f}.", size=8.5, color=INK)
+        y = _note(fig, y, t('With the planned sessions, form on {date:%a %d %b} would be {tsb:+.0f} ({plain}) with fitness '
+                               'at {ctl:.0f}.', date=fc['date'], tsb=fc['tsb'], plain=_plain(form_status(fc['tsb'])), ctl=fc['ctl']), size=8.5, color=INK)
     s = data['suggestion']
     if s:
         if s['direction'] == 'up':
-            y = _note(fig, y, f"Your best 20 minutes in the last {s['window_days']} days "
-                              f"({s['best_20min_w']:.0f} W, {s['best_20min_date']:%d %b}) suggests an FTP of about "
-                              f"{s['ftp']} W, {s['change_w']:+d} W vs the {ftp} W in your profile.", size=8.5, color=INK)
+            y = _note(fig, y, t('Your best 20 minutes in the last {window_days} days ({best_20min_w:.0f} W, '
+                                   '{best_20min_date:%d %b}) suggests an FTP of about {ftp} W, {change_w:+d} W vs the {ftp_2} W '
+                                   'in your profile.', window_days=s['window_days'], best_20min_w=s['best_20min_w'], best_20min_date=s['best_20min_date'], ftp=s['ftp'], change_w=s['change_w'], ftp_2=ftp), size=8.5, color=INK)
         else:
-            y = _note(fig, y, f"Your best 20 minutes in the last {s['window_days']} days implies about {s['ftp']} W, "
-                              f"below your profile FTP of {ftp} W. That only means no recent effort backs it up.",
+            y = _note(fig, y, t('Your best 20 minutes in the last {window_days} days implies about {ftp} W, below your profile '
+                                   'FTP of {ftp_2} W. That only means no recent effort backs it up.', window_days=s['window_days'], ftp=s['ftp'], ftp_2=ftp),
                       size=8.5, color=INK)
     if data['rides_needing_update']:
-        y = _note(fig, y, f"{data['rides_needing_update']} rides were saved by an older version of the app and are "
-                          "missing some data (run 'Update ride history' in the User Corner to include them).",
+        y = _note(fig, y, t('{rides_needing_update} rides were saved by an older version of the app and are missing some '
+                               "data (run 'Update ride history' in the User Corner to include them).", rides_needing_update=data['rides_needing_update']),
                   size=8.5, color=INK)
-    _note(fig, y - 0.01, "Load (TSS) is power-based where a power meter was used and heart-rate based otherwise. "
-                         "Form = yesterday's fitness minus fatigue. Status words are rules of thumb, not medical advice.")
+    _note(fig, y - 0.01, t("Load (TSS) is power-based where a power meter was used and heart-rate based otherwise. "
+                         "Form = yesterday's fitness minus fatigue. Status words are rules of thumb, not medical advice."))
     return fig
 
 
 def _page_volume(data):
-    fig = _new_page('Volume and load progression', _period_label(data))
+    fig = _new_page(t('Volume and load progression'), _period_label(data))
     chart_volume(_axes(fig, 0.855, 0.2), data['volume'], data['freq'])
     chart_ramp(_axes(fig, 0.585, 0.2), data['ramp'])
     chart_acwr(_axes(fig, 0.315, 0.2), data['acwr'])
@@ -366,41 +368,41 @@ def _page_volume(data):
 
 def _page_power(data):
     u = data['user']
-    fig = _new_page('Power profile', f"{u['name']}  ·  FTP {u['ftp']} W  ·  {u['weight']:.1f} kg")
+    fig = _new_page(t('Power profile'), f"{u['name']}  ·  FTP {u['ftp']} W  ·  {u['weight']:.1f} kg")
     chart_power_windows(_axes(fig, 0.855, 0.25), data['curves'], u['weight'])
     cp2, cp3 = data['cp2'], data['cp3']
     _tile_row(fig, 0.54, [
-        ('CP (2-parameter)', _fmt(cp2 and cp2['cp'], '.0f', ' W'), 'best 3–20 min, 90 d'),
-        ("W′", _fmt(cp2 and cp2['w_prime'] / 1000, '.1f', ' kJ'), 'work above CP'),
-        ('CP (3-parameter)', _fmt(cp3 and cp3['cp'], '.0f', ' W'), 'Morton model'),
-        ('Pmax (model)', _fmt(cp3 and cp3['pmax'], '.0f', ' W'), 'needs recent sprints'),
+        (t('CP (2-parameter)'), _fmt(cp2 and cp2['cp'], '.0f', ' W'), t('best 3–20 min, 90 d')),
+        ("W′", _fmt(cp2 and cp2['w_prime'] / 1000, '.1f', ' kJ'), t('work above CP')),
+        (t('CP (3-parameter)'), _fmt(cp3 and cp3['cp'], '.0f', ' W'), t('Morton model')),
+        (t('Pmax (model)'), _fmt(cp3 and cp3['pmax'], '.0f', ' W'), t('needs recent sprints')),
     ], cols=4)
     chart_cp_history(_axes(fig, 0.43, 0.17), data['cp_history'])
     prof = data['profile']
-    fig.text(LEFT, 0.205, 'Power profile', fontsize=9.5, fontweight='bold', color=INK, va='top')
+    fig.text(LEFT, 0.205, t('Power profile'), fontsize=9.5, fontweight='bold', color=INK, va='top')
     ax = _axes(fig, 0.19, 0.15)
     rows = [[r['duration'], _fmt(r['watts'], '.0f', ' W'), _fmt(r['w_per_kg'], '.2f'), _fmt(r['x_ftp'], '.2f'),
              _fmt(r['all_time'], '.2f')] for _, r in prof.iterrows() if pd.notna(r['watts'])]
     if rows:
-        _table(ax, ['Duration', 'Last 90 d', 'W/kg (90 d)', '× FTP (90 d)', 'W/kg (all time)'], rows,
+        _table(ax, [t('Duration'), t('Last 90 d'), t('W/kg (90 d)'), t('× FTP (90 d)'), t('W/kg (all time)')], rows,
                [0.2, 0.2, 0.2, 0.2, 0.2])
     else:
-        _empty(ax, 'No power data in the last 90 days.')
+        _empty(ax, t('No power data in the last 90 days.'))
     return fig
 
 
 def _page_durability(data):
-    fig = _new_page('Durability and records', _period_label(data))
+    fig = _new_page(t('Durability and records'), _period_label(data))
     chart_durability(_axes(fig, 0.855, 0.24), data['durability'])
     tbl = data['durability']
     ax = _axes(fig, 0.575, 0.12)
     if tbl is not None and not tbl.empty:
         rows = [[f"{r['kj'] / 1000:g} MJ", dur_label(r['duration']), f"{r['fresh']:.0f} W",
                  f"{r['fatigued']:.0f} W", f"{r['retention_pct']:.0f} %"] for _, r in tbl.iterrows()]
-        _table(ax, ['After', 'Effort', 'Fresh best', 'Best after', 'Kept'], rows, [0.2] * 5)
+        _table(ax, [t('After'), t('Effort'), t('Fresh best'), t('Best after'), t('Kept')], rows, [0.2] * 5)
     else:
         ax.set_axis_off()
-    fig.text(LEFT, 0.43, 'All-time records', fontsize=9.5, fontweight='bold', color=INK, va='top')
+    fig.text(LEFT, 0.43, t('All-time records'), fontsize=9.5, fontweight='bold', color=INK, va='top')
     rec = data['records']
     ax = _axes(fig, 0.415, 0.36)
     if rec is not None and not rec.empty:
@@ -408,45 +410,45 @@ def _page_durability(data):
         w = data['user']['weight']
         rows = [[dur_label(r['duration']), f"{r['watts']:.0f} W", f"{r['watts'] / w:.2f}" if w else '',
                  f"{r['date']:%d %b %Y}", _fmt(r.get('recent'), '.0f', ' W')] for _, r in rec.iterrows()]
-        _table(ax, ['Duration', 'Best', 'W/kg', 'Set on', 'Last 90 d'], rows, [0.2] * 5, row_h_in=0.185)
+        _table(ax, [t('Duration'), t('Best'), 'W/kg', t('Set on'), t('Last 90 d')], rows, [0.2] * 5, row_h_in=0.185)
     else:
-        _empty(ax, 'No power records yet.')
+        _empty(ax, t('No power records yet.'))
     return fig
 
 
 def _page_intensity(data):
-    kind = 'power' if data['zone_kind'] == 'power' else 'heart-rate'
-    fig = _new_page('Intensity distribution', f"{_period_label(data)}  ·  {kind} zones, moving time")
+    kind = t('power') if data['zone_kind'] == 'power' else t('heart-rate')
+    fig = _new_page(t('Intensity distribution'), t('{period_label}  ·  {kind} zones, moving time', period_label=_period_label(data), kind=kind))
     sh, pi = data['shares'], data['polarization']
     if sh:
         _tile_row(fig, 0.895, [
-            ('Easy (Z1–2)', f"{sh['low']:.0%}", ''), ('Moderate (Z3–4)', f"{sh['mid']:.0%}", ''),
-            ('Hard (Z5+)', f"{sh['high']:.0%}", ''),
-            ('Polarization index', _fmt(pi, '.2f'), tid_label(sh['low'], sh['mid'], sh['high'], pi)),
+            (t('Easy (Z1–2)'), f"{sh['low']:.0%}", ''), (t('Moderate (Z3–4)'), f"{sh['mid']:.0%}", ''),
+            (t('Hard (Z5+)'), f"{sh['high']:.0%}", ''),
+            (t('Polarization index'), _fmt(pi, '.2f'), tid_label(sh['low'], sh['mid'], sh['high'], pi)),
         ], cols=4)
     chart_intensity(_axes(fig, 0.79, 0.27), data['distribution'], data['freq'])
     chart_polarization(_axes(fig, 0.45, 0.2), data['distribution'])
-    _note(fig, 0.17, "Zones: Coggan power zones from FTP, Friel heart-rate zones from LTHR, grouped into three: "
+    _note(fig, 0.17, t("Zones: Coggan power zones from FTP, Friel heart-rate zones from LTHR, grouped into three: "
                      "Z1–2 easy, Z3–4 moderate, Z5+ hard. Polarization index = log10(easy / moderate × hard × 100) on "
-                     "time shares (Treff et al. 2019); above 2.0 is polarized, undefined when hard time exceeds easy.")
+                     "time shares (Treff et al. 2019); above 2.0 is polarized, undefined when hard time exceeds easy."))
     return fig
 
 
 def _page_rides(data):
-    fig = _new_page('Recent rides and plan', _period_label(data))
+    fig = _new_page(t('Recent rides and plan'), _period_label(data))
     stats = data['stats'].sort_values('date', ascending=False).head(22)
-    fig.text(LEFT, 0.895, 'Recent rides', fontsize=9.5, fontweight='bold', color=INK, va='top')
+    fig.text(LEFT, 0.895, t('Recent rides'), fontsize=9.5, fontweight='bold', color=INK, va='top')
     ax = _axes(fig, 0.885, 0.5)
     if not stats.empty:
         rows = [[f"{r['date']:%a %d %b}", f"{(r['moving_s'] or 0) / 3600:.1f}", f"{r['distance_km']:.0f}",
                  f"{r['elevation_m']:.0f}", _fmt(r['norm_power'], '.0f'), _fmt(r['tss'], '.0f'),
                  _fmt(r['vi'], '.2f'), _fmt(r['ef'], '.2f'), _fmt(r['decoupling_pct'], '.1f')]
                 for _, r in stats.iterrows()]
-        _table(ax, ['Date', 'Hours', 'km', 'Climb m', 'NP W', 'TSS', 'VI', 'EF', 'Decoupl. %'], rows,
+        _table(ax, [t('Date'), t('Hours'), 'km', t('Climb m'), 'NP W', 'TSS', 'VI', 'EF', t('Decoupl. %')], rows,
                [0.17, 0.09, 0.09, 0.12, 0.1, 0.1, 0.09, 0.09, 0.15], row_h_in=0.205)
     else:
-        _empty(ax, 'No rides in this period.')
-    fig.text(LEFT, 0.355, 'Planned sessions', fontsize=9.5, fontweight='bold', color=INK, va='top')
+        _empty(ax, t('No rides in this period.'))
+    fig.text(LEFT, 0.355, t('Planned sessions'), fontsize=9.5, fontweight='bold', color=INK, va='top')
     plan = data['planned']
     ax = _axes(fig, 0.345, 0.25)
     if plan is not None and not plan.empty:
@@ -460,11 +462,11 @@ def _page_rides(data):
                     pass
             text = r['note'] if isinstance(r['note'], str) and r['note'] else detail
             rows.append([f"{r['date']:%a %d %b}", (text or '')[:58], f"{r['tss']:.0f}"])
-        _table(ax, ['Date', 'Session', 'TSS'], rows, [0.17, 0.73, 0.1], aligns=['left', 'left', 'right'])
+        _table(ax, [t('Date'), t('Session'), 'TSS'], rows, [0.17, 0.73, 0.1], aligns=['left', 'left', 'right'])
     else:
-        _empty(ax, 'Nothing planned.')
-    _note(fig, 0.08, "VI = NP / average power. EF = NP / average heart rate. Decoupling = drift of power:HR between the "
-                     "first and second half (meaningful only for steady rides of 20+ min).")
+        _empty(ax, t('Nothing planned.'))
+    _note(fig, 0.08, t("VI = NP / average power. EF = NP / average heart rate. Decoupling = drift of power:HR between the "
+                     "first and second half (meaningful only for steady rides of 20+ min)."))
     return fig
 
 
@@ -487,5 +489,5 @@ def write_pdf(figures, footer, title):
 
 def build_report_pdf(data):
     """The report as PDF bytes."""
-    left = f"BikeTools Analyzer  ·  {data['user']['name']}  ·  generated {datetime.now():%d %b %Y %H:%M}"
-    return write_pdf(report_figures(data), left, f"Training report - {data['user']['name']}")
+    left = t("BikeTools Analyzer  ·  {name}  ·  generated {now:%d %b %Y %H:%M}", name=data['user']['name'], now=datetime.now())
+    return write_pdf(report_figures(data), left, t("Training report - {name}", name=data['user']['name']))

@@ -8,7 +8,7 @@ from src.data.cached import get_user_rides
 from src.data.imports.strava_import import DUPLICATE_START_TOLERANCE_S
 from src.data.db import get_ride_file
 from src.viz.formatting import format_duration
-from src.i18n import t
+from src.i18n import t, fdate
 
 PAGE_SIZE = 12
 GALLERY_KEY = "gallery_file"
@@ -17,9 +17,9 @@ GALLERY_KEY = "gallery_file"
 def ride_title(filename):
     """Readable name for a stored file: 'strava_123.json' -> 'Strava ride 123', 'morning-ride.fit' -> 'morning-ride'."""
     stem = (filename or "ride").rsplit(".", 1)[0]
-    for prefix, label in (("strava_", "Strava ride "), ("wahoo_", "Wahoo ride ")):
+    for prefix, label in (("strava_", t("Strava ride {id}")), ("wahoo_", t("Wahoo ride {id}"))):
         if stem.lower().startswith(prefix):
-            return label + stem[len(prefix):]
+            return label.replace('{id}', stem[len(prefix):])
     return stem
 
 
@@ -55,7 +55,7 @@ def filter_rides(rides, query="", limit=PAGE_SIZE):
     out = []
     for r in sorted(collapse_duplicates(rides), key=lambda r: str(r.get("date_time") or ""), reverse=True):
         ts = _when(r)
-        hay = f"{ride_title(r.get('filename'))} {ts:%d %b %Y %A %B}".lower() if ts is not None \
+        hay = f"{ride_title(r.get('filename'))} {fdate(ts, '%d %b %Y %A %B')}".lower() if ts is not None \
             else ride_title(r.get('filename')).lower()
         if all(w in hay for w in words):
             out.append(r)
@@ -84,7 +84,7 @@ def _card(r):
     moving = r.get("moving_s")
     with st.container(border=True):
         st.markdown(f"**{ride_title(r.get('filename'))}**")
-        st.caption(f"{ts:%a %d %b %Y · %H:%M}" if ts is not None else t("date unknown"))
+        st.caption(fdate(ts, "%a %d %b %Y · %H:%M") if ts is not None else t("date unknown"))
         duration = format_duration(int(moving)) if moving is not None and not pd.isna(moving) else "–"
         st.markdown(f"{_num(r.get('distance_km'), '.1f', ' km')} · ↑ {_num(r.get('elevation_m'), '.0f', ' m')} · {duration}")
         st.caption(f"NP {_num(r.get('norm_power'), '.0f', ' W')} · TSS {_num(r.get('tss'), '.0f')}")

@@ -10,6 +10,7 @@ import warnings
 from . import core
 from .core import _connect, _date_filter, backup_db, connect
 from .users import get_user_data
+from src.i18n import mark, t, tr
 
 def get_hr20(user_name, start=None):
     """Best-20-minute mean HR of each ride (> 0 only), newest rides last: list of (date, bpm)."""
@@ -206,10 +207,18 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
                   [(ride_id, pair, int(x), int(y), int(sec))
                    for pair, cells in hist.items() for (x, y), sec in cells.items()])
 
+DUPLICATE_MESSAGE = mark("Ride already exists (duplicate file).")
+
+
+def is_duplicate_message(msg):
+    """True if msg is save_ride's duplicate answer, in any language (callers must not match on its words)."""
+    return msg in (DUPLICATE_MESSAGE, tr(DUPLICATE_MESSAGE))
+
+
 def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     user = get_user_data(user_name)
     if not user:
-        return False, "User not found."
+        return False, t("User not found.")
 
     file_hash = hashlib.md5(file_content).hexdigest()
     
@@ -234,13 +243,13 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
             # 2. Power records (curve) and time in zones
             _insert_children(c, user['id'], ride_id, metadata, power_curve_dict)
             
-        return True, "Ride saved successfully!"
+        return True, t("Ride saved successfully!")
         
     except sqlite3.IntegrityError:
-        return False, "Ride already exists (duplicate file)."
+        return False, tr(DUPLICATE_MESSAGE)
         
     except Exception as e:
-        return False, f"Database Error: {e}"
+        return False, t("Database Error: {e}", e=e)
         
 
 def get_user_rides(user_name):
@@ -261,8 +270,8 @@ def get_user_rides(user_name):
         rows = c.fetchall()
     out = [dict(row) for row in rows]
     local = to_local_naive(pd.Series([r['date_time'] for r in out], dtype=object), user.get('timezone'))
-    for r, t in zip(out, local):
-        r['start_local'] = None if pd.isna(t) else t.isoformat()        # the rider's own clock, naive
+    for r, stamp in zip(out, local):
+        r['start_local'] = None if pd.isna(stamp) else stamp.isoformat()        # the rider's own clock, naive
     return out
 
 def get_ride_file(ride_id):

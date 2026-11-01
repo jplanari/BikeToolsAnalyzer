@@ -98,21 +98,21 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
                                  base['crr'], base['rho'], eff)
 
     m = st.columns(4)
-    m[0].metric(t("Actual time"), _mmss(base['actual_s']) if base['actual_s'] else "N/A",
+    m[0].metric(t("Actual time"), _mmss(base['actual_s']) if base['actual_s'] else t("N/A"),
                 help=t("Elapsed time on the climb, stops included."))
     if asridden:
         m[1].metric(t("Model, as ridden"), _mmss(asridden['time_s']),
-                    delta=_delta(asridden['time_s'] - base['actual_s']) + " vs actual" if base['actual_s'] else None,
+                    delta=t("{delta} vs actual", delta=_delta(asridden['time_s'] - base['actual_s'])) if base['actual_s'] else None,
                     delta_color="off", help=t("The model with your actual power and the ride's weight, CdA and Crr."))
     m[2].metric(t("Scenario"), _mmss(s_time),
-                delta=(_delta(s_time - asridden['time_s']) + " vs as ridden") if asridden else None,
+                delta=t("{delta} vs as ridden", delta=_delta(s_time - asridden['time_s'])) if asridden else None,
                 delta_color="inverse")
     m[3].metric(t("Power needed") if mode != "Time for a power" else t("Avg speed"),
                 f"{power:.0f} W ({power / max(mass - base['bike_mass'], 1):.2f} W/kg)" if mode != "Time for a power"
                 else f"{scenario['avg_speed_kmh']:.1f} km/h",
                 help=t("W/kg uses system weight minus the bike.") if mode != "Time for a power" else None)
     st.caption(f"VAM {scenario['vam_m_h']:.0f} m/h · {power / max(mass - base['bike_mass'], 1):.2f} W/kg"
-               + (" · Model and actual differ because of wind, surface, drafting, pacing and gradient noise."
+               + (t(" · Model and actual differ because of wind, surface, drafting, pacing and gradient noise.")
                   if asridden else ""))
 
     # What each change is worth at the chosen scenario
@@ -122,12 +122,12 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
             a.update(kw)
             return cm.climb_time(base['lengths'], base['grades'], a['power_w'], a['mass_kg'], a['cda'], a['crr'],
                                  rho, eff)['time_s']
-        rows = [("−1 kg system weight", time_with(mass_kg=mass - 1) - s_time),
-                ("−0.01 m² CdA", time_with(cda=max(cda - 0.01, 0.05)) - s_time),
-                ("−0.001 Crr", time_with(crr=max(crr - 0.001, 0.0005)) - s_time),
+        rows = [(t("−1 kg system weight"), time_with(mass_kg=mass - 1) - s_time),
+                (t("−0.01 m² CdA"), time_with(cda=max(cda - 0.01, 0.05)) - s_time),
+                (t("−0.001 Crr"), time_with(crr=max(crr - 0.001, 0.0005)) - s_time),
                 ("+10 W", time_with(power_w=power + 10) - s_time)]
-        st.dataframe(pd.DataFrame({"Change": [r[0] for r in rows],
-                                   "Time": [f"{r[1]:+.0f} s" for r in rows]}),
+        st.dataframe(pd.DataFrame({t("Change"): [r[0] for r in rows],
+                                   t("Time"): [f"{r[1]:+.0f} s" for r in rows]}),
                      hide_index=True, use_container_width=True)
     if st.button(t("Reset to ride values"), key=k("reset")):
         for name in ("mass", "cda", "crr", "rho", "power", "target"):

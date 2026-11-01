@@ -9,7 +9,8 @@ scales get their own chart.
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from src.i18n import t
+from src.i18n import t, fdate
+from src.analysis import power_profile as pp
 
 PALETTES = {
     'light': {
@@ -134,10 +135,10 @@ def plot_power_windows(curves, mode='light', weight=None):
         if c is None or c.empty:
             continue
         c = c.sort_values('duration')
-        custom = np.stack([c['date'].dt.strftime('%d %b %Y'),
+        custom = np.stack([c['date'].map(lambda d: fdate(d, '%d %b %Y')),
                            (c['watts'] / weight).round(2) if weight else c['watts'] * np.nan], axis=1)
         fig.add_trace(go.Scatter(
-            x=c['duration'], y=c['watts'], name=label, mode='lines',
+            x=c['duration'], y=c['watts'], name=pp.window_label(label), mode='lines',
             line=dict(color=pal['series'][i % 4], width=2.5 if i == 0 else 2),
             customdata=custom,
             hovertemplate='%{y:.0f} W · %{customdata[1]} W/kg · %{customdata[0]}'))

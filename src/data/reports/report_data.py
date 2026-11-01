@@ -10,6 +10,7 @@ from src.analysis import power_profile as pp
 from src.analysis import training_load as tl
 from src.analysis.power import estimate_critical_power
 from src.data import db
+from src.i18n import t
 
 
 def collect_report_data(user_name, period_days=91, today=None):
@@ -20,7 +21,7 @@ def collect_report_data(user_name, period_days=91, today=None):
     """
     user = db.get_user_data(user_name)
     if not user:
-        raise ValueError(f"unknown user {user_name!r}")
+        raise ValueError(t("unknown user {user_name}", user_name=repr(user_name)))
     today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
     start = None if period_days is None else today - pd.Timedelta(days=period_days - 1)
 

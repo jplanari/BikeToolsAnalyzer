@@ -5,6 +5,7 @@ pipeline, so every ride in the history has the same, up-to-date metrics.
 import pandas as pd
 
 from src.data import db
+from src.i18n import t
 
 
 def ftp_used_for_ride(row, current_ftp):
@@ -41,7 +42,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
         try:
             _, content = db.get_ride_file(row['id'])    # one file in memory at a time
             if content is None:
-                raise ValueError("original file not stored")
+                raise ValueError(t("original file not stored"))
             df, dist_m, ele_m = prepare_ride(row['filename'] or "", content)
             ftp = ftp_used_for_ride(row, current_ftp)
             lthr = row.get('lthr_at_ride') or current_lthr

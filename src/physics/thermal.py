@@ -3,6 +3,7 @@ import numpy as np
 import streamlit as st
 
 from src.physics.aerodyn import apparent_air_speed
+from src.i18n import mark
 
 # Constants
 C_BODY = 3470  # Specific heat capacity [J/(kg·K)]
@@ -29,16 +30,16 @@ C_SKIN = 3500                   # J/(kg K)
 MAX_SUBSTEP_S = 5.0             # explicit Euler is unstable above ~2x the skin time constant (~80 s)
 
 CLOTHING_CATALOG = {
-    "None (Shorts only)": 0.05,
-    "Mesh Base Layer": 0.08,
-    "Summer Jersey": 0.15,
-    "Arm/Leg Warmers": 0.10,
-    "Gilet (Wind Vest)": 0.15,
-    "Long Sleeve Jersey": 0.25,
-    "Rain Jacket (Hardshell)": 0.35,
-    "Winter Jacket (Softshell)": 0.45,
-    "Thermal Bib Tights": 0.20,
-    "Buff / Neck Warmer": 0.05
+    mark("None (Shorts only)"): 0.05,
+    mark("Mesh Base Layer"): 0.08,
+    mark("Summer Jersey"): 0.15,
+    mark("Arm/Leg Warmers"): 0.10,
+    mark("Gilet (Wind Vest)"): 0.15,
+    mark("Long Sleeve Jersey"): 0.25,
+    mark("Rain Jacket (Hardshell)"): 0.35,
+    mark("Winter Jacket (Softshell)"): 0.45,
+    mark("Thermal Bib Tights"): 0.20,
+    mark("Buff / Neck Warmer"): 0.05
 }
 
 def du_bois_BSA(height_cm, weight_kg):

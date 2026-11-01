@@ -32,15 +32,15 @@ def render_history(user_name):
     if 'moving_s' in view.columns:
         view['moving_s'] = view['moving_s'].map(lambda x: format_duration(x) if pd.notna(x) else "")
     st.dataframe(
-        view.rename(columns={'date_time': 'Date', 'filename': 'File', 'distance_km': 'km',
-                             'elevation_m': 'Elev (m)', 'moving_s': 'Moving', 'norm_power': 'NP',
-                             'tss': 'TSS', 'tss_source': 'TSS from', 'vi': 'VI', 'ef': 'EF',
-                             'decoupling_pct': 'Decoupling %'}),
+        view.rename(columns={'date_time': t('Date'), 'filename': t('File'), 'distance_km': 'km',
+                             'elevation_m': t('Elev (m)'), 'moving_s': t('Moving'), 'norm_power': 'NP',
+                             'tss': 'TSS', 'tss_source': t('TSS from'), 'vi': 'VI', 'ef': 'EF',
+                             'decoupling_pct': t('Decoupling %')}),
         hide_index=True,
         column_config={"km": st.column_config.NumberColumn(format="%.1f"),
                        "VI": st.column_config.NumberColumn(format="%.2f"),
                        "EF": st.column_config.NumberColumn(format="%.2f"),
-                       "Decoupling %": st.column_config.NumberColumn(format="%.1f")},
+                       t("Decoupling %"): st.column_config.NumberColumn(format="%.1f")},
     )
 
 
@@ -56,15 +56,15 @@ def _render_history_update(user_name, user_data):
                    "Each ride keeps the FTP it was originally scored with; rides without power "
                    "get an HR-based TSS using your LTHR."))
         if st.button(t("Update ride history")):
-            bar = st.progress(0.0, text="Recomputing rides...")
+            bar = st.progress(0.0, text=t("Recomputing rides..."))
             updated, failed = recompute_history(
                 user_name, user_data['ftp'], user_data['lthr'],
                 progress=lambda done, total: bar.progress(done / total if total else 1.0,
-                                                          text=f"{done}/{total} rides"))
+                                                          text=t("{done}/{total} rides", done=done, total=total)))
             bar.empty()
             if failed:
-                st.warning(f"Updated {updated} rides; {len(failed)} could not be read:\n\n"
-                           + "\n".join(f"- {f}" for f in failed[:10]))
+                st.warning(t("Updated {updated} rides; {failed} could not be read:", updated=updated, failed=len(failed))
+                           + "\n\n" + "\n".join(f"- {f}" for f in failed[:10]))
             else:
                 st.toast(t('✅ Updated {updated} rides.', updated=updated))
                 st.rerun()
@@ -95,15 +95,16 @@ def _timezone_control(user_name, user):
 
 def _threshold_controls(user_name, user):
     """Says where FTP / LTHR come from and lets the rider set them by hand or hand them back to the data."""
-    notes = [f"{label} is estimated from your rides (95 % of the best 20 minutes; {default} until a ride has one)"
+    notes = [t("{label} is estimated from your rides (95 % of the best 20 minutes; {default} until a ride has one)",
+               label=label, default=default)
              for label, default, auto in (("FTP", f"{DEFAULT_FTP} W", user.get('ftp_auto')),
                                           ("LTHR", f"{DEFAULT_LTHR} bpm", user.get('lthr_auto'))) if auto]
     if notes:
         st.caption("ℹ️ " + "; ".join(notes) + ".")
     with st.popover(t("Set FTP / LTHR / W′")):
-        st.markdown(theme.FTP_HELP)
-        st.markdown(theme.LTHR_HELP)
-        st.markdown(theme.W_PRIME_HELP)
+        st.markdown(theme.ftp_help())
+        st.markdown(theme.lthr_help())
+        st.markdown(theme.w_prime_help())
         with st.form(f"thresholds_{user_name}"):
             ftp = st.number_input(t("FTP (Watts)"), value=int(user['ftp']), min_value=1, step=5)
             lthr = st.number_input(t("LTHR (bpm)"), value=int(user['lthr']), min_value=1, step=1)
@@ -139,7 +140,7 @@ def render_user_corner(user_name):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("FTP", f"{user_data['ftp']} W")
     c2.metric("LTHR", f"{user_data['lthr']} bpm")
-    c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.W_PRIME_HELP)
+    c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.w_prime_help())
     c4.metric(t("Weight"), f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
     _timezone_control(user_name, user_data)

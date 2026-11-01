@@ -3,7 +3,7 @@ import streamlit as st
 
 from src.data.providers import credentials as cr
 from src.data import db
-from src.i18n import t
+from src.i18n import t, tr
 
 
 def _secrets_section(provider):
@@ -25,7 +25,7 @@ def credentials_form(provider, where="sidebar"):
     current = get_credentials(provider) or {}
     box = st.sidebar if where == "sidebar" else st
     with box.form(f"cred_form_{provider}_{where}"):
-        st.markdown(t('1. Open [{host}]({portal}). {steps}', host=info['portal'].split('//')[1], portal=info['portal'], steps=info['steps']))
+        st.markdown(t('1. Open [{host}]({portal}). {steps}', host=info['portal'].split('//')[1], portal=info['portal'], steps=tr(info['steps'])))
         st.markdown(t("2. Paste what it gives you:"))
         cid = st.text_input(t("Client ID"), value=current.get("client_id", ""), key=f"cred_{provider}_id_{where}")
         secret = st.text_input(t("Client secret"), value=current.get("client_secret", ""), type="password",
@@ -63,8 +63,8 @@ def render_connections():
     for provider, info in cr.PROVIDERS.items():
         current = get_credentials(provider)
         saved = db.get_app_credentials(provider)
-        status = ("not set up" if not current else
-                  "saved in this app" if current["source"] == "app" else "read from `.streamlit/secrets.toml`")
+        status = (t("not set up") if not current else
+                  t("saved in this app") if current["source"] == "app" else t("read from `.streamlit/secrets.toml`"))
         with st.expander(f"{info['label']}: {status}"):
             if current and current["source"] == "secrets":
                 st.caption(t("Saving here overrides the secrets file."))

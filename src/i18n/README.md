@@ -1,6 +1,7 @@
 # Translations
 
-Stage 1: the mechanism. A few strings of the sidebar are wrapped as a pilot; everything else is still English.
+The whole interface is wrapped for translation: pages, chart titles and labels, tables, the PDF reports, the weekly
+e-mail, and the messages of the data layer and the providers.
 
 ## How it works
 - `t("English text")` returns the text in the current language; `tn("{n} ride", "{n} rides", n)` picks singular or plural.
@@ -46,5 +47,13 @@ st.radio(t("Section"), sections, format_func=tr)        # tr(): translates at di
 
 Spanish and Catalan are complete (every string translated) but still `"released": false` until a native
 speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Chart titles, axis titles, trace names and
-annotations are covered (the scanner checks Plotly calls). Not yet translated: PDFs, table column headers, the weekly
-e-mail body, and month/day names produced by `strftime`.
+annotations are covered (the scanner checks Plotly calls). So are the PDF reports and the weekly e-mail (written
+in the rider's saved language, also when it is sent in the background).
+
+Month and day names come from the catalog too: use `fdate(value, "%a %d %b")` instead of `strftime`, or pass the
+date to `t()` as a placeholder (`t("Week of {monday:%d %b}", monday=monday)`); both translate `%a %A %b %B`.
+
+Code must never compare translated text. When a message drives a decision, give it a type or a helper that works in
+every language (`is_duplicate_message`, `PolarNoData`, `StravaNoData`, `WahooNoData`), as the importers do.
+
+Still English: developer-facing log lines and warnings, file and column names, and unit symbols.

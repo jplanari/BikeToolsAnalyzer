@@ -3,6 +3,7 @@ import hashlib
 import sqlite3
 from .core import connect
 from .users import get_user_data
+from src.i18n import t
 
 # --- Bikes -------------------------------------------------------------------------------------------------------
 # A bike is four parts (frame, wheelset, groupset, tyres) plus whatever they leave out; the parts add up to the bike's
@@ -21,9 +22,9 @@ def save_bike(user_name, name, parts, make_default=False):
     """parts: {'frame_name', 'frame_kg', ..., 'extras_kg', 'crr'}. Returns (ok, message)."""
     user = get_user_data(user_name)
     if not user:
-        return False, "User not found."
+        return False, t("User not found.")
     if not (name or "").strip():
-        return False, "Give the bike a name."
+        return False, t("Give the bike a name.")
     try:
         with connect() as conn:
             first = conn.execute("SELECT COUNT(*) FROM bikes WHERE user_id = ?", (user['id'],)).fetchone()[0] == 0
@@ -32,22 +33,22 @@ def save_bike(user_name, name, parts, make_default=False):
                          [user['id'], name.strip()] + _bike_values(parts) + [int(first)])
             bike_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     except sqlite3.IntegrityError:
-        return False, "You already have a bike with that name."
+        return False, t("You already have a bike with that name.")
     if make_default:
         set_default_bike(user_name, bike_id)
-    return True, "Bike saved."
+    return True, t("Bike saved.")
 
 
 def update_bike(bike_id, name, parts):
     if not (name or "").strip():
-        return False, "Give the bike a name."
+        return False, t("Give the bike a name.")
     try:
         with connect() as conn:
             sets = ', '.join(f"{c} = ?" for c in ['name'] + _BIKE_FIELDS)
             conn.execute(f"UPDATE bikes SET {sets} WHERE id = ?", [name.strip()] + _bike_values(parts) + [bike_id])
-        return True, "Bike updated."
+        return True, t("Bike updated.")
     except sqlite3.IntegrityError:
-        return False, "You already have a bike with that name."
+        return False, t("You already have a bike with that name.")
 
 
 def get_bikes(user_name):

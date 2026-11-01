@@ -8,6 +8,7 @@ import pandas as pd
 from src.data import db
 from src.data.providers import wahoo as wh
 from src.data.imports.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
+from src.i18n import t
 
 REQUEST_RESERVE = 3          # API requests kept back so the single-ride picker still works afterwards
 SYNC_MARGIN_DAYS = 3
@@ -18,7 +19,7 @@ def get_valid_auth(cfg, user_name):
     """Stored auth for this rider, refreshed (and re-saved at once: refresh tokens are single-use)."""
     auth = db.get_wahoo_auth(user_name)
     if not auth:
-        raise wh.WahooAuthError("This profile is not connected to Wahoo.")
+        raise wh.WahooAuthError(t("This profile is not connected to Wahoo."))
     auth, changed = wh.refresh_if_needed(cfg, auth)
     if changed:
         db.save_wahoo_auth(user_name, auth)
@@ -89,7 +90,7 @@ def fetch_ride_file(cfg, user_name, workout, usage=None):
     detail = wh.get_workout(auth['access_token'], workout['id'], usage=usage)
     url = wh.fit_url(detail)
     if not url:
-        raise wh.WahooError("This workout has no recorded data file.")
+        raise wh.WahooNoData(t("This workout has no recorded data file."))
     return wh.ride_filename(workout['id']), wh.download_fit(url)
 
 
@@ -125,7 +126,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
             res.duplicates_of_uploads += 1
             continue
         if usage.seen and usage.remaining <= REQUEST_RESERVE:
-            res.stopped_reason = "Paused to stay within Wahoo's rate limit. Run the import again in a few minutes."
+            res.stopped_reason = t("Paused to stay within Wahoo's rate limit. Run the import again in a few minutes.")
             break
         try:
             filename, payload = fetch_ride_file(cfg, user_name, w, usage=usage)
@@ -141,7 +142,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
         except wh.WahooAuthError:
             raise
         except wh.WahooError as e:
-            if "no recorded data" in str(e):
+            if isinstance(e, wh.WahooNoData):
                 res.not_completed += 1       # a scheduled workout has no file until it is ridden
             else:
                 res.failed.append(f"{name}: {e}")
@@ -156,7 +157,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
             start = _start_utc(w)
             if start is not None:
                 known_starts.append(start)
-        elif "duplicate" in msg.lower() or "already exists" in msg.lower():
+        elif db.is_duplicate_message(msg):
             res.already_imported += 1
         else:
             res.failed.append(f"{name}: {msg}")

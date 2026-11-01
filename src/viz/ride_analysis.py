@@ -18,7 +18,7 @@ from src.viz.plots import (plot_elevation,
 from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, w_prime_needed
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
-from src.data.db import (save_ride, build_ride_metadata, get_ride_start_times, set_user_w_prime, get_ride_bike,
+from src.data.db import (save_ride, is_duplicate_message, build_ride_metadata, get_ride_start_times, set_user_w_prime, get_ride_bike,
                          get_ride_weather, save_ride_weather)
 from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
@@ -197,37 +197,37 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
     c1.metric(t("Distance"), f"{total_dist/1000:.2f} km")
     c2.metric(t("Elevation"), f"{int(total_ascent)} m")
     c3.metric(t("Avg Speed"), f"{avg_speed:.1f} km/h")
-    c4.metric(t("Avg Power"), f"{int(avg_power)} W" if avg_power else "N/A")
+    c4.metric(t("Avg Power"), f"{int(avg_power)} W" if avg_power else t("N/A"))
     c5.metric(t("Duration"), f"{dHHMMSS}")
     
     st.subheader(t("Performance Metrics"))
     c6, c7, c8, c9 = st.columns(4)
-    c6.metric(t("Norm Power"), f"{int(norm_power)} W" if norm_power else "N/A")
-    c7.metric(t("Intensity Factor"), f"{ride_if:.2f}" if norm_power else "N/A")
+    c6.metric(t("Norm Power"), f"{int(norm_power)} W" if norm_power else t("N/A"))
+    c7.metric(t("Intensity Factor"), f"{ride_if:.2f}" if norm_power else t("N/A"))
     if summary['tss_source'] == 'hr':
         c8.metric("TSS (HR)", f"{round(ride_tss)}",
                   help=t("No power data: estimated from heart rate vs your LTHR (hrTSS). "
                        "Less precise than power-based TSS."))
     else:
-        c8.metric("TSS", f"{round(ride_tss)}" if summary['tss_source'] else "N/A")
-    c9.metric(t("Work"), f"{int(ride_kj)} kJ" if norm_power else "N/A")
+        c8.metric("TSS", f"{round(ride_tss)}" if summary['tss_source'] else t("N/A"))
+    c9.metric(t("Work"), f"{int(ride_kj)} kJ" if norm_power else t("N/A"))
 
     q1, q2, q3, q4 = st.columns(4)
     q1.metric(t("Moving Time"), format_duration(summary['moving_time_s']))
-    q2.metric(t("Variability Index"), f"{summary['vi']:.2f}" if summary['vi'] else "N/A",
+    q2.metric(t("Variability Index"), f"{summary['vi']:.2f}" if summary['vi'] else t("N/A"),
               help=t("NP / average power. ~1.00-1.05 = steady (TT, endurance); >1.15 = very variable (crits, group rides)."))
-    q3.metric(t("Efficiency Factor"), f"{summary['ef']:.2f}" if summary['ef'] else "N/A",
+    q3.metric(t("Efficiency Factor"), f"{summary['ef']:.2f}" if summary['ef'] else t("N/A"),
               help=t("NP / average heart rate. Compare across similar endurance rides: rising EF = improving aerobic fitness."))
     dec = summary['decoupling_pct']
-    q4.metric(t("Aerobic Decoupling"), f"{dec:.1f} %" if dec is not None else "N/A",
+    q4.metric(t("Aerobic Decoupling"), f"{dec:.1f} %" if dec is not None else t("N/A"),
               help=t("Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals."))
     
     fixed = summary.get('cleaned') or {}
     if sum(fixed.values()):
-        parts = [f"{n} {name}" for name, n in (("power", fixed.get('power', 0)),
-                 ("heart-rate", fixed.get('hr', 0)), ("cadence", fixed.get('cadence', 0))) if n]
-        st.caption("🧹 Removed impossible sensor readings before scoring: " + ", ".join(parts) + " samples.")
+        parts = [f"{n} {name}" for name, n in ((t("power"), fixed.get('power', 0)),
+                 (t("heart-rate"), fixed.get('hr', 0)), (t("cadence"), fixed.get('cadence', 0))) if n]
+        st.caption(t("🧹 Removed impossible sensor readings before scoring: {parts} samples.", parts=", ".join(parts)))
 
     st.markdown("---")
     _render_route(df, climbs)
@@ -237,7 +237,7 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
         st.subheader(t("Laps Summary"))
         if not laps_df.empty:
             with st.expander(t("⏱️ Laps / Intervals")):
-                st.dataframe(laps_df)
+                st.dataframe(laps_df.rename(columns=tr))
 
 
 def _thermal_ride_id(df):
@@ -313,7 +313,7 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bi
         if success:
             st.toast(t('✅ Saved to History: {filename}', filename=filename))
             st.session_state['saved_hashes'].add(file_hash)
-        elif "duplicate" in msg.lower():
+        elif is_duplicate_message(msg):
             st.session_state['saved_hashes'].add(file_hash)
         else:
             st.error(t('Save Error: {msg}', msg=msg))
@@ -373,15 +373,17 @@ def _render_aero(df, settings, p_comps):
     if fit:
         c1, c2 = st.columns(2)
         tunnel = fit.get('tunnel_seconds') or 0
-        bridged = (f" Includes {tunnel // 60} min {tunnel % 60} s where the speed was lost while pedalling (a tunnel), "
-                   "taken at the stretch's average speed." if tunnel else "")
+        bridged = (t(" Includes {minutes} min {seconds} s where the speed was lost while pedalling (a tunnel), "
+                     "taken at the stretch's average speed.", minutes=tunnel // 60, seconds=tunnel % 60) if tunnel else "")
         c1.metric(t("CdA (estimate)"), f"{fit['cda']:.3f} m²",
-                  help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. " + CDA_ESTIMATE_NOTE
-                       + " It absorbs any error in weight, rolling resistance, wind and gradient." + bridged)
-        c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
+                  help=t("Least-squares fit over {minutes} min faster than 18 km/h. ", minutes=fit['seconds'] // 60)
+                       + tr(CDA_ESTIMATE_NOTE)
+                       + t(" It absorbs any error in weight, rolling resistance, wind and gradient.") + bridged)
+        c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else t("N/A"))
         no_wind = "wind_speed" not in df.columns
-        st.caption("⚠️ " + CDA_ESTIMATE_NOTE + (" No wind data for this ride: still air is assumed, which understates the CdA "
-                                                  "when there was a head wind." if no_wind else ""))
+        st.caption("⚠️ " + tr(CDA_ESTIMATE_NOTE)
+                   + (t(" No wind data for this ride: still air is assumed, which understates the CdA "
+                        "when there was a head wind.") if no_wind else ""))
     else:
         st.warning(t("Not enough stable data points (Speed > 18km/h required)."))
 
@@ -462,10 +464,10 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
 
     with st.expander(t("⚙️ Configure Thermal Model"), expanded=False):
         # Clothing Selector
-        default_kit = ["Summer Jersey", "None (Shorts only)"]
+        default_kit = [mark("Summer Jersey"), mark("None (Shorts only)")]
         selected_clothing = remembered(
             st.multiselect, "thermal_clothing_multiselect", [k for k in default_kit if k in CLOTHING_CATALOG],
-            t("Select Clothing Layers Worn:"), options=list(CLOTHING_CATALOG.keys()))
+            t("Select Clothing Layers Worn:"), options=list(CLOTHING_CATALOG.keys()), format_func=tr)
         
         total_clo = sum([CLOTHING_CATALOG[item] for item in selected_clothing])
         st.caption(t('Total Insulation: **{total_clo:.2f} Clo**', total_clo=total_clo))

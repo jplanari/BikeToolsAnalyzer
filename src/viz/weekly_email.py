@@ -4,19 +4,19 @@ import streamlit as st
 from src.data import db
 from src.data.reports import mailer
 from src.data.reports import weekly_report as wr
-from src.i18n import t
+from src.i18n import mark, t, tr
 
 PRESETS = {"Gmail": ("smtp.gmail.com", 587, "starttls"), "Outlook / Office 365": ("smtp.office365.com", 587, "starttls"),
-           "iCloud": ("smtp.mail.me.com", 587, "starttls"), "Other": (None, None, None)}
+           "iCloud": ("smtp.mail.me.com", 587, "starttls"), mark("Other"): (None, None, None)}
 
 
 def _server_form():
     smtp = db.get_smtp_settings()
-    with st.expander("Mail server" + (" ✅" if smtp else " (needed first)"), expanded=not smtp):
+    with st.expander(t("Mail server") + (" ✅" if smtp else t(" (needed first)")), expanded=not smtp):
         st.caption(t("The app sends the e-mail through an account you own. Gmail, Outlook and iCloud need an "
                    "**app password** (created in the account's security settings), not the normal password. "
                    "It is stored in this app's database, like the other credentials."))
-        preset = st.selectbox(t("Provider"), list(PRESETS), key="smtp_preset")
+        preset = st.selectbox(t("Provider"), list(PRESETS), key="smtp_preset", format_func=tr)
         host0, port0, sec0 = PRESETS[preset]
         with st.form("smtp_form"):
             c1, c2, c3 = st.columns([3, 1, 2])

@@ -7,6 +7,7 @@ import pandas as pd
 
 from src.analysis import correlations as co
 from src.data import db
+from src.i18n import t
 
 
 def collect_deeper_data(user_name, start, end):
@@ -16,7 +17,7 @@ def collect_deeper_data(user_name, start, end):
     """
     user = db.get_user_data(user_name)
     if not user:
-        raise ValueError(f"unknown user {user_name!r}")
+        raise ValueError(t("unknown user {user_name}", user_name=repr(user_name)))
     a0, a1 = pd.Timestamp(start).normalize(), pd.Timestamp(end).normalize()
     span = (a1 - a0) + pd.Timedelta(days=1)
     b0, b1 = a0 - span, a0 - pd.Timedelta(days=1)

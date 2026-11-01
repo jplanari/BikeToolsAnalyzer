@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from email.utils import formatdate
 
 from src.data import db
+from src.i18n import t
 
 TIMEOUT_S = 30
 SECURITY_CHOICES = ('starttls', 'ssl', 'none')
@@ -40,7 +41,7 @@ def send_message(msg, settings=None):
     """Sends a built message with the stored (or given) SMTP settings. Raises MailError."""
     s = settings or db.get_smtp_settings()
     if not s or not s.get('host') or not s.get('sender'):
-        raise MailError("No mail server is set up yet.")
+        raise MailError(t("No mail server is set up yet."))
     security = s.get('security') or 'starttls'
     try:
         if security == 'ssl':
@@ -54,17 +55,17 @@ def send_message(msg, settings=None):
                 server.login(s['username'], s.get('password') or '')
             server.send_message(msg)
     except smtplib.SMTPAuthenticationError:
-        raise MailError("The mail server refused the user name or password "
-                        "(Gmail and others need an app password, not the account password).")
+        raise MailError(t("The mail server refused the user name or password "
+                          "(Gmail and others need an app password, not the account password)."))
     except (smtplib.SMTPException, OSError) as e:
-        raise MailError(f"Could not send the e-mail: {e}")
+        raise MailError(t("Could not send the e-mail: {e}", e=e))
 
 
 def send_test(recipient, settings=None):
     """A short message that proves the settings work."""
     s = settings or db.get_smtp_settings()
     if not s:
-        raise MailError("No mail server is set up yet.")
-    send_message(build_message(s['sender'], recipient, "BikeTools Analyzer: test e-mail",
-                               "This is a test from BikeTools Analyzer. Your weekly report e-mails will arrive here."),
+        raise MailError(t("No mail server is set up yet."))
+    send_message(build_message(s['sender'], recipient, t("BikeTools Analyzer: test e-mail"),
+                               t("This is a test from BikeTools Analyzer. Your weekly report e-mails will arrive here.")),
                  settings=s)

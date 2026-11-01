@@ -26,7 +26,7 @@ def _fmt(v, spec, unit=""):
 
 
 def _time(seconds):
-    return "n/a" if seconds is None else format_duration(int(round(seconds)))
+    return t("n/a") if seconds is None else format_duration(int(round(seconds)))
 
 
 MAX_SELECT_POINTS = 1500            # invisible markers that carry the drag-selection
@@ -94,22 +94,22 @@ def _channels(df, i0, i1):
 
 def _metrics(s):
     cells = [
-        ("Time", _time(s.get('elapsed_s')), "Elapsed; moving " + _time(s.get('moving_s'))),
-        ("Distance", _fmt(s.get('dist_km'), ".2f", " km"), None),
-        ("Ascent", _fmt(s.get('ascent_m'), ".0f", " m"), f"Descent {_fmt(s.get('descent_m'), '.0f', ' m')}"),
-        ("Avg gradient", _fmt(s.get('avg_grade_pct'), ".1f", " %"), None),
+        (t("Time"), _time(s.get('elapsed_s')), t("Elapsed; moving {moving}", moving=_time(s.get('moving_s')))),
+        (t("Distance"), _fmt(s.get('dist_km'), ".2f", " km"), None),
+        (t("Ascent"), _fmt(s.get('ascent_m'), ".0f", " m"), t("Descent {descent}", descent=_fmt(s.get('descent_m'), '.0f', ' m'))),
+        (t("Avg gradient"), _fmt(s.get('avg_grade_pct'), ".1f", " %"), None),
         ("VAM", _fmt(s.get('vam_m_h'), ".0f", " m/h"), None),
-        ("Avg speed", _fmt(s.get('avg_speed_kph'), ".1f", " km/h"), f"max {_fmt(s.get('max_speed_kph'), '.1f', ' km/h')}"),
-        ("Avg power", _fmt(s.get('avg_power'), ".0f", " W"),
-         f"{_fmt(s.get('w_per_kg'), '.2f', ' W/kg')} · max {_fmt(s.get('max_power'), '.0f', ' W')}"),
-        ("Normalized power", _fmt(s.get('norm_power'), ".0f", " W"), "Needs at least 30 s of power data."),
-        ("Avg HR", _fmt(s.get('avg_hr'), ".0f", " bpm"), f"max {_fmt(s.get('max_hr'), '.0f', ' bpm')}"),
-        ("Avg cadence", _fmt(s.get('avg_cadence'), ".0f", " rpm"), "While pedalling."),
-        ("Intensity factor", _fmt(s.get('if'), ".2f"), None),
+        (t("Avg speed"), _fmt(s.get('avg_speed_kph'), ".1f", " km/h"), t("max {value}", value=_fmt(s.get('max_speed_kph'), '.1f', ' km/h'))),
+        (t("Avg power"), _fmt(s.get('avg_power'), ".0f", " W"),
+         t("{wkg} · max {max_power}", wkg=_fmt(s.get('w_per_kg'), '.2f', ' W/kg'), max_power=_fmt(s.get('max_power'), '.0f', ' W'))),
+        (t("Normalized power"), _fmt(s.get('norm_power'), ".0f", " W"), t("Needs at least 30 s of power data.")),
+        (t("Avg HR"), _fmt(s.get('avg_hr'), ".0f", " bpm"), t("max {value}", value=_fmt(s.get('max_hr'), '.0f', ' bpm'))),
+        (t("Avg cadence"), _fmt(s.get('avg_cadence'), ".0f", " rpm"), t("While pedalling.")),
+        (t("Intensity factor"), _fmt(s.get('if'), ".2f"), None),
         ("TSS", _fmt(s.get('tss'), ".0f"), None),
-        ("Work", _fmt(s.get('kj'), ".0f", " kJ"), None),
-        ("Variability index", _fmt(s.get('vi'), ".2f"), None),
-        ("Efficiency factor", _fmt(s.get('ef'), ".2f"), "Normalized power / average HR."),
+        (t("Work"), _fmt(s.get('kj'), ".0f", " kJ"), None),
+        (t("Variability index"), _fmt(s.get('vi'), ".2f"), None),
+        (t("Efficiency factor"), _fmt(s.get('ef'), ".2f"), t("Normalized power / average HR.")),
     ]
     for r in range(0, len(cells), 3):
         cols = st.columns(3)
@@ -117,19 +117,21 @@ def _metrics(s):
             col.metric(label, value, help=help_)
 
 
-_LAP_FORMATS = {'Start (km)': "{:.1f}", 'Distance (km)': "{:.2f}", 'Ascent (m)': "{:.0f}", 'Grade (%)': "{:.1f}",
-                'Speed (km/h)': "{:.1f}", 'Avg power (W)': "{:.0f}", 'NP (W)': "{:.0f}", 'Avg HR': "{:.0f}",
-                'Cadence': "{:.0f}"}
+_LAP_FORMATS = {mark('Start (km)'): "{:.1f}", mark('Distance (km)'): "{:.2f}", mark('Ascent (m)'): "{:.0f}",
+                mark('Grade (%)'): "{:.1f}", mark('Speed (km/h)'): "{:.1f}", mark('Avg power (W)'): "{:.0f}",
+                mark('NP (W)'): "{:.0f}", mark('Avg HR'): "{:.0f}", mark('Cadence'): "{:.0f}"}
 
 
 def _lap_table(df, spans, ftp, weight):
     table = sg.stats_table(df, spans, ftp, weight)
     table['Time'] = table['Time'].map(_time)
+    table = table.rename(columns=lambda c: tr(c) if c != 'Segment' else t('Segment'))
+    formats = {tr(col): spec for col, spec in _LAP_FORMATS.items()}
     try:
-        return table.style.format(_LAP_FORMATS, na_rep="–")
+        return table.style.format(formats, na_rep="–")
     except ImportError:                    # DataFrame.style needs a recent jinja2; show the table rounded instead
         out = table.copy()
-        for col, spec in _LAP_FORMATS.items():
+        for col, spec in formats.items():
             if col in out.columns:
                 out[col] = out[col].map(lambda v, spec=spec: "–" if pd.isna(v) else spec.format(v))
         return out
@@ -148,8 +150,8 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
     climb_spans = sg.climb_spans(df, climbs)
     if lap_time_spans is not None and not laps:
         n = lap_time_spans.attrs.get('lap_messages', len(lap_time_spans))
-        st.caption("No laps could be matched to this ride" + (f" ({n} lap record(s) in the file)." if n else
-                   ": the file has no laps (the whole ride is one)."))
+        st.caption(t("No laps could be matched to this ride ({n} lap record(s) in the file).", n=n) if n else
+                   t("No laps could be matched to this ride: the file has no laps (the whole ride is one)."))
     modes = [mark("Custom selection")] + ([mark("Lap")] if laps else []) + ([mark("Climb")] if climb_spans else [])
     mode_key, range_key, pending_key = f"seg_mode_{ride_id}", f"seg_range_{ride_id}", f"seg_pending_{ride_id}"
     pending = st.session_state.pop(pending_key, None)             # a range dragged on the profile on the last run
@@ -170,7 +172,7 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
     elif mode == "Climb":
         label_of = {}
         for label, i0, i1, c in climb_spans:
-            label_of[label] = (f"{label} · {c['type']} · {c['length_m'] / 1000:.1f} km · "
+            label_of[label] = (f"{label} · {tr(c['type'])} · {c['length_m'] / 1000:.1f} km · "
                                f"{c['avg_gradient_pct']:.1f} %")
         pick = remembered(st.selectbox, f"seg_climb_{ride_id}", climb_spans[0][0], t("Climb"),
                           [x[0] for x in climb_spans], format_func=label_of.get)

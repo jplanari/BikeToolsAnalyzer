@@ -8,6 +8,7 @@ was already sent does not change if your FTP does. Rest between repeats only, li
 import json
 
 from src.analysis import workout as wo
+from src.i18n import t
 
 SCHEMA_VERSION = "1.0.0"
 BAND = 0.03                      # +/-3 % around the target power
@@ -44,9 +45,9 @@ def intervals(blocks, ftp):
     """The plan's interval list for cleaned blocks."""
     out = []
     for n, b in enumerate(wo.clean_blocks(blocks), 1):
-        name = b['name'] or f"Block {n}"
+        name = b['name'] or t("Block {n}", n=n)
         work = _step(name, b['work_min'], b['work_w'], ftp) if b['work_min'] > 0 else None
-        rest = _step("Recover", b['rest_min'], b['rest_w'], ftp, rest=True) if b['rest_min'] > 0 else None
+        rest = _step(t("Recover"), b['rest_min'], b['rest_w'], ftp, rest=True) if b['rest_min'] > 0 else None
         reps = b['reps']
         if reps == 1:
             if work:
@@ -54,7 +55,7 @@ def intervals(blocks, ftp):
         elif rest:
             if work:
                 if reps > 2:                          # reps-1 passes of [work, rest], then the last work
-                    out.append({"name": f"{reps} x {name}", "exit_trigger_type": "repeat",
+                    out.append({"name": t("{reps} x {name}", reps=reps, name=name), "exit_trigger_type": "repeat",
                                 "exit_trigger_value": reps - 2, "intervals": [work, rest]})
                 else:
                     out.extend([work, rest])
@@ -62,7 +63,7 @@ def intervals(blocks, ftp):
             else:       # rest-only block: nothing to repeat around
                 out.extend([rest] * (reps - 1))
         elif work:
-            out.append({"name": f"{reps} x {name}", "exit_trigger_type": "repeat",
+            out.append({"name": t("{reps} x {name}", reps=reps, name=name), "exit_trigger_type": "repeat",
                         "exit_trigger_value": reps - 1, "intervals": [work]})
     return out
 
@@ -83,10 +84,10 @@ def plan_json(blocks, ftp, name, description=None, outdoor=True):
 
 def total_seconds(items):
     """Duration of an interval list, counting every repeat pass (to check against the planner)."""
-    t = 0
+    ts = 0
     for i in items:
         if i["exit_trigger_type"] == "repeat":
-            t += (i["exit_trigger_value"] + 1) * total_seconds(i["intervals"])
+            ts += (i["exit_trigger_value"] + 1) * total_seconds(i["intervals"])
         else:
-            t += i["exit_trigger_value"]
-    return t
+            ts += i["exit_trigger_value"]
+    return ts

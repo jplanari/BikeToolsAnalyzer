@@ -174,7 +174,7 @@ def plot_climbs(df, climbs):
         if segment.empty: continue
         
         # Hover text for the climb segment
-        hover_text = t("Climb #{i} - {kind}<br>Len: {length:.1f}km, Avg: {grade:.1f}%", i=i + 1, kind=c['type'],
+        hover_text = t("Climb #{i} - {kind}<br>Len: {length:.1f}km, Avg: {grade:.1f}%", i=i + 1, kind=tr(c['type']),
                        length=c['length_m'] / 1000, grade=c['avg_gradient_pct'])
         
         fig.add_trace(go.Scatter(
@@ -530,7 +530,7 @@ def plot_pmc(pmc_df):
 
 def plot_zone_distribution(zone_counts, title=None):
     title = title or t("Zone Distribution")
-    labels = list(zone_counts.keys())
+    labels = [tr(k) for k in zone_counts.keys()]
     values = list(zone_counts.values())
     
     # Calculate %

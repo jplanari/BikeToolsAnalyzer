@@ -4,6 +4,7 @@ from geographiclib.geodesic import Geodesic
 import numpy as np
 import re
 import streamlit as st
+from src.i18n import t
 
 @st.cache_data(show_spinner=False)
 def parse_gpx(file_content):
@@ -22,7 +23,7 @@ def parse_gpx(file_content):
                 gpx_xml = gpx_xml.decode('utf-8-sig')
         gpx = gpxpy.parse(gpx_xml)
     except Exception as e:
-        raise ValueError(f"Failed to parse GPX file: {e}")
+        raise ValueError(t('Failed to parse GPX file: {e}', e=e))
         return pd.DataFrame()
 
     rows = []
@@ -255,9 +256,9 @@ def resample_to_seconds(df):
     df_resampled = df.resample('1s').asfreq()
 
     # Length of the recording gap each inserted second belongs to
-    t = df_resampled.index.to_series()
-    prev_t = t.where(df_resampled['_orig'].notna()).ffill()
-    next_t = t.where(df_resampled['_orig'].notna()).bfill()
+    ts = df_resampled.index.to_series()
+    prev_t = ts.where(df_resampled['_orig'].notna()).ffill()
+    next_t = ts.where(df_resampled['_orig'].notna()).bfill()
     gap_s = (next_t - prev_t).dt.total_seconds()
     inserted = df_resampled['_orig'].isna()
     short_gap = inserted & (gap_s <= MAX_HOLD_GAP_S)

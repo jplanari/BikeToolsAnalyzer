@@ -2,9 +2,10 @@
 What a bike contributes to the physics of a ride: its weight (the sum of its parts) and the rolling resistance of its
 tyres. No Streamlit. CdA is deliberately absent: it is computed from each ride, never entered with a bike.
 """
+from src.i18n import mark, t, tr
 from src.physics.aerodyn import BIKE_MASS_KG, CRR
 
-GENERIC_NAME = "Generic bike"
+GENERIC_NAME = mark("Generic bike")
 PARTS = ("frame", "wheelset", "groupset", "tyres")
 CRR_RANGE = (0.001, 0.020)
 
@@ -35,6 +36,6 @@ def default_bike(bikes):
 
 def label(bike):
     if not bike:
-        return f"{GENERIC_NAME} ({BIKE_MASS_KG:.1f} kg, Crr {CRR:.4f})"
+        return t("{name} ({mass:.1f} kg, Crr {crr:.4f})", name=tr(GENERIC_NAME), mass=BIKE_MASS_KG, crr=CRR)
     m, c = bike_physics(bike)
-    return f"{bike['name']} ({m:.1f} kg, Crr {c:.4f})"
+    return t("{name} ({mass:.1f} kg, Crr {crr:.4f})", name=bike['name'], mass=m, crr=c)
