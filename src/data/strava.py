@@ -213,7 +213,7 @@ def get_streams(access_token, activity_id, usage=None):
 
 ACTIVITY_FIELDS = ["id", "name", "sport_type", "type", "start_date", "trainer",
                    "manual", "device_watts", "distance", "moving_time", "elapsed_time",
-                   "total_elevation_gain"]
+                   "total_elevation_gain", "athlete_count"]
 
 
 def ride_filename(activity_id):
@@ -228,7 +228,8 @@ def build_ride_payload(activity, streams):
     """
     payload = {
         "source": "strava_api",
-        "activity": {k: activity.get(k) for k in ACTIVITY_FIELDS},
+        # athlete_count (1 = solo, more = a group ride) is kept only when Strava gave it
+        "activity": {k: activity.get(k) for k in ACTIVITY_FIELDS if k != "athlete_count" or activity.get(k) is not None},
         "streams": {k: v.get("data", []) for k, v in streams.items()},
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
