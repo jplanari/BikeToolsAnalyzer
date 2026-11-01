@@ -57,3 +57,24 @@ def test_desktop_app_installs_the_theme_next_to_the_data(tmp_path):
 
 def test_pyinstaller_spec_ships_the_theme():
     assert "config.toml" in open(os.path.join(ROOT, "desktop", "biketools.spec")).read()
+
+
+@pytest.mark.parametrize("stored, expected", [
+    ("Compact", "Compact"), ("Compacto", "Compact"), ("compacte", "Compact"), ("Clásico", "Classic"),
+    ("Clàssic", "Classic"), ("Dashboard", "Dashboard"), ("nonsense", "Compact"), (None, "Compact"), ("", "Compact")])
+def test_the_look_survives_a_translated_or_stale_stored_value(monkeypatch, stored, expected):
+    """The sidebar once crashed with ValueError: 'Compacto' is not in list: the look must always be one of LOOKS."""
+    import types
+    state = {} if stored is None else {"look": stored}
+    monkeypatch.setattr(theme, "st", types.SimpleNamespace(session_state=state, query_params={}))
+    assert theme.current_look() == expected
+    assert theme.current_look() in theme.LOOKS
+    assert theme.LOOKS.index(theme.current_look()) >= 0
+    if stored is not None:
+        assert state["look"] in theme.LOOKS                    # repaired for the widget that reads it next
+
+
+def test_a_translated_look_in_the_address_is_understood(monkeypatch):
+    import types
+    monkeypatch.setattr(theme, "st", types.SimpleNamespace(session_state={}, query_params={"look": "Compacto"}))
+    assert theme.current_look() == "Compact"
