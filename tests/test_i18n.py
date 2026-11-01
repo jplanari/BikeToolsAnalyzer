@@ -261,3 +261,26 @@ def test_the_repositorys_own_translations_are_consistent():
         bad += scan.check_catalog(code, messages)
         assert catalog.meta(code).get("name"), code
     assert not bad, bad
+
+
+def test_mark_returns_text_and_tr_translates_it():
+    from src.i18n import mark, set_language, tr
+    set_language("en")
+    assert mark("Training") == "Training"
+    assert tr("Training") == "Training"
+    set_language("es")
+    try:
+        assert tr("Training") == "Entrenamiento"
+        assert tr("not in any catalog") == "not in any catalog"
+    finally:
+        set_language("en")
+
+
+def test_option_labels_have_translations_in_every_catalog():
+    import json
+    from src.analysis.labels import PERIODS
+
+    for code in ("es", "ca"):
+        strings = json.load(open(f"src/i18n/locales/{code}.json"))["strings"]
+        for label in PERIODS:
+            assert strings.get(label), (code, label)

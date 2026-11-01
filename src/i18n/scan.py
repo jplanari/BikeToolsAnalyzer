@@ -29,9 +29,9 @@ WIDGETS = {"markdown", "write", "caption", "subheader", "header", "title", "info
            "button", "metric", "selectbox", "radio", "number_input", "text_input", "checkbox", "expander", "tabs",
            "spinner", "download_button", "toggle", "slider", "multiselect", "date_input", "file_uploader",
            "form_submit_button", "text_area", "popover", "toast", "segmented_control", "pills", "select_slider",
-           "link_button", "page_link", "sidebar_header", "set_page_config"}
+           "link_button", "page_link", "sidebar_header", "set_page_config", "remembered"}
 TEXT_KEYWORDS = {"help", "label", "placeholder", "caption", "title"}
-TRANSLATE = {"t", "tn"}
+TRANSLATE = {"t", "tn", "mark"}
 
 
 def placeholders(text):
@@ -49,6 +49,23 @@ def _is_alpha_text(node):
 
 def _call_name(node):
     return getattr(node.func, "attr", getattr(node.func, "id", ""))
+
+
+def text_args(node):
+    """The arguments of a widget call that carry text: the first (for remembered(), the fourth: widget, key, default,
+    label) and the label, help, placeholder and caption keywords."""
+    first = node.args[3:4] if _call_name(node) == "remembered" else node.args[:1]
+    out = []
+
+    def flatten(arg):                              # "a" if cond else "b": both branches are text
+        if isinstance(arg, ast.IfExp):
+            flatten(arg.body)
+            flatten(arg.orelse)
+        else:
+            out.append(arg)
+    for arg in list(first) + [k.value for k in node.keywords if k.arg in TEXT_KEYWORDS]:
+        flatten(arg)
+    return out
 
 
 def python_files():
@@ -92,7 +109,7 @@ def scan_file(path):
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or _call_name(node) not in WIDGETS or _call_name(node) in TRANSLATE:
             continue
-        candidates = list(node.args[:1]) + [k.value for k in node.keywords if k.arg in TEXT_KEYWORDS]
+        candidates = text_args(node)
         for arg in candidates:
             for sub in ast.walk(arg):
                 if isinstance(sub, ast.Call) and _call_name(sub) in TRANSLATE:

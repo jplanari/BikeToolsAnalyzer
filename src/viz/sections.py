@@ -7,11 +7,12 @@ the value of a widget that isn't drawn in a run, so widgets inside sections go t
 remembered() to keep their choice while another section is showing.
 """
 import streamlit as st
+from src.i18n import t, mark, tr
 
 
 def section_picker(options, key):
     """Horizontal selector that looks like a tab bar. Returns the chosen option."""
-    return st.radio("Section", options, horizontal=True, key=key, label_visibility="collapsed")
+    return st.radio(t("Section"), options, horizontal=True, key=key, label_visibility="collapsed", format_func=tr)
 
 
 def remembered(widget, key, default, *args, **kwargs):

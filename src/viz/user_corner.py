@@ -11,19 +11,19 @@ from src.viz.formatting import format_duration
 
 def render_history(user_name):
     """Renders the history table purely for viewing stats."""
-    st.header("📜 Ride History")
+    st.header(t("📜 Ride History"))
     
     if not user_name:
-        st.warning("Please select a user in the sidebar to view their history.")
+        st.warning(t("Please select a user in the sidebar to view their history."))
         return
 
     history = get_user_rides(user_name)
     if not history:
-        st.info("No rides saved yet.")
+        st.info(t("No rides saved yet."))
         return
 
     hist_df = pd.DataFrame(history)
-    st.info("Here is a log of your past rides.")
+    st.info(t("Here is a log of your past rides."))
 
     hist_df['date_time'] = hist_df['start_local'] if 'start_local' in hist_df.columns else hist_df['date_time']
     cols = ['date_time', 'filename', 'distance_km', 'elevation_m', 'moving_s', 'norm_power',
@@ -49,13 +49,13 @@ def _render_history_update(user_name, user_data):
     n = count_rides_needing_update(user_name)
     if n == 0:
         return
-    with st.expander(f"🛠️ Update ride history ({n} rides need updating)"):
-        st.caption("These rides were saved by an older version of the app, so they are missing "
+    with st.expander(t('🛠️ Update ride history ({n} rides need updating)', n=n)):
+        st.caption(t("These rides were saved by an older version of the app, so they are missing "
                    "newer metrics (moving time, VI, EF, decoupling, zone times, the full power "
                    "curve) or their date. This re-reads the stored files and recomputes them. "
                    "Each ride keeps the FTP it was originally scored with; rides without power "
-                   "get an HR-based TSS using your LTHR.")
-        if st.button("Update ride history"):
+                   "get an HR-based TSS using your LTHR."))
+        if st.button(t("Update ride history")):
             bar = st.progress(0.0, text="Recomputing rides...")
             updated, failed = recompute_history(
                 user_name, user_data['ftp'], user_data['lthr'],
@@ -66,7 +66,7 @@ def _render_history_update(user_name, user_data):
                 st.warning(f"Updated {updated} rides; {len(failed)} could not be read:\n\n"
                            + "\n".join(f"- {f}" for f in failed[:10]))
             else:
-                st.toast(f"✅ Updated {updated} rides.")
+                st.toast(t('✅ Updated {updated} rides.', updated=updated))
                 st.rerun()
 
 
@@ -85,10 +85,10 @@ def _timezone_control(user_name, user):
     if current not in zones:
         zones.append(current)
     with st.expander(t("🕒 Time zone: {zone}", zone=current)):
-        st.caption("Rides are stored in UTC. Your time zone decides which day each ride counts for in the training "
-                   "load, the weekly report and the period filters. Until you choose, this computer's zone is used.")
-        choice = st.selectbox("Time zone", zones, index=zones.index(current), key="tz_select")
-        if choice != current and st.button("Save time zone", key="tz_save"):
+        st.caption(t("Rides are stored in UTC. Your time zone decides which day each ride counts for in the training "
+                   "load, the weekly report and the period filters. Until you choose, this computer's zone is used."))
+        choice = st.selectbox(t("Time zone"), zones, index=zones.index(current), key="tz_select")
+        if choice != current and st.button(t("Save time zone"), key="tz_save"):
             set_user_timezone(user_name, choice)
             st.rerun()
 
@@ -100,39 +100,39 @@ def _threshold_controls(user_name, user):
                                           ("LTHR", f"{DEFAULT_LTHR} bpm", user.get('lthr_auto'))) if auto]
     if notes:
         st.caption("ℹ️ " + "; ".join(notes) + ".")
-    with st.popover("Set FTP / LTHR / W′"):
+    with st.popover(t("Set FTP / LTHR / W′")):
         st.markdown(theme.FTP_HELP)
         st.markdown(theme.LTHR_HELP)
         st.markdown(theme.W_PRIME_HELP)
         with st.form(f"thresholds_{user_name}"):
-            ftp = st.number_input("FTP (Watts)", value=int(user['ftp']), min_value=1, step=5)
-            lthr = st.number_input("LTHR (bpm)", value=int(user['lthr']), min_value=1, step=1)
+            ftp = st.number_input(t("FTP (Watts)"), value=int(user['ftp']), min_value=1, step=5)
+            lthr = st.number_input(t("LTHR (bpm)"), value=int(user['lthr']), min_value=1, step=1)
             wprime = st.number_input("W′ (kJ)", value=round((user.get('w_prime') or 20000) / 1000, 1),
                                      min_value=1.0, step=0.5)
-            if st.form_submit_button("Save by hand"):
+            if st.form_submit_button(t("Save by hand")):
                 set_user_w_prime(user_name, wprime * 1000)
                 set_user_thresholds(user_name, ftp=_by_hand(ftp, user['ftp'], user.get('ftp_auto')),
                                     lthr=_by_hand(lthr, user['lthr'], user.get('lthr_auto')))
                 st.rerun()
         a1, a2 = st.columns(2)
-        if a1.button("Estimate FTP from rides", key=f"auto_ftp_{user_name}", disabled=bool(user.get('ftp_auto'))):
+        if a1.button(t("Estimate FTP from rides"), key=f"auto_ftp_{user_name}", disabled=bool(user.get('ftp_auto'))):
             set_user_thresholds(user_name, auto_ftp=True)
             st.rerun()
-        if a2.button("Estimate LTHR from rides", key=f"auto_lthr_{user_name}", disabled=bool(user.get('lthr_auto'))):
+        if a2.button(t("Estimate LTHR from rides"), key=f"auto_lthr_{user_name}", disabled=bool(user.get('lthr_auto'))):
             set_user_thresholds(user_name, auto_lthr=True)
             st.rerun()
 
 
 def render_user_corner(user_name):
-    st.header("👤 User Corner")
+    st.header(t("👤 User Corner"))
 
     if not user_name:
-        st.warning("Please select a user in the sidebar to view profile details.")
+        st.warning(t("Please select a user in the sidebar to view profile details."))
         return
         
     user_data = get_user_data(user_name)
     if not user_data:
-        st.error("User data not found.")
+        st.error(t("User data not found."))
         return
 
     # 1. Profile Summary
@@ -140,7 +140,7 @@ def render_user_corner(user_name):
     c1.metric("FTP", f"{user_data['ftp']} W")
     c2.metric("LTHR", f"{user_data['lthr']} bpm")
     c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.W_PRIME_HELP)
-    c4.metric("Weight", f"{user_data['weight']} kg")
+    c4.metric(t("Weight"), f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
     _timezone_control(user_name, user_data)
     
@@ -160,5 +160,5 @@ def render_user_corner(user_name):
     render_weekly_email(user_name)
     st.markdown("---")
 
-    st.info("Charts and analytics are on the **Training** page, including your critical-power model and the "
-            "buttons that save it to your profile.")
+    st.info(t("Charts and analytics are on the **Training** page, including your critical-power model and the "
+            "buttons that save it to your profile."))

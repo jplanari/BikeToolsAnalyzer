@@ -5,6 +5,7 @@ from src.viz.dashboard import (render_sidebar, process_and_display_analysis, ren
 from src.viz.training_page import render_training_page
 from src.viz import theme
 from src.viz.gallery import render_gallery
+from src.i18n import t
 
 # Initialize Database
 init_db()
@@ -38,7 +39,7 @@ app_mode, selected_user, current_file, settings = render_sidebar()
 if app_mode == "Analyze Upload":
     opened = current_file if current_file is not None else st.session_state.get("gallery_file")
     if opened is not None:
-        if current_file is None and st.button("← All rides", key="back_to_gallery"):
+        if current_file is None and st.button(t("← All rides"), key="back_to_gallery"):
             st.session_state["gallery_file"] = None
             st.rerun()
         else:

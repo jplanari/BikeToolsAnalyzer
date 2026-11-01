@@ -2,7 +2,9 @@
 rule-of-thumb status labels (no Streamlit, no plotting)."""
 import pandas as pd
 
-PERIODS = {'6 weeks': 42, '3 months': 91, '6 months': 182, '1 year': 365, 'All': None}
+from src.i18n import mark
+
+PERIODS = {mark('6 weeks'): 42, mark('3 months'): 91, mark('6 months'): 182, mark('1 year'): 365, mark('All'): None}
 
 
 def period_start(label, today):

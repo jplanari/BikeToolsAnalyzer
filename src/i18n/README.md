@@ -33,3 +33,17 @@ python -m src.i18n.scan --check     # what the tests check: readable t() calls, 
 1. Create `locales/<code>.json` with `{"_meta": {"name": "Deutsch", "released": false}, "strings": {}}`.
 2. `python -m src.i18n.scan --sync` fills it with every string, empty.
 3. Translate (a draft by Claude is fine), have a native speaker review it, then set `"released": true`.
+
+## Option lists and dynamic text
+
+Widget options whose English value is compared in code (radio/select lists, page and section names, period
+labels) keep the English string as the value and are shown translated:
+
+```python
+sections = [mark("📊 Summary"), mark("⚡ Power")]       # mark(): extracted by the scanner, returns the text unchanged
+st.radio(t("Section"), sections, format_func=tr)        # tr(): translates at display time
+```
+
+Spanish and Catalan are complete (every string translated) but still `"released": false` until a native
+speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Not yet translated: chart titles and
+axis labels, PDFs, the weekly e-mail body, and month/day names produced by `strftime`.

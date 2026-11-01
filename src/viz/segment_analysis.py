@@ -13,6 +13,7 @@ from src.viz.formatting import format_duration
 from src.viz.maps import create_segment_map
 from src.viz.plots import plot_detailed_climb
 from src.viz.sections import remembered
+from src.i18n import t, mark, tr
 
 DISTANCE_STEP_KM = 0.01            # 10 m
 TIME_STEP_MIN = 0.1
@@ -122,12 +123,12 @@ _LAP_FORMATS = {'Start (km)': "{:.1f}", 'Distance (km)': "{:.2f}", 'Ascent (m)':
 
 
 def _lap_table(df, spans, ftp, weight):
-    t = sg.stats_table(df, spans, ftp, weight)
-    t['Time'] = t['Time'].map(_time)
+    table = sg.stats_table(df, spans, ftp, weight)
+    table['Time'] = table['Time'].map(_time)
     try:
-        return t.style.format(_LAP_FORMATS, na_rep="–")
+        return table.style.format(_LAP_FORMATS, na_rep="–")
     except ImportError:                    # DataFrame.style needs a recent jinja2; show the table rounded instead
-        out = t.copy()
+        out = table.copy()
         for col, spec in _LAP_FORMATS.items():
             if col in out.columns:
                 out[col] = out[col].map(lambda v, spec=spec: "–" if pd.isna(v) else spec.format(v))
@@ -141,7 +142,7 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
     """
     if len(df) < 30 or 'ele' not in df.columns:
         return
-    st.subheader("📐 Segment analysis")
+    st.subheader(t("📐 Segment analysis"))
     ftp, weight = settings.get('ftp'), settings.get('weight')
     laps = sg.lap_spans(df, lap_time_spans)
     climb_spans = sg.climb_spans(df, climbs)
@@ -149,13 +150,13 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         n = lap_time_spans.attrs.get('lap_messages', len(lap_time_spans))
         st.caption("No laps could be matched to this ride" + (f" ({n} lap record(s) in the file)." if n else
                    ": the file has no laps (the whole ride is one)."))
-    modes = ["Custom selection"] + (["Lap"] if laps else []) + (["Climb"] if climb_spans else [])
+    modes = [mark("Custom selection")] + ([mark("Lap")] if laps else []) + ([mark("Climb")] if climb_spans else [])
     mode_key, range_key, pending_key = f"seg_mode_{ride_id}", f"seg_range_{ride_id}", f"seg_pending_{ride_id}"
     pending = st.session_state.pop(pending_key, None)             # a range dragged on the profile on the last run
     if pending:                                                   # widget values can only be set before they are drawn
         st.session_state[mode_key] = modes[0]
         st.session_state[range_key] = pending
-    mode = remembered(st.radio, mode_key, modes[0], "Analyse", modes, horizontal=True)
+    mode = remembered(st.radio, mode_key, modes[0], t("Analyse"), modes, horizontal=True, format_func=tr)
 
     chosen = None                                   # the detected climb when one is picked
     if mode == "Lap":
@@ -163,7 +164,7 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         for label, i0, i1 in laps:
             s = sg.segment_stats(df, i0, i1)
             label_of[label] = f"{label} · {_fmt(s.get('dist_km'), '.1f', ' km')} · {_time(s.get('elapsed_s'))}"
-        pick = remembered(st.selectbox, f"seg_lap_{ride_id}", laps[0][0], "Lap", [l for l, *_ in laps],
+        pick = remembered(st.selectbox, f"seg_lap_{ride_id}", laps[0][0], t("Lap"), [l for l, *_ in laps],
                           format_func=label_of.get)
         _, i0, i1 = next(x for x in laps if x[0] == pick)
     elif mode == "Climb":
@@ -171,32 +172,32 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
         for label, i0, i1, c in climb_spans:
             label_of[label] = (f"{label} · {c['type']} · {c['length_m'] / 1000:.1f} km · "
                                f"{c['avg_gradient_pct']:.1f} %")
-        pick = remembered(st.selectbox, f"seg_climb_{ride_id}", climb_spans[0][0], "Climb",
+        pick = remembered(st.selectbox, f"seg_climb_{ride_id}", climb_spans[0][0], t("Climb"),
                           [x[0] for x in climb_spans], format_func=label_of.get)
         _, i0, i1, chosen = next(x for x in climb_spans if x[0] == pick)
     elif 'dist_m' in df.columns and df['dist_m'].notna().any():
         total_km = float(df['dist_m'].max()) / 1000.0
         a, b = remembered(st.slider, range_key, (0.0, round(min(total_km, 5.0), 2)),
-                          "Distance range (km)", 0.0, round(total_km, 2), step=DISTANCE_STEP_KM, format="%.2f")
+                          t("Distance range (km)"), 0.0, round(total_km, 2), step=DISTANCE_STEP_KM, format="%.2f")
         i0, i1 = sg.span_by_distance(df, a * 1000.0, b * 1000.0)
     else:
         minutes = len(df) / 60.0
         a, b = remembered(st.slider, range_key, (0.0, round(min(minutes, 10.0), 1)),
-                          "Time range (min)", 0.0, round(minutes, 1), step=TIME_STEP_MIN)
+                          t("Time range (min)"), 0.0, round(minutes, 1), step=TIME_STEP_MIN)
         i0, i1 = sg._clip(df, int(a * 60), int(b * 60))
 
     has_dist = 'dist_m' in df.columns and df['dist_m'].notna().any()
     top = round(float(df['dist_m'].max()) / 1000.0, 2) if has_dist else round(len(df) / 60.0, 1)
     drawn = _drawn_range(df, i0, i1, ride_id, 0.0, top, DISTANCE_STEP_KM if has_dist else TIME_STEP_MIN)
-    st.caption("Drag across the profile to choose a stretch of the route. In *Custom selection* the range slider "
-               f"fine-tunes it in {'10 m' if has_dist else '0.1 min'} steps.")
+    st.caption(t('Drag across the profile to choose a stretch of the route. In *Custom selection* the range '
+                    'slider fine-tunes it in {value1} steps.', value1='10 m' if has_dist else '0.1 min'))
     if drawn and mode == "Custom selection" and drawn == tuple(st.session_state.get(range_key) or ()):
         drawn = None                                              # already the current range
     if drawn:
         st.session_state[pending_key] = drawn
         st.rerun()
     if i1 - i0 < 5:
-        st.info("The selection is too short to analyse. Widen the range.")
+        st.info(t("The selection is too short to analyse. Widen the range."))
         return
     stats = sg.segment_stats(df, i0, i1, ftp, weight)
 
@@ -220,18 +221,18 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
 
     climb = chosen or sg.as_climb(df, i0, i1)
     if climb['length_m'] >= MIN_ESTIMATOR_LENGTH_M and 'dist_m' in df.columns:
-        with st.expander("Gradient profile and performance estimator", expanded=chosen is not None):
+        with st.expander(t("Gradient profile and performance estimator"), expanded=chosen is not None):
             st.plotly_chart(plot_detailed_climb(df.iloc[i0:i1 + 1]), use_container_width=True,
                             key=f"seg_prof_{ride_id}_{i0}_{i1}")
             if climb['avg_gradient_pct'] >= MIN_ESTIMATOR_GRADE_PCT:
                 render_climb_estimator(df, climb, f"seg_{i0}_{i1}", settings, ride_id)
             else:
-                st.caption("The performance estimator is for climbs: this stretch averages less than "
-                           f"{MIN_ESTIMATOR_GRADE_PCT:.0f} % gradient.")
+                st.caption(t('The performance estimator is for climbs: this stretch averages less than '
+                                '{min_estimator_grade_pct:.0f} % gradient.', min_estimator_grade_pct=MIN_ESTIMATOR_GRADE_PCT))
     if laps:
-        with st.expander("Compare all laps"):
+        with st.expander(t("Compare all laps")):
             st.dataframe(_lap_table(df, laps, ftp, weight), use_container_width=True, hide_index=True)
     if climb_spans:
-        with st.expander("Compare all climbs"):
+        with st.expander(t("Compare all climbs")):
             st.dataframe(_lap_table(df, [(l, a, b) for l, a, b, _ in climb_spans], ftp, weight),
                          use_container_width=True, hide_index=True)
