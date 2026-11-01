@@ -24,7 +24,7 @@ from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR
+from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
 from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
@@ -362,17 +362,20 @@ def _render_aero(df, settings, p_comps):
     fit = _ensure_cda(df, settings)
     if settings.get('bike_name'):
         st.caption(f"Power balance with {settings['bike_name']} and {settings['weight']:.0f} kg rider. "
-                   "CdA is computed from the ride.")
+                   "CdA is an estimate computed from the ride.")
     avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
     if fit:
         c1, c2 = st.columns(2)
         tunnel = fit.get('tunnel_seconds') or 0
         bridged = (f" Includes {tunnel // 60} min {tunnel % 60} s where the speed was lost while pedalling (a tunnel), "
                    "taken at the stretch's average speed." if tunnel else "")
-        c1.metric("Est. CdA", f"{fit['cda']:.3f} m²",
-                  help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. Treat it as "
-                       "±0.03 m²: it absorbs any error in weight, rolling resistance, wind and gradient." + bridged)
+        c1.metric("CdA (estimate)", f"{fit['cda']:.3f} m²",
+                  help=f"Least-squares fit over {fit['seconds'] // 60} min faster than 18 km/h. " + CDA_ESTIMATE_NOTE
+                       + " It absorbs any error in weight, rolling resistance, wind and gradient." + bridged)
         c2.metric("Avg Aero Power", f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else "N/A")
+        no_wind = "wind_speed" not in df.columns
+        st.caption("⚠️ " + CDA_ESTIMATE_NOTE + (" No wind data for this ride: still air is assumed, which understates the CdA "
+                                                  "when there was a head wind." if no_wind else ""))
     else:
         st.warning("Not enough stable data points (Speed > 18km/h required).")
 
@@ -382,9 +385,9 @@ def _render_aero(df, settings, p_comps):
         if not df.empty:
             show_centered(plot_power_budget(df))
 
-    st.subheader("CdA")
+    st.subheader("CdA estimate")
     if 'cda' in df.columns:
-        show_centered(plot_x_time(df, 'cda', 'CdA (m²)'))
+        show_centered(plot_x_time(df, 'cda', 'CdA estimate (m²)'))
     else:
         st.info("No CdA data available.")
 

@@ -213,7 +213,7 @@ def _page_aero(d):
     if a:
         _tile_row(fig, 0.895, [
             ('Estimated CdA', _fmt(a['cda'], '.3f', ' m²'),
-             f"{a['seconds'] // 60} min used" if a['cda'] else 'not enough stable data'),
+             f"an estimate, {a['seconds'] // 60} min used" if a['cda'] else 'not enough stable data'),
             ('Mean pedal power', _fmt(a.get('pedal_w'), '.0f', ' W'), 'whole ride'),
         ], cols=5)
     ax = _axes(fig, 0.80, 0.15, 0.30, RIGHT)
@@ -247,8 +247,9 @@ def _page_aero(d):
         _table(ax, cols, rows, w, aligns=['left'] + ['right'] * (len(cols) - 1))
     else:
         _empty(ax, 'No laps recorded in this file.')
-    _note(fig, 0.085, "CdA is a least-squares fit over the fast, non-braking part of the ride and absorbs errors in weight, "
-                      "rolling resistance, wind and gradient: read it as about ±0.03 m². The thermal model is "
+    _note(fig, 0.100, "CdA is a least-squares fit over the fast, non-braking part of the ride and absorbs errors in weight, "
+                      "rolling resistance, wind and gradient: it is an estimate, typically within ±10 % in calm conditions "
+                      "and ±20–30 % in wind, so compare rides on similar routes. The thermal model is "
                       "uncalibrated: use it to compare rides, not as a core-temperature measurement.")
     return fig
 
