@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from src.physics import aerodyn as ae
+from src.i18n import mark
 
 MAX_POINTS = 900                      # points per time-series chart: a 6-hour ride at 1 Hz has 21,600
 
@@ -65,9 +66,9 @@ def _aero(df, rider_mass):
         return {'cda': fit['cda'] if fit else None, 'seconds': fit['seconds'] if fit else 0, 'budget': None}
     p_grav, p_roll, p_accel = comps
     pedal = float(df['power'].mean())
-    budget = {'Aerodynamic drag': float(p_aero.mean()), 'Rolling resistance': float(p_roll.mean()),
-              'Climbing / descending': float(p_grav.mean()), 'Acceleration': float(p_accel.mean()),
-              'Drivetrain loss': pedal * ae.DRIVETRAIN_LOSS}
+    budget = {mark('Aerodynamic drag'): float(p_aero.mean()), mark('Rolling resistance'): float(p_roll.mean()),
+              mark('Climbing / descending'): float(p_grav.mean()), mark('Acceleration'): float(p_accel.mean()),
+              mark('Drivetrain loss'): pedal * ae.DRIVETRAIN_LOSS}
     if not all(np.isfinite(v) for v in budget.values()):
         budget = None
     return {'cda': fit['cda'] if fit else None, 'seconds': fit['seconds'] if fit else 0,

@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import xml.etree.ElementTree as ET
+from src.i18n import t
 
 
 def _local(tag):
@@ -38,7 +39,7 @@ def _root(file_content):
     try:
         return ET.fromstring(bytes(file_content))
     except ET.ParseError as e:
-        raise ValueError(f"Failed to parse TCX file: {e}")
+        raise ValueError(t('Failed to parse TCX file: {e}', e=e))
 
 
 def tcx_sport(file_content):
@@ -58,10 +59,10 @@ def parse_tcx(file_content):
     for tp in _root(file_content).iter():
         if _local(tp.tag) != "Trackpoint":
             continue
-        t = _first(tp, "Time")
-        if t is None or not t.text:
+        ts = _first(tp, "Time")
+        if ts is None or not ts.text:
             continue
-        time = pd.to_datetime(t.text.strip(), utc=True, errors="coerce")
+        time = pd.to_datetime(ts.text.strip(), utc=True, errors="coerce")
         if pd.isna(time):
             continue
         row = {"time": time.tz_localize(None),

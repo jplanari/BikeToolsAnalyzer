@@ -13,6 +13,10 @@ import re
 import zipfile
 from dataclasses import dataclass
 
+from src.i18n import mark, t, tr
+
+NOT_A_RIDE = mark("not a ride file (expected FIT, GPX or TCX, or a zip / gz of them).")
+
 MAX_ACTIVITY_BYTES = 200 * 1024 * 1024        # one unpacked file
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024      # everything unpacked from one upload (zip-bomb guard)
 MAX_DEPTH = 3                                 # zip in zip in gz ...
@@ -67,21 +71,21 @@ def expand_upload(name, data, _depth=0, _budget=None):
 
     if kind in ACTIVITY_KINDS:
         if len(data) > MAX_ACTIVITY_BYTES:
-            return [], [f"{name}: file is too large."]
+            return [], [f"{name}: " + t("file is too large.")]
         budget[0] -= len(data)
         return [Activity(f"{_stem(name)}.{kind}", bytes(data), kind)], notes
 
     if _depth >= MAX_DEPTH:
-        return [], [f"{name}: archives are nested too deeply."]
+        return [], [f"{name}: " + t("archives are nested too deeply.")]
 
     if kind == "gzip":
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz:
                 inner = gz.read(MAX_ACTIVITY_BYTES + 1)
         except (OSError, EOFError) as e:
-            return [], [f"{name}: could not unzip it ({e})."]
+            return [], [f"{name}: " + t("could not unzip it ({e}).", e=e)]
         if len(inner) > MAX_ACTIVITY_BYTES:
-            return [], [f"{name}: file is too large."]
+            return [], [f"{name}: " + t("file is too large.")]
         return expand_upload(_stem(name), inner, _depth + 1, budget)
 
     if kind == "zip":
@@ -91,21 +95,21 @@ def expand_upload(name, data, _depth=0, _budget=None):
                 members = [i for i in zf.infolist() if not i.is_dir() and not _hidden(i.filename)]
                 for info in sorted(members, key=lambda i: i.filename):
                     if info.file_size > MAX_ACTIVITY_BYTES or info.file_size > budget[0]:
-                        notes.append(f"{info.filename}: too large, skipped.")
+                        notes.append(f"{info.filename}: " + t("too large, skipped."))
                         continue
                     try:
                         inner = zf.read(info)
                     except Exception as e:
-                        notes.append(f"{info.filename}: could not be read ({e}).")
+                        notes.append(f"{info.filename}: " + t("could not be read ({e}).", e=e))
                         continue
                     found, sub = expand_upload(info.filename, inner, _depth + 1, budget)
                     out.extend(found)
                     # unknown files inside archives (json, csv, pdf, ...) are normal in bulk exports: stay quiet
-                    notes.extend(n for n in sub if "not a ride file" not in n)
+                    notes.extend(n for n in sub if not n.endswith(tr(NOT_A_RIDE)))
         except zipfile.BadZipFile:
-            return [], [f"{name}: the zip file is damaged."]
+            return [], [f"{name}: " + t("the zip file is damaged.")]
         if not out and not notes:
-            notes.append(f"{name}: no rides found inside.")
+            notes.append(f"{name}: " + t("no rides found inside."))
         return out, notes
 
-    return [], [f"{name}: not a ride file (expected FIT, GPX or TCX, or a zip / gz of them)."]
+    return [], [f"{name}: " + tr(NOT_A_RIDE)]

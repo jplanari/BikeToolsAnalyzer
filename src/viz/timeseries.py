@@ -5,14 +5,15 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.viz.figstyle import elevation_range
+from src.i18n import mark, t, tr
 
 # label -> (column, unit, colour). Colours are the Okabe-Ito palette used across the app.
 CHANNELS = {
-    "Power": ("power", "W", "#0072B2"),
-    "Heart rate": ("hr", "bpm", "#D55E00"),
-    "Speed": ("speed_kmh", "km/h", "#009E73"),
-    "Cadence": ("cadence", "rpm", "#CC79A7"),
-    "Gradient": ("grade_smooth", "%", "#E69F00"),
+    mark("Power"): ("power", "W", "#0072B2"),
+    mark("Heart rate"): ("hr", "bpm", "#D55E00"),
+    mark("Speed"): ("speed_kmh", "km/h", "#009E73"),
+    mark("Cadence"): ("cadence", "rpm", "#CC79A7"),
+    mark("Gradient"): ("grade_smooth", "%", "#E69F00"),
     "W′ balance": ("w_prime_balance", "J", "#56B4E9"),
 }
 SMOOTHING_S = 5                  # moving-average window, seconds (samples at 1 Hz)
@@ -28,11 +29,11 @@ def available(df):
 
 def _x(df):
     if 'dist_m' in df.columns and df['dist_m'].notna().any():
-        return df['dist_m'] / 1000.0, "Distance (km)"
+        return df['dist_m'] / 1000.0, t("Distance (km)")
     if 'time' in df.columns:                       # no distance (indoor, no GPS): elapsed minutes
-        t = pd.to_datetime(df['time'])
-        return (t - t.iloc[0]).dt.total_seconds() / 60.0, "Time (min)"
-    return pd.Series(np.arange(len(df)) / 60.0, index=df.index), "Time (min)"
+        elapsed = pd.to_datetime(df['time'])
+        return (elapsed - elapsed.iloc[0]).dt.total_seconds() / 60.0, t("Time (min)")
+    return pd.Series(np.arange(len(df)) / 60.0, index=df.index), t("Time (min)")
 
 
 def _thin(x, y):
@@ -65,16 +66,16 @@ def build_figure(df, series):
     r = 1
     if has_ele:
         bx, by = _thin(x, df['ele'])
-        fig.add_trace(go.Scatter(x=bx, y=by, mode='lines', name="Elevation", fill='tozeroy', fillcolor=BASE_FILL,
+        fig.add_trace(go.Scatter(x=bx, y=by, mode='lines', name=t("Elevation"), fill='tozeroy', fillcolor=BASE_FILL,
                                  line=dict(color=BASE_LINE, width=1), hovertemplate="%{y:.0f} m"), row=r, col=1)
-        fig.update_yaxes(title_text="Elevation (m)", range=elevation_range(df['ele']), row=r, col=1)
+        fig.update_yaxes(title_text=t("Elevation (m)"), range=elevation_range(df['ele']), row=r, col=1)
         r += 1
     for label in series:
         col, unit, color = CHANNELS[label]
         lx, ly = _thin(x, _smooth(df[col], SMOOTHING_S))
-        fig.add_trace(go.Scatter(x=lx, y=ly, mode='lines', name=label, line=dict(color=color, width=1.6),
+        fig.add_trace(go.Scatter(x=lx, y=ly, mode='lines', name=tr(label), line=dict(color=color, width=1.6),
                                  hovertemplate="%{y:.1f} " + unit), row=r, col=1)
-        fig.update_yaxes(title_text=f"{label} ({unit})", row=r, col=1)
+        fig.update_yaxes(title_text=t("{label} ({unit})", label=tr(label), unit=unit), row=r, col=1)
         r += 1
     fig.update_xaxes(title_text=x_title, row=max(rows, 1), col=1)
     fig.update_yaxes(fixedrange=True)                     # zoom and pan only along the route: every channel keeps its full range

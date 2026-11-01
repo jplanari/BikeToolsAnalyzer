@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 import pandas as pd
 import requests
+from src.i18n import t
 
 AUTHORIZE_URL = "https://flow.polar.com/oauth2/authorization"
 TOKEN_URL = "https://polarremote.com/v2/oauth2/token"
@@ -25,6 +26,10 @@ WINDOW_DAYS = 30                      # how far back Polar lets an app list exer
 
 class PolarError(Exception):
     pass
+
+
+class PolarNoData(PolarError):
+    """The exercise has no recorded data file."""
 
 
 class PolarAuthError(PolarError):
@@ -60,13 +65,13 @@ def exchange_code(cfg, code):
                           data={"grant_type": "authorization_code", "code": code, "redirect_uri": cfg.redirect_uri},
                           headers={"Accept": "application/json"}, timeout=TIMEOUT_S)
     except requests.RequestException as e:
-        raise PolarError(f"Could not reach Polar: {e}") from e
+        raise PolarError(t('Could not reach Polar: {e}', e=e)) from e
     if r.status_code in (400, 401):
-        raise PolarAuthError(f"Polar rejected the request ({r.status_code}): {r.text[:200]}")
+        raise PolarAuthError(t('Polar rejected the request ({status_code}): {detail}', status_code=r.status_code, detail=r.text[:200]))
     if r.status_code == 429:
-        raise PolarRateLimitError("Polar rate limit reached; try again in a few minutes.")
+        raise PolarRateLimitError(t("Polar rate limit reached; try again in a few minutes."))
     if not r.ok:
-        raise PolarError(f"Polar token endpoint error {r.status_code}")
+        raise PolarError(t('Polar token endpoint error {status_code}', status_code=r.status_code))
     tok = r.json()
     return {"access_token": tok["access_token"], "polar_user_id": str(tok.get("x_user_id") or "")}
 
@@ -78,13 +83,13 @@ def _request(method, path, access_token, **kw):
     try:
         r = requests.request(method, f"{API_BASE}{path}", headers=headers, timeout=TIMEOUT_S, **kw)
     except requests.RequestException as e:
-        raise PolarError(f"Could not reach Polar: {e}") from e
+        raise PolarError(t('Could not reach Polar: {e}', e=e)) from e
     if r.status_code in (401, 403):
-        raise PolarAuthError("Polar authorization was revoked or expired. Please reconnect.")
+        raise PolarAuthError(t("Polar authorization was revoked or expired. Please reconnect."))
     if r.status_code == 404:
         raise PolarNotFound("Not found on Polar.")
     if r.status_code == 429:
-        raise PolarRateLimitError("Polar rate limit reached; try again in a few minutes.")
+        raise PolarRateLimitError(t("Polar rate limit reached; try again in a few minutes."))
     return r
 
 
@@ -95,7 +100,7 @@ def register_user(access_token, member_id):
     if r.status_code == 409:                                  # already registered
         return None
     if not r.ok:
-        raise PolarError(f"Polar could not register this account ({r.status_code}): {r.text[:200]}")
+        raise PolarError(t('Polar could not register this account ({status_code}): {detail}', status_code=r.status_code, detail=r.text[:200]))
     return r.json() if r.content else None
 
 
@@ -111,7 +116,7 @@ def list_exercises(access_token):
     """Exercises uploaded to Flow in the last 30 days (summaries), as a list of dicts."""
     r = _request("GET", "/exercises", access_token, headers={"Accept": "application/json"})
     if not r.ok:
-        raise PolarError(f"Polar API error {r.status_code}: {r.text[:200]}")
+        raise PolarError(t('Polar API error {status_code}: {detail}', status_code=r.status_code, detail=r.text[:200]))
     data = r.json() if r.content else []
     return data if isinstance(data, list) else data.get("exercises", [])
 
@@ -119,9 +124,9 @@ def list_exercises(access_token):
 def download_fit(access_token, exercise_id):
     r = _request("GET", f"/exercises/{exercise_id}/fit", access_token, headers={"Accept": "*/*"})
     if r.status_code == 204 or not r.content:
-        raise PolarError("This exercise has no recorded data file.")
+        raise PolarNoData(t("This exercise has no recorded data file."))
     if not r.ok:
-        raise PolarError(f"Polar API error {r.status_code}: {r.text[:200]}")
+        raise PolarError(t('Polar API error {status_code}: {detail}', status_code=r.status_code, detail=r.text[:200]))
     return r.content
 
 

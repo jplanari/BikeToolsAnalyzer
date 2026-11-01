@@ -9,12 +9,13 @@ import pandas as pd
 from src.data import db
 from src.data.providers import polar as pl
 from src.data.imports.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
+from src.i18n import t
 
 
 def get_auth(user_name):
     auth = db.get_polar_auth(user_name)
     if not auth:
-        raise pl.PolarAuthError("This profile is not connected to Polar.")
+        raise pl.PolarAuthError(t("This profile is not connected to Polar."))
     return auth
 
 
@@ -84,7 +85,7 @@ def sync_new_rides(user_name, ftp, progress=None, lthr=None):
         except pl.PolarAuthError:
             raise
         except pl.PolarError as e:
-            if "no recorded data" in str(e):
+            if isinstance(e, pl.PolarNoData):
                 res.no_data += 1
             else:
                 res.failed.append(f"{name}: {e}")
@@ -98,7 +99,7 @@ def sync_new_rides(user_name, ftp, progress=None, lthr=None):
             imported_ids.add(str(ex["id"]))
             if start is not None:
                 known_starts.append(start)
-        elif "duplicate" in msg.lower() or "already exists" in msg.lower():
+        elif db.is_duplicate_message(msg):
             res.already_imported += 1
         else:
             res.failed.append(f"{name}: {msg}")

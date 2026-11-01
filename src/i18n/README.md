@@ -1,6 +1,7 @@
 # Translations
 
-Stage 1: the mechanism. A few strings of the sidebar are wrapped as a pilot; everything else is still English.
+The whole interface is wrapped for translation: pages, chart titles and labels, tables, the PDF reports, the weekly
+e-mail, and the messages of the data layer and the providers.
 
 ## How it works
 - `t("English text")` returns the text in the current language; `tn("{n} ride", "{n} rides", n)` picks singular or plural.
@@ -33,3 +34,26 @@ python -m src.i18n.scan --check     # what the tests check: readable t() calls, 
 1. Create `locales/<code>.json` with `{"_meta": {"name": "Deutsch", "released": false}, "strings": {}}`.
 2. `python -m src.i18n.scan --sync` fills it with every string, empty.
 3. Translate (a draft by Claude is fine), have a native speaker review it, then set `"released": true`.
+
+## Option lists and dynamic text
+
+Widget options whose English value is compared in code (radio/select lists, page and section names, period
+labels) keep the English string as the value and are shown translated:
+
+```python
+sections = [mark("📊 Summary"), mark("⚡ Power")]       # mark(): extracted by the scanner, returns the text unchanged
+st.radio(t("Section"), sections, format_func=tr)        # tr(): translates at display time
+```
+
+Spanish and Catalan are complete (every string translated) but still `"released": false` until a native
+speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Chart titles, axis titles, trace names and
+annotations are covered (the scanner checks Plotly calls). So are the PDF reports and the weekly e-mail (written
+in the rider's saved language, also when it is sent in the background).
+
+Month and day names come from the catalog too: use `fdate(value, "%a %d %b")` instead of `strftime`, or pass the
+date to `t()` as a placeholder (`t("Week of {monday:%d %b}", monday=monday)`); both translate `%a %A %b %B`.
+
+Code must never compare translated text. When a message drives a decision, give it a type or a helper that works in
+every language (`is_duplicate_message`, `PolarNoData`, `StravaNoData`, `WahooNoData`), as the importers do.
+
+Still English: developer-facing log lines and warnings, file and column names, and unit symbols.

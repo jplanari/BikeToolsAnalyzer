@@ -17,7 +17,7 @@ from src.data.db import (save_user,
                          consume_oauth_state,
                          data_stamp)
 from src.viz import theme
-from src.i18n import t, session as i18n_session
+from src.i18n import t, mark, session as i18n_session, tr
 from src.viz.connections import get_credentials, setup_box
 from src.data.parsers.upload import expand_upload, UPLOAD_TYPES
 from src.data.imports.upload_import import import_activities
@@ -44,7 +44,7 @@ def _follow_the_data(user_name):
     if st.session_state.get(stamp_key) == data_stamp():          # nothing was saved since the last estimate
         return
     if user.get('lthr_auto') and not st.session_state.get(f"hr20_done_{user_name}"):
-        with st.spinner("Estimating LTHR from your rides…"):
+        with st.spinner(t("Estimating LTHR from your rides…")):
             if backfill_hr20(user_name) == 0:
                 st.session_state[f"hr20_done_{user_name}"] = True     # nothing left to read: stop looking
     refresh_auto_thresholds(user_name)
@@ -60,8 +60,8 @@ def render_sidebar():
     user_height = 175
     user_w_prime = 20000.0
 
-    pages = ["Analyze Upload", "Training", "User Corner"]
-    app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
+    pages = [mark("Analyze Upload"), mark("Training"), mark("User Corner")]
+    app_mode = st.radio(t("Go to"), pages, horizontal=True, key="nav_top", label_visibility="collapsed", format_func=tr)
 
     st.sidebar.markdown("---")
     st.sidebar.header(t("👤 User Profile"))
@@ -88,10 +88,10 @@ def render_sidebar():
                     user_w_prime = u_data.get('w_prime') or user_w_prime
 
 
-            with st.popover("Delete user"):
-                st.warning(f"This removes **{selected_user_name}** with all their rides, records and plans. "
-                           "It cannot be undone.")
-                if st.button(f"Yes, delete {selected_user_name}", type="primary", key="confirm_delete_user"):
+            with st.popover(t("Delete user")):
+                st.warning(t('This removes **{selected_user_name}** with all their rides, records and plans. It cannot be '
+                                'undone.', selected_user_name=selected_user_name))
+                if st.button(t('Yes, delete {selected_user_name}', selected_user_name=selected_user_name), type="primary", key="confirm_delete_user"):
                     delete_user(selected_user_name)
                     st.rerun()
         else:
@@ -99,16 +99,16 @@ def render_sidebar():
 
     with tab_create:
         with st.form("user_form"):
-            new_name = st.text_input("Name")
-            new_ftp = st.number_input("FTP (Watts) · optional", value=None, min_value=1, step=5,
-                                      placeholder="estimated from your rides", help=theme.FTP_HELP)
-            new_lthr = st.number_input("LTHR (bpm) · optional", value=None, min_value=1, step=1,
-                                       placeholder="estimated from your rides", help=theme.LTHR_HELP)
-            new_wprime = st.number_input("W′ (kJ) · optional", value=None, min_value=1.0, step=0.5,
-                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.W_PRIME_HELP)
-            new_weight = st.number_input("Weight (kg)", value=70.0)
-            new_height = st.number_input("Height (cm)", value=175)
-            submitted = st.form_submit_button("Save User")
+            new_name = st.text_input(t("Name"))
+            new_ftp = st.number_input(t("FTP (Watts) · optional"), value=None, min_value=1, step=5,
+                                      placeholder=t("estimated from your rides"), help=theme.ftp_help())
+            new_lthr = st.number_input(t("LTHR (bpm) · optional"), value=None, min_value=1, step=1,
+                                       placeholder=t("estimated from your rides"), help=theme.lthr_help())
+            new_wprime = st.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5,
+                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.w_prime_help())
+            new_weight = st.number_input(t("Weight (kg)"), value=70.0)
+            new_height = st.number_input(t("Height (cm)"), value=175)
+            submitted = st.form_submit_button(t("Save User"))
             if submitted and new_name:
                 success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
                                           int(new_lthr) if new_lthr else None, new_weight, new_height,
@@ -127,13 +127,13 @@ def render_sidebar():
     # 1. Initialize current_file to None by default
     current_file = None
     
-    import_method = st.sidebar.radio("Source", ["Upload Ride", "Strava", "Wahoo", "Polar"])
+    import_method = st.sidebar.radio(t("Source"), [mark("Upload Ride"), "Strava", "Wahoo", "Polar"], format_func=tr)
 
     if import_method == "Upload Ride":
         uploaded = st.sidebar.file_uploader(
-            "Upload rides", type=UPLOAD_TYPES, accept_multiple_files=True,
-            help="FIT, GPX or TCX files from Garmin, Hammerhead, Magene, Wahoo, Zwift and others, or a zip / gz of "
-                 "them (Garmin's bulk export works). One file opens for analysis; several are imported to your history.")
+            t("Upload rides"), type=UPLOAD_TYPES, accept_multiple_files=True,
+            help=t("FIT, GPX or TCX files from Garmin, Hammerhead, Magene, Wahoo, Zwift and others, or a zip / gz of "
+                 "them (Garmin's bulk export works). One file opens for analysis; several are imported to your history."))
         current_file = _render_upload(uploaded, selected_user_name, user_ftp, user_lthr)
 
     elif import_method == "Strava":
@@ -193,29 +193,29 @@ def handle_strava_callback():
 
     user_name = consume_oauth_state(state)
     if not user_name:
-        st.error("Strava connection failed: the request expired or did not come from this app. Please try again.")
+        st.error(t("Strava connection failed: the request expired or did not come from this app. Please try again."))
         return
     st.session_state["current_user"] = user_name
 
     if error:
-        st.warning("Strava access was not granted.")
+        st.warning(t("Strava access was not granted."))
         return
     if not sv.granted_scope_ok(scope):
-        st.warning("Strava was connected without permission to read activities. "
-                   "Please reconnect and keep the activity access box ticked.")
+        st.warning(t("Strava was connected without permission to read activities. "
+                   "Please reconnect and keep the activity access box ticked."))
         return
 
     cfg = _strava_config()
     if cfg is None:
-        st.error("Strava is not configured (see README).")
+        st.error(t("Strava is not configured (see README)."))
         return
     try:
         auth = sv.exchange_code(cfg, code)
     except sv.StravaError as e:
-        st.error(f"Strava connection failed: {e}")
+        st.error(t('Strava connection failed: {e}', e=e))
         return
     save_strava_auth(user_name, auth)
-    st.toast(f"✅ Strava connected for {user_name}")
+    st.toast(t('✅ Strava connected for {user_name}', user_name=user_name))
 
 
 WAHOO_STATE_PREFIX = "wahoo."      # tells the shared redirect which provider is calling back
@@ -230,23 +230,23 @@ def _wahoo_config():
 def _finish_wahoo_callback(state, code, error):
     user_name = consume_oauth_state(state)
     if not user_name:
-        st.error("Wahoo connection failed: the request expired or did not come from this app. Please try again.")
+        st.error(t("Wahoo connection failed: the request expired or did not come from this app. Please try again."))
         return
     st.session_state["current_user"] = user_name
     if error or not code:
-        st.warning("Wahoo access was not granted.")
+        st.warning(t("Wahoo access was not granted."))
         return
     cfg = _wahoo_config()
     if cfg is None:
-        st.error("Wahoo is not configured (see README).")
+        st.error(t("Wahoo is not configured (see README)."))
         return
     try:
         auth = wh.exchange_code(cfg, code)
     except wh.WahooError as e:
-        st.error(f"Wahoo connection failed: {e}")
+        st.error(t('Wahoo connection failed: {e}', e=e))
         return
     save_wahoo_auth(user_name, auth)
-    st.toast(f"✅ Wahoo connected for {user_name}")
+    st.toast(t('✅ Wahoo connected for {user_name}', user_name=user_name))
 
 
 POLAR_STATE_PREFIX = "polar."
@@ -261,28 +261,28 @@ def _polar_config():
 def _finish_polar_callback(state, code, error):
     user_name = consume_oauth_state(state)
     if not user_name:
-        st.error("Polar connection failed: the request expired or did not come from this app. Please try again.")
+        st.error(t("Polar connection failed: the request expired or did not come from this app. Please try again."))
         return
     st.session_state["current_user"] = user_name
     if error or not code:
-        st.warning("Polar access was not granted.")
+        st.warning(t("Polar access was not granted."))
         return
     cfg = _polar_config()
     if cfg is None:
-        st.error("Polar is not configured (see README).")
+        st.error(t("Polar is not configured (see README)."))
         return
     try:
         pi.connect(cfg, user_name, code)
     except pl.PolarError as e:
-        st.error(f"Polar connection failed: {e}")
+        st.error(t('Polar connection failed: {e}', e=e))
         return
-    st.toast(f"✅ Polar connected for {user_name}")
+    st.toast(t('✅ Polar connected for {user_name}', user_name=user_name))
 
 
 def _polar_label(e):
     when = (e.get("start_time") or "")[:10]
     km = float(e.get("distance") or 0) / 1000
-    return f"{when} · {(e.get('detailed_sport_info') or e.get('sport') or 'Ride').replace('_', ' ').title()} · {km:.0f} km · {pl.duration_minutes(e)} min"
+    return f"{when} · {(e.get('detailed_sport_info') or e.get('sport') or t('Ride')).replace('_', ' ').title()} · {km:.0f} km · {pl.duration_minutes(e)} min"
 
 
 def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
@@ -292,7 +292,7 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
         setup_box("polar")
         return None
     if not user_name:
-        st.sidebar.info("Select or create a user profile first.")
+        st.sidebar.info(t("Select or create a user profile first."))
         return None
 
     auth = get_polar_auth(user_name)
@@ -300,34 +300,34 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
         key = f"polar_oauth_state_{user_name}"
         if key not in st.session_state:
             st.session_state[key] = POLAR_STATE_PREFIX + create_oauth_state(user_name)
-        st.sidebar.link_button("🔗 Connect Polar", pl.authorize_url(cfg, st.session_state[key]))
-        st.sidebar.caption("Polar opens in a new tab; you'll continue there after approving.")
+        st.sidebar.link_button(t("🔗 Connect Polar"), pl.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption(t("Polar opens in a new tab; you'll continue there after approving."))
         return None
 
-    st.sidebar.caption("Connected to **Polar Flow**")
-    st.sidebar.caption(f"Polar only shares the last {pl.WINDOW_DAYS} days, and only rides recorded after you "
-                       "connected: sync at least once a month.")
+    st.sidebar.caption(t("Connected to **Polar Flow**"))
+    st.sidebar.caption(t('Polar only shares the last {window_days} days, and only rides recorded after you connected: '
+                            'sync at least once a month.', window_days=pl.WINDOW_DAYS))
     try:
         cache_key = f"polar_recent_{user_name}"
-        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list", key="polar_refresh"):
-            with st.spinner("Loading your Polar rides..."):
+        if cache_key not in st.session_state or st.sidebar.button(t("↻ Refresh list"), key="polar_refresh"):
+            with st.spinner(t("Loading your Polar rides...")):
                 st.session_state[cache_key] = pi.list_recent_rides(user_name)
         rides = st.session_state[cache_key]
 
         if rides:
-            choice = st.sidebar.selectbox("Recent rides", rides, format_func=_polar_label)
-            if st.sidebar.button("Analyze ride", key="polar_analyze"):
-                with st.spinner("Downloading ride from Polar..."):
+            choice = st.sidebar.selectbox(t("Recent rides"), rides, format_func=_polar_label)
+            if st.sidebar.button(t("Analyze ride"), key="polar_analyze"):
+                with st.spinner(t("Downloading ride from Polar...")):
                     name, payload = pi.fetch_ride_file(user_name, choice)
                 file_obj = io.BytesIO(payload)
                 file_obj.name = name
                 st.session_state[f'polar_file_{user_name}'] = file_obj
         else:
-            st.sidebar.info("No cycling rides found on Polar in the last 30 days.")
+            st.sidebar.info(t("No cycling rides found on Polar in the last 30 days."))
 
-        if st.sidebar.button("⟳ Sync new rides", key="polar_sync",
-                             help="Imports the rides Polar lists that are not in your history yet."):
-            bar = st.sidebar.progress(0.0, text="Checking Polar...")
+        if st.sidebar.button(t("⟳ Sync new rides"), key="polar_sync",
+                             help=t("Imports the rides Polar lists that are not in your history yet.")):
+            bar = st.sidebar.progress(0.0, text=t("Checking Polar..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -335,16 +335,16 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
             res = pi.sync_new_rides(user_name, user_ftp, progress=_sync_progress, lthr=user_lthr)
             bar.empty()
             if res.imported == 0 and not res.failed and not res.stopped_reason:
-                st.sidebar.success("Up to date.")
+                st.sidebar.success(t("Up to date."))
             else:
                 _show_import_result(res)
 
     except pl.PolarAuthError as e:
         st.sidebar.error(f"{e}")
     except pl.PolarError as e:
-        st.sidebar.error(f"Polar: {e}")
+        st.sidebar.error(t('Polar: {e}', e=e))
 
-    if st.sidebar.button("Disconnect Polar", key="polar_disconnect"):
+    if st.sidebar.button(t("Disconnect Polar"), key="polar_disconnect"):
         pl.deregister_user(auth["access_token"], auth.get("polar_user_id"))
         delete_polar_auth(user_name)
         for k in [f"polar_recent_{user_name}", f"polar_file_{user_name}"]:
@@ -356,13 +356,13 @@ def _render_polar_sidebar(user_name, user_ftp, user_lthr=None):
 
 def _wahoo_label(w):
     when = (w.get("starts") or "")[:10]
-    return f"{when} · {w.get('name') or 'Ride'} · {w.get('minutes') or 0} min"
+    return f"{when} · {w.get('name') or t('Ride')} · {w.get('minutes') or 0} min"
 
 
 def _activity_label(a):
     when = (a.get("start_date_local") or a.get("start_date") or "")[:10]
     km = (a.get("distance") or 0) / 1000
-    return f"{when} · {a.get('name', 'Ride')} · {km:.0f} km"
+    return f"{when} · {a.get('name') or t('Ride')} · {km:.0f} km"
 
 
 def _search_by_date(provider, user_name, search):
@@ -372,24 +372,24 @@ def _search_by_date(provider, user_name, search):
     active, None otherwise; the result is kept in the session so the list survives reruns.
     """
     key = f"{provider}_search_{user_name}"
-    with st.sidebar.expander("🔎 Find a ride by date"):
+    with st.sidebar.expander(t("🔎 Find a ride by date")):
         today = pd.Timestamp.today().date()
-        start = st.date_input("From", today - pd.Timedelta(days=90), max_value=today, key=f"{key}_from")
+        start = st.date_input(t("From"), today - pd.Timedelta(days=90), max_value=today, key=f"{key}_from")
         end = st.date_input("To", today, max_value=today, key=f"{key}_to")
         c1, c2 = st.columns(2)
-        if c1.button("Search", key=f"{key}_go"):
+        if c1.button(t("Search"), key=f"{key}_go"):
             if start > end:
-                st.warning("'From' is after 'To'.")
+                st.warning(t("'From' is after 'To'."))
             else:
-                with st.spinner("Searching..."):
+                with st.spinner(t("Searching...")):
                     st.session_state[key] = {"rides": search(start, end), "range": (start, end)}
-        if c2.button("Clear", key=f"{key}_clear"):
+        if c2.button(t("Clear"), key=f"{key}_clear"):
             st.session_state.pop(key, None)
     found = st.session_state.get(key)
     if found is None:
         return None
     a, b = found["range"]
-    st.sidebar.caption(f"Showing {len(found['rides'])} ride(s) from {a:%d %b %Y} to {b:%d %b %Y}.")
+    st.sidebar.caption(t('Showing {n_rides} ride(s) from {a:%d %b %Y} to {b:%d %b %Y}.', n_rides=len(found['rides']), a=a, b=b))
     return found["rides"]
 
 
@@ -405,7 +405,7 @@ def _render_upload(uploaded, user_name, ftp, lthr):
     for n in notes[:5]:
         st.sidebar.warning(n)
     if len(notes) > 5:
-        st.sidebar.caption(f"…and {len(notes) - 5} more files skipped.")
+        st.sidebar.caption(t('…and {n} more files skipped.', n=len(notes) - 5))
     if not activities:
         return None
     if len(activities) == 1:
@@ -414,11 +414,11 @@ def _render_upload(uploaded, user_name, ftp, lthr):
         return file_obj
 
     if not user_name:
-        st.sidebar.info("Select or create a user profile first.")
+        st.sidebar.info(t("Select or create a user profile first."))
         return None
     signature = tuple((f.name, f.size) for f in uploaded)
-    st.sidebar.info(f"{len(activities)} rides found.")
-    if st.sidebar.button(f"Import {len(activities)} rides to history", key="bulk_import", type="primary"):
+    st.sidebar.info(t('{n_activities} rides found.', n_activities=len(activities)))
+    if st.sidebar.button(t('Import {n_activities} rides to history', n_activities=len(activities)), key="bulk_import", type="primary"):
         bar = st.sidebar.progress(0.0, text="Importing…")
         res = import_activities(user_name, activities, ftp, lthr,
                                 progress=lambda done, total, name: bar.progress(done / total if total else 1.0,
@@ -433,18 +433,18 @@ def _render_upload(uploaded, user_name, ftp, lthr):
 
 def _show_import_result(res):
     """Summary of an ImportResult in the sidebar."""
-    st.sidebar.success(f"Imported {res.imported} of {res.found} rides.")
+    st.sidebar.success(t('Imported {imported} of {found} rides.', imported=res.imported, found=res.found))
     skipped = []
-    if res.already_imported: skipped.append(f"{res.already_imported} already imported")
-    if res.duplicates_of_uploads: skipped.append(f"{res.duplicates_of_uploads} matched uploaded files")
-    if res.no_data: skipped.append(f"{res.no_data} without recorded data or not cycling")
-    if res.not_completed: skipped.append(f"{res.not_completed} planned but not ridden")
+    if res.already_imported: skipped.append(t("{n} already imported", n=res.already_imported))
+    if res.duplicates_of_uploads: skipped.append(t("{n} matched uploaded files", n=res.duplicates_of_uploads))
+    if res.no_data: skipped.append(t("{n} without recorded data or not cycling", n=res.no_data))
+    if res.not_completed: skipped.append(t("{n} planned but not ridden", n=res.not_completed))
     if skipped:
-        st.sidebar.caption("Skipped: " + ", ".join(skipped) + ".")
+        st.sidebar.caption(t("Skipped: {reasons}.", reasons=", ".join(skipped)))
     if res.failed:
         st.sidebar.warning(f"{len(res.failed)} failed:\n\n" + "\n".join(f"- {f}" for f in res.failed[:10]))
     if res.stopped_reason:
-        st.sidebar.info(f"{res.stopped_reason} ({res.remaining} left)")
+        st.sidebar.info(t('{stopped_reason} ({remaining} left)', stopped_reason=res.stopped_reason, remaining=res.remaining))
 
 
 def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
@@ -454,7 +454,7 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
         setup_box("strava")
         return None
     if not user_name:
-        st.sidebar.info("Select or create a user profile first.")
+        st.sidebar.info(t("Select or create a user profile first."))
         return None
 
     auth = get_strava_auth(user_name)
@@ -462,20 +462,20 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
         key = f"oauth_state_{user_name}"
         if key not in st.session_state:
             st.session_state[key] = create_oauth_state(user_name)
-        st.sidebar.link_button("🔗 Connect Strava", sv.authorize_url(cfg, st.session_state[key]))
-        st.sidebar.caption("Strava opens in a new tab; you'll continue there after approving.")
+        st.sidebar.link_button(t("🔗 Connect Strava"), sv.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption(t("Strava opens in a new tab; you'll continue there after approving."))
         return None
 
-    who = auth.get("athlete_name") or "your account"
-    st.sidebar.caption(f"Connected to Strava as **{who}**")
+    who = auth.get("athlete_name") or t("your account")
+    st.sidebar.caption(t('Connected to Strava as **{who}**', who=who))
     usage = _strava_usage()
     current_file = None
 
     try:
         # Recent rides (cached per session to spare the rate limit)
         cache_key = f"strava_recent_{user_name}"
-        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list"):
-            with st.spinner("Loading your Strava rides..."):
+        if cache_key not in st.session_state or st.sidebar.button(t("↻ Refresh list")):
+            with st.spinner(t("Loading your Strava rides...")):
                 st.session_state[cache_key] = list_recent_rides(cfg, user_name, usage=usage)
         recent = st.session_state[cache_key]
         found = _search_by_date("strava", user_name,
@@ -483,20 +483,20 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
         rides = recent if found is None else found
 
         if rides:
-            choice = st.sidebar.selectbox("Recent rides" if found is None else "Rides found", rides,
+            choice = st.sidebar.selectbox(t("Recent rides") if found is None else t("Rides found"), rides,
                                           format_func=_activity_label)
-            if st.sidebar.button("Analyze ride"):
-                with st.spinner("Downloading ride from Strava..."):
+            if st.sidebar.button(t("Analyze ride")):
+                with st.spinner(t("Downloading ride from Strava...")):
                     name, payload = fetch_ride_file(cfg, user_name, choice, usage=usage)
                 file_obj = io.BytesIO(payload)
                 file_obj.name = name
                 st.session_state[f'strava_file_{user_name}'] = file_obj
         else:
-            st.sidebar.info("No recent rides found on Strava." if found is None else "No rides in that period.")
+            st.sidebar.info(t("No recent rides found on Strava.") if found is None else t("No rides in that period."))
 
-        if st.sidebar.button("⟳ Sync new rides", help="Imports rides added to Strava since the last one "
-                             "you imported (a few days of overlap catch late uploads)."):
-            bar = st.sidebar.progress(0.0, text="Checking Strava...")
+        if st.sidebar.button(t("⟳ Sync new rides"), help=t("Imports rides added to Strava since the last one "
+                             "you imported (a few days of overlap catch late uploads).")):
+            bar = st.sidebar.progress(0.0, text=t("Checking Strava..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -505,16 +505,16 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
                                            lthr=user_lthr)
             bar.empty()
             if res.imported == 0 and not res.failed and not res.stopped_reason:
-                st.sidebar.success(f"Up to date (checked since {since_dt:%d %b %Y}).")
+                st.sidebar.success(t('Up to date (checked since {since_dt:%d %b %Y}).', since_dt=since_dt))
             else:
                 _show_import_result(res)
 
-        with st.sidebar.expander("📥 Import ride history"):
-            st.caption("Imports every ride since the chosen date into your history "
-                       "(PMC, power records). Rides already saved are skipped.")
-            since = st.date_input("Since", value=pd.Timestamp.today().date() - pd.Timedelta(days=90))
-            if st.button("Import history"):
-                bar = st.progress(0.0, text="Listing activities...")
+        with st.sidebar.expander(t("📥 Import ride history")):
+            st.caption(t("Imports every ride since the chosen date into your history "
+                       "(PMC, power records). Rides already saved are skipped."))
+            since = st.date_input(t("Since"), value=pd.Timestamp.today().date() - pd.Timedelta(days=90))
+            if st.button(t("Import history")):
+                bar = st.progress(0.0, text=t("Listing activities..."))
 
                 def _progress(done, total, name):
                     frac = done / total if total else 1.0
@@ -528,9 +528,9 @@ def _render_strava_sidebar(user_name, user_ftp, user_lthr=None):
     except sv.StravaAuthError as e:
         st.sidebar.error(f"{e}")
     except sv.StravaError as e:
-        st.sidebar.error(f"Strava: {e}")
+        st.sidebar.error(t('Strava: {e}', e=e))
 
-    if st.sidebar.button("Disconnect Strava"):
+    if st.sidebar.button(t("Disconnect Strava")):
         sv.revoke(cfg, auth["refresh_token"])
         delete_strava_auth(user_name)
         for k in [f"strava_recent_{user_name}", f"strava_file_{user_name}"]:
@@ -549,7 +549,7 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
         setup_box("wahoo")
         return None
     if not user_name:
-        st.sidebar.info("Select or create a user profile first.")
+        st.sidebar.info(t("Select or create a user profile first."))
         return None
 
     auth = get_wahoo_auth(user_name)
@@ -557,17 +557,17 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
         key = f"wahoo_oauth_state_{user_name}"
         if key not in st.session_state:
             st.session_state[key] = WAHOO_STATE_PREFIX + create_oauth_state(user_name)
-        st.sidebar.link_button("🔗 Connect Wahoo", wh.authorize_url(cfg, st.session_state[key]))
-        st.sidebar.caption("Wahoo opens in a new tab; you'll continue there after approving.")
+        st.sidebar.link_button(t("🔗 Connect Wahoo"), wh.authorize_url(cfg, st.session_state[key]))
+        st.sidebar.caption(t("Wahoo opens in a new tab; you'll continue there after approving."))
         return None
 
-    st.sidebar.caption(f"Connected to Wahoo as **{auth.get('wahoo_name') or 'your account'}**")
+    st.sidebar.caption(t('Connected to Wahoo as **{name}**', name=auth.get('wahoo_name') or 'your account'))
     usage = st.session_state.setdefault('wahoo_usage', wh.RateUsage())
 
     try:
         cache_key = f"wahoo_recent_{user_name}"
-        if cache_key not in st.session_state or st.sidebar.button("↻ Refresh list", key="wahoo_refresh"):
-            with st.spinner("Loading your Wahoo rides..."):
+        if cache_key not in st.session_state or st.sidebar.button(t("↻ Refresh list"), key="wahoo_refresh"):
+            with st.spinner(t("Loading your Wahoo rides...")):
                 st.session_state[cache_key] = wi.list_recent_rides(cfg, user_name, usage=usage)
         recent = st.session_state[cache_key]
         found = _search_by_date("wahoo", user_name,
@@ -575,21 +575,21 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
         rides = recent if found is None else found
 
         if rides:
-            choice = st.sidebar.selectbox("Recent rides" if found is None else "Rides found", rides,
+            choice = st.sidebar.selectbox(t("Recent rides") if found is None else t("Rides found"), rides,
                                           format_func=_wahoo_label)
-            if st.sidebar.button("Analyze ride", key="wahoo_analyze"):
-                with st.spinner("Downloading ride from Wahoo..."):
+            if st.sidebar.button(t("Analyze ride"), key="wahoo_analyze"):
+                with st.spinner(t("Downloading ride from Wahoo...")):
                     name, payload = wi.fetch_ride_file(cfg, user_name, choice, usage=usage)
                 file_obj = io.BytesIO(payload)
                 file_obj.name = name
                 st.session_state[f'wahoo_file_{user_name}'] = file_obj
         else:
-            st.sidebar.info("No recent cycling workouts found on Wahoo." if found is None
-                            else "No rides in that period.")
+            st.sidebar.info(t("No recent cycling workouts found on Wahoo.") if found is None
+                            else t("No rides in that period."))
 
-        if st.sidebar.button("⟳ Sync new rides", key="wahoo_sync",
-                             help="Imports workouts added to Wahoo since the last one you imported."):
-            bar = st.sidebar.progress(0.0, text="Checking Wahoo...")
+        if st.sidebar.button(t("⟳ Sync new rides"), key="wahoo_sync",
+                             help=t("Imports workouts added to Wahoo since the last one you imported.")):
+            bar = st.sidebar.progress(0.0, text=t("Checking Wahoo..."))
 
             def _sync_progress(done, total, name):
                 bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -598,17 +598,17 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
                                               lthr=user_lthr)
             bar.empty()
             if res.imported == 0 and not res.failed and not res.stopped_reason:
-                st.sidebar.success(f"Up to date (checked since {since_dt:%d %b %Y}).")
+                st.sidebar.success(t('Up to date (checked since {since_dt:%d %b %Y}).', since_dt=since_dt))
             else:
                 _show_import_result(res)
 
-        with st.sidebar.expander("📥 Import ride history"):
-            st.caption("Imports every cycling workout since the chosen date into your history. Rides already "
-                       "saved, or starting within 2 minutes of an uploaded or Strava ride, are skipped.")
-            since = st.date_input("Since", value=pd.Timestamp.today().date() - pd.Timedelta(days=90),
+        with st.sidebar.expander(t("📥 Import ride history")):
+            st.caption(t("Imports every cycling workout since the chosen date into your history. Rides already "
+                       "saved, or starting within 2 minutes of an uploaded or Strava ride, are skipped."))
+            since = st.date_input(t("Since"), value=pd.Timestamp.today().date() - pd.Timedelta(days=90),
                                   key="wahoo_since")
-            if st.button("Import history", key="wahoo_history"):
-                bar = st.progress(0.0, text="Listing workouts...")
+            if st.button(t("Import history"), key="wahoo_history"):
+                bar = st.progress(0.0, text=t("Listing workouts..."))
 
                 def _progress(done, total, name):
                     bar.progress(done / total if total else 1.0, text=f"{done}/{total} {name}"[:60])
@@ -621,9 +621,9 @@ def _render_wahoo_sidebar(user_name, user_ftp, user_lthr=None):
     except wh.WahooAuthError as e:
         st.sidebar.error(f"{e}")
     except wh.WahooError as e:
-        st.sidebar.error(f"Wahoo: {e}")
+        st.sidebar.error(t('Wahoo: {e}', e=e))
 
-    if st.sidebar.button("Disconnect Wahoo", key="wahoo_disconnect"):
+    if st.sidebar.button(t("Disconnect Wahoo"), key="wahoo_disconnect"):
         try:
             wh.revoke(wi.get_valid_auth(cfg, user_name)["access_token"])
         except wh.WahooError:

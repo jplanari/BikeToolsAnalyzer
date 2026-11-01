@@ -261,3 +261,101 @@ def test_the_repositorys_own_translations_are_consistent():
         bad += scan.check_catalog(code, messages)
         assert catalog.meta(code).get("name"), code
     assert not bad, bad
+
+
+def test_mark_returns_text_and_tr_translates_it():
+    from src.i18n import mark, set_language, tr
+    set_language("en")
+    assert mark("Training") == "Training"
+    assert tr("Training") == "Training"
+    set_language("es")
+    try:
+        assert tr("Training") == "Entrenamiento"
+        assert tr("not in any catalog") == "not in any catalog"
+    finally:
+        set_language("en")
+
+
+def test_option_labels_have_translations_in_every_catalog():
+    import json
+    from src.analysis.labels import PERIODS
+
+    for code in ("es", "ca"):
+        strings = json.load(open(f"src/i18n/locales/{code}.json"))["strings"]
+        for label in PERIODS:
+            assert strings.get(label), (code, label)
+
+
+def test_keeps_language_restores_it_in_a_fragment_rerun(monkeypatch):
+    """A fragment re-runs without the main script: the wrapper must set the session's language again."""
+    import streamlit as st
+    from src.i18n import current_language, session, set_language
+    monkeypatch.setattr(session, "available_languages", lambda *a, **k: ["en", "es"])
+    monkeypatch.setattr(st, "session_state", {session.KEY: "es", session.SOURCE_KEY: "chosen"}, raising=False)
+    seen = []
+    set_language("en")                         # what a fresh fragment run starts with
+    session.keeps_language(lambda: seen.append(current_language()))()
+    assert seen == ["es"]
+    set_language("en")
+
+
+def test_scanner_finds_untranslated_chart_labels(tmp_path):
+    import ast
+    from src.i18n import scan
+    src = ("import plotly.graph_objects as go\n"
+           "from src.i18n import t\n"
+           "fig = go.Figure()\n"
+           "fig.add_trace(go.Scatter(x=[1], y=[1], name='Power'))\n"
+           "fig.update_layout(title=t('Done'), yaxis_title='Watts')\n")
+    f = tmp_path / "chart.py"
+    f.write_text(src)
+    translated, untranslated, problems = scan.scan_file(f)
+    assert [u[2] for u in untranslated] == ["Power", "Watts"]
+    assert [x[1] for x in translated] == ["Done"]
+
+
+def test_plot_labels_follow_the_language():
+    import pandas as pd
+    from src.i18n import set_language, tr
+    from src.viz import timeseries as ts
+    df = pd.DataFrame({"dist_m": [0, 1000, 2000], "ele": [10, 20, 15], "power": [100, 200, 150]})
+    set_language("ca")
+    try:
+        assert ts._x(df)[1] == "Distància (km)"
+        assert tr("Elevation (m)") == "Desnivell positiu (m)"
+        assert tr("Power") == "Potència"
+    finally:
+        set_language("en")
+    assert ts._x(df)[1] == "Distance (km)"
+
+
+# --- dates and language-independent checks ------------------------------------------------------------------------------
+
+def test_month_and_day_names_follow_the_language(locales):
+    import datetime as dt
+    day = dt.date(2026, 3, 2)                                   # a Monday in March
+    locales("ca", {"Mon": "dl", "March": "març", "Mar": "mar"}, name="Català")
+    assert i18n.fdate(day, "%a %d %b") == "Mon 02 Mar"
+    i18n.set_language("ca")
+    assert i18n.fdate(day, "%a %d %b") == "dl 02 mar"
+    assert i18n.fdate(day, "%B %Y") == "març 2026"
+    assert i18n.t("Week of {d:%d %b}", d=day) == "Week of 02 mar"       # placeholders get the same treatment
+    assert i18n.t("{d:%Y-%m-%d}", d=day) == "2026-03-02"               # numeric formats are untouched
+
+
+def test_the_duplicate_ride_answer_is_recognised_in_every_language(monkeypatch):
+    from pathlib import Path
+    from src.data.db import rides
+    monkeypatch.setattr(catalog, "LOCALES_DIR", Path(catalog.__file__).parent / "locales")
+    monkeypatch.setattr(catalog, "_cache", {})
+    monkeypatch.setenv("BIKETOOLS_I18N_PREVIEW", "1")
+    try:
+        for code in ("en", "es", "ca"):
+            i18n.set_language(code)
+            message = i18n.tr(rides.DUPLICATE_MESSAGE)
+            assert rides.is_duplicate_message(message)
+            assert not rides.is_duplicate_message("Database Error: x")
+        i18n.set_language("es")
+        assert i18n.tr(rides.DUPLICATE_MESSAGE) != rides.DUPLICATE_MESSAGE
+    finally:
+        i18n.set_language("en")

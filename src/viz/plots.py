@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 from src.viz.figstyle import elevation_range
+from src.i18n import t, tr
 
 def _add_elevation_background(fig, df, secondary_y=True):
     """Helper to add elevation profile in the background of other charts."""
@@ -15,7 +16,7 @@ def _add_elevation_background(fig, df, secondary_y=True):
             go.Scatter(
                 x=df['dist_m'] / 1000,
                 y=df['ele'],
-                name="Elevation",
+                name=t("Elevation"),
                 line=dict(color='gray', width=1),
                 fill='tozeroy',
                 opacity=0.2,
@@ -35,15 +36,15 @@ def plot_elevation(df):
         x=df['dist_m'] / 1000, 
         y=df['ele'],
         mode='lines',
-        name='Elevation',
+        name=t('Elevation'),
         fill='tozeroy',
         line=dict(color='#1f77b4', width=2)
     ))
 
     fig.update_layout(
-        title="Elevation Profile",
-        xaxis_title="Distance (km)",
-        yaxis_title="Elevation (m)",
+        title=t("Elevation Profile"),
+        xaxis_title=t("Distance (km)"),
+        yaxis_title=t("Elevation (m)"),
         hovermode="x unified",
         template="plotly_white",
         height=400
@@ -80,9 +81,9 @@ def plot_x_time(df, col, ylabel, color='blue', title=None):
     )
 
     fig.update_layout(
-        xaxis_title="Distance (km)",
+        xaxis_title=t("Distance (km)"),
         yaxis_title=ylabel,
-        yaxis2_title="Elevation (m)",
+        yaxis2_title=t("Elevation (m)"),
         hovermode="x unified",
         template="plotly_white",
         showlegend=False,
@@ -101,7 +102,7 @@ def plot_power_curve(power_curve_dict, best_curve_dict=None, recent_curve_dict=N
         x=durations, 
         y=watts,
         mode='lines+markers',
-        name='This Ride',
+        name=t('This Ride'),
         line=dict(color='blue', width=3)
     ))
     
@@ -115,7 +116,7 @@ def plot_power_curve(power_curve_dict, best_curve_dict=None, recent_curve_dict=N
             x=b_durations,
             y=b_watts,
             mode='lines',
-            name='All-Time Best',
+            name=t('All-Time Best'),
             line=dict(color='gray', width=2, dash='dash'),
             opacity=0.7
         ))
@@ -127,16 +128,16 @@ def plot_power_curve(power_curve_dict, best_curve_dict=None, recent_curve_dict=N
             x=r_durations,
             y=[recent_curve_dict[d] for d in r_durations],
             mode='lines',
-            name='Last 90 Days Best',
+            name=t('Last 90 Days Best'),
             line=dict(color='#eb6834', width=2, dash='dot'),
         ))
 
     # Log Scale for Time (Standard for Power Curves)
     fig.update_layout(
-        title="Mean Maximal Power Curve",
+        title=t("Mean Maximal Power Curve"),
         legend=dict(orientation="h", y=1.12),
-        xaxis_title="Duration (seconds)",
-        yaxis_title="Watts",
+        xaxis_title=t("Duration (seconds)"),
+        yaxis_title=t("Watts"),
         xaxis_type="log",
         hovermode="x unified",
         template="plotly_white",
@@ -158,7 +159,7 @@ def plot_climbs(df, climbs):
         x=df['dist_m'] / 1000,
         y=df['ele'],
         mode='lines',
-        name='Full Route',
+        name=t('Full Route'),
         line=dict(color='lightgray', width=2),
         fill='tozeroy',
         fillcolor='rgba(200,200,200,0.2)',
@@ -173,16 +174,14 @@ def plot_climbs(df, climbs):
         if segment.empty: continue
         
         # Hover text for the climb segment
-        hover_text = (
-            f"Climb #{i+1} - {c['type']}<br>"
-            f"Len: {c['length_m']/1000:.1f}km, Avg: {c['avg_gradient_pct']:.1f}%"
-        )
+        hover_text = t("Climb #{i} - {kind}<br>Len: {length:.1f}km, Avg: {grade:.1f}%", i=i + 1, kind=tr(c['type']),
+                       length=c['length_m'] / 1000, grade=c['avg_gradient_pct'])
         
         fig.add_trace(go.Scatter(
             x=segment['dist_m'] / 1000,
             y=segment['ele'],
             mode='lines',
-            name=f"Climb #{i+1}",
+            name=t('Climb #{i}', i=i+1),
             line=dict(color='#d62728', width=3), # Red
             hoveron='fills+points',
             text=hover_text,
@@ -190,9 +189,9 @@ def plot_climbs(df, climbs):
         ))
 
     fig.update_layout(
-        title="Route Elevation & Climbs Detected",
-        xaxis_title="Distance (km)",
-        yaxis_title="Elevation (m)",
+        title=t("Route Elevation & Climbs Detected"),
+        xaxis_title=t("Distance (km)"),
+        yaxis_title=t("Elevation (m)"),
         template="plotly_white",
         showlegend=False,
         height=300
@@ -283,7 +282,7 @@ def plot_detailed_climb(segment):
                 fill='tozeroy',
                 fillcolor=fill_color,
                 showlegend=False,
-                hovertemplate=f"<b>Seg:</b> {avg_grade:.1f}%<br><b>Elev:</b> %{{y:.0f}}m<extra></extra>"
+                hovertemplate=f"<b>{t('Seg:')}</b> {avg_grade:.1f}%<br><b>{t('Elev:')}</b> %{{y:.0f}}m<extra></extra>"
             ),
             secondary_y=False
         )
@@ -308,7 +307,7 @@ def plot_detailed_climb(segment):
             go.Scatter(
                 x=df['local_dist_m'] / 1000,
                 y=p_smooth,
-                name='Power (10s)',
+                name=t('Power (10s)'),
                 mode='lines',
                 line=dict(color='purple', width=2),
                 opacity=0.6 
@@ -318,10 +317,10 @@ def plot_detailed_climb(segment):
 
     # 5. Final Layout
     fig.update_layout(
-        title=f"Climb Profile",
-        xaxis_title="Distance (km)",
-        yaxis_title="Elevation (m)",
-        yaxis2_title="Power (W)",
+        title=t('Climb Profile'),
+        xaxis_title=t("Distance (km)"),
+        yaxis_title=t("Elevation (m)"),
+        yaxis2_title=t("Power (W)"),
         hovermode="x unified",
         template="plotly_white",
         height=400,
@@ -372,7 +371,7 @@ def plot_power_budget(df):
     # 1. Rolling Resistance (Green)
     fig.add_trace(go.Scatter(
         x=x, y=roll,
-        name='Rolling',
+        name=t('Rolling'),
         fillcolor='rgba(44, 160, 44, 0.7)', # #2ca02c
         **stack_kw
     ), secondary_y=False)
@@ -380,7 +379,7 @@ def plot_power_budget(df):
     # 2. Gravity (Orange)
     fig.add_trace(go.Scatter(
         x=x, y=grav,
-        name='Gravity',
+        name=t('Gravity'),
         fillcolor='rgba(255, 127, 14, 0.7)', # #ff7f0e
         **stack_kw
     ), secondary_y=False)
@@ -388,7 +387,7 @@ def plot_power_budget(df):
     # 3. Acceleration (Red)
     fig.add_trace(go.Scatter(
         x=x, y=accel,
-        name='Acceleration',
+        name=t('Acceleration'),
         fillcolor='rgba(214, 39, 40, 0.7)', # #d62728
         **stack_kw
     ), secondary_y=False)
@@ -397,7 +396,7 @@ def plot_power_budget(df):
     # Often the largest, so we put it on top or bottom. Order matters for visuals.
     fig.add_trace(go.Scatter(
         x=x, y=aero,
-        name='Aero',
+        name=t('Aero'),
         fillcolor='rgba(31, 119, 180, 0.7)', # #1f77b4
         **stack_kw
     ), secondary_y=False)
@@ -405,7 +404,7 @@ def plot_power_budget(df):
     # Elevation
     fig.add_trace(go.Scatter(
         x=x, y=df['ele'],
-        name="Elevation",
+        name=t("Elevation"),
         line=dict(color='gray', width=2.5)),
         secondary_y=True
     )
@@ -414,9 +413,9 @@ def plot_power_budget(df):
         fig.update_yaxes(range=rng, secondary_y=True)
 
     fig.update_layout(
-        title="Power Budget (Relative Cost Breakdown)",
-        xaxis_title="Distance (km)",
-        yaxis_title="Contribution (%)",
+        title=t("Power Budget (Relative Cost Breakdown)"),
+        xaxis_title=t("Distance (km)"),
+        yaxis_title=t("Contribution (%)"),
         hovermode="x unified",
         template="plotly_white",
         height=400,
@@ -439,7 +438,7 @@ def plot_w_prime_balance(df, cap_j):
         go.Scatter(
             x=df['dist_m'] / 1000,
             y=df['w_prime_balance'] / 1000, # Convert J to kJ
-            name="W' Balance (kJ)",
+            name=t("W' Balance (kJ)"),
             line=dict(color='red', width=2),
             fill='tozeroy' # Fill helps visualize "tank emptying"
         ),
@@ -447,12 +446,12 @@ def plot_w_prime_balance(df, cap_j):
     )
     
     # Add Capacity Line
-    fig.add_hline(y=cap_j/1000, line_dash="dash", line_color="green", annotation_text="Full Capacity")
-    fig.add_hline(y=0, line_color="black", annotation_text="Empty!")
+    fig.add_hline(y=cap_j/1000, line_dash="dash", line_color="green", annotation_text=t("Full Capacity"))
+    fig.add_hline(y=0, line_color="black", annotation_text=t("Empty!"))
 
     fig.update_layout(
-        title="Anaerobic Battery (W' Balance)",
-        yaxis_title="Energy Remaining (kJ)",
+        title=t("Anaerobic Battery (W' Balance)"),
+        yaxis_title=t("Energy Remaining (kJ)"),
         hovermode="x unified",
         template="plotly_white"
     )
@@ -490,7 +489,7 @@ def plot_pmc(pmc_df):
         go.Bar(
             x=plot_df.index, 
             y=plot_df['TSB'], 
-            name='TSB (Form)',
+            name=t('TSB (Form)'),
             marker_color=colors,
             opacity=0.6
         )
@@ -504,7 +503,7 @@ def plot_pmc(pmc_df):
         go.Scatter(
             x=plot_df.index, 
             y=plot_df['CTL'], 
-            name='Fitness (CTL)', 
+            name=t('Fitness (CTL)'), 
             line=dict(color='#1f77b4', width=3)
         )
     )
@@ -514,14 +513,14 @@ def plot_pmc(pmc_df):
         go.Scatter(
             x=plot_df.index, 
             y=plot_df['ATL'], 
-            name='Fatigue (ATL)', 
+            name=t('Fatigue (ATL)'), 
             line=dict(color='#e377c2', width=2)
         )
     )
 
     fig.update_layout(
-        title="Performance Management Chart (Last 60 Days)",
-        yaxis_title="Training Load / Form",
+        title=t("Performance Management Chart (Last 60 Days)"),
+        yaxis_title=t("Training Load / Form"),
         hovermode="x unified",
         template="plotly_white",
         legend=dict(orientation="h", y=1.1)
@@ -529,8 +528,9 @@ def plot_pmc(pmc_df):
     
     return fig
 
-def plot_zone_distribution(zone_counts, title="Zone Distribution"):
-    labels = list(zone_counts.keys())
+def plot_zone_distribution(zone_counts, title=None):
+    title = title or t("Zone Distribution")
+    labels = [tr(k) for k in zone_counts.keys()]
     values = list(zone_counts.values())
     
     # Calculate %
@@ -550,7 +550,7 @@ def plot_zone_distribution(zone_counts, title="Zone Distribution"):
     
     layout = go.Layout(
         title=title,
-        yaxis_title="Seconds",
+        yaxis_title=t("Seconds"),
         template="plotly_white"
     )
     
@@ -571,13 +571,13 @@ def plot_joint_heatmap(cells, y_bin, y_title, title, overlay=None):
     pivot = cells.pivot_table(index='y', columns='x', values='seconds', aggfunc='sum', fill_value=0)
     fig.add_trace(go.Heatmap(
         x=pivot.columns + 5, y=pivot.index + y_bin / 2, z=pivot.to_numpy() / 60,
-        colorscale='Blues', colorbar=dict(title='min'),
-        hovertemplate="%{x:.0f} W · %{y:.0f}<br>%{z:.1f} min<extra></extra>",
+        colorscale='Blues', colorbar=dict(title=t('min')),
+        hovertemplate=f"%{{x:.0f}} W · %{{y:.0f}}<br>%{{z:.1f}} {t('min')}<extra></extra>",
     ))
     if overlay is not None and not overlay.empty:
         fig.add_trace(go.Scatter(x=overlay['power'], y=overlay['mean'], mode='lines',
-                                 name='Average', line=dict(color='#d62728', width=2)))
-    fig.update_layout(title=title, xaxis_title="Power (W, 30 s avg)" if 'HR' in y_title else "Power (W)",
+                                 name=t('Average'), line=dict(color='#d62728', width=2)))
+    fig.update_layout(title=title, xaxis_title=t("Power (W, 30 s avg)") if 'HR' in y_title else t("Power (W)"),
                       yaxis_title=y_title, template="plotly_white", showlegend=False,
                       margin=dict(t=50, b=40))
     return fig
@@ -593,7 +593,7 @@ def plot_y_by_power(curves, y_title, title):
         fig.add_trace(go.Scatter(x=c['power'], y=c['mean'], mode='lines+markers', name=label,
                                  line=dict(color=colors[i % 2], width=3 if i == 0 else 2,
                                            dash='solid' if i == 0 else 'dash')))
-    fig.update_layout(title=title, xaxis_title="Power (W)", yaxis_title=y_title,
+    fig.update_layout(title=title, xaxis_title=t("Power (W)"), yaxis_title=y_title,
                       template="plotly_white", hovermode="x unified",
                       legend=dict(orientation="h", y=1.12))
     return fig
@@ -612,7 +612,7 @@ def plot_trend(series_by_label, y_title, title, rolling=None):
                                  name=label, marker=dict(size=7, opacity=0.7 if rolling else 1)))
         if rolling and len(s) >= rolling:
             fig.add_trace(go.Scatter(x=s.index, y=s.rolling(rolling, min_periods=1).median(),
-                                     mode='lines', name=f"{label} (trend)", line=dict(width=3)))
+                                     mode='lines', name=t('{label} (trend)', label=label), line=dict(width=3)))
     fig.update_layout(title=title, yaxis_title=y_title, template="plotly_white",
                       hovermode="x unified", legend=dict(orientation="h", y=1.12))
     return fig
@@ -634,7 +634,7 @@ def plot_quadrants(cells, ftp, ref_cadence, crank_m):
         x=cpv, y=aepf, mode='markers',
         marker=dict(size=np.clip(np.sqrt(minutes) * 4, 3, 30), color=minutes,
                     colorscale='Blues', opacity=0.7, line=dict(width=0)),
-        hovertemplate="CPV %{x:.2f} m/s · AEPF %{y:.0f} N<br>%{marker.color:.1f} min<extra></extra>",
+        hovertemplate=f"CPV %{{x:.2f}} m/s · AEPF %{{y:.0f}} N<br>%{{marker.color:.1f}} {t('min')}<extra></extra>",
     ))
     cpv_ref = ref_cadence * crank_m * 2 * np.pi / 60
     aepf_ftp = ftp / cpv_ref
@@ -650,10 +650,10 @@ def plot_quadrants(cells, ftp, ref_cadence, crank_m):
         fig.add_annotation(xref='paper', yref='paper', x=xa, y=ya, showarrow=False,
                            xanchor='right' if xa > 0.5 else 'left',
                            yanchor='top' if ya > 0.5 else 'bottom',
-                           text=f"<b>{q}</b> {QUADRANT_NAMES[q]}", font=dict(size=11, color='gray'))
-    fig.update_layout(title="Quadrant Analysis (pedal force vs pedal speed)",
-                      xaxis_title="Circumferential pedal velocity (m/s)",
-                      yaxis_title="Average effective pedal force (N)",
+                           text=f"<b>{q}</b> {tr(QUADRANT_NAMES[q])}", font=dict(size=11, color='gray'))
+    fig.update_layout(title=t("Quadrant Analysis (pedal force vs pedal speed)"),
+                      xaxis_title=t("Circumferential pedal velocity (m/s)"),
+                      yaxis_title=t("Average effective pedal force (N)"),
                       yaxis_range=[0, ymax], template="plotly_white", showlegend=False)
     return fig
 
@@ -665,7 +665,7 @@ def plot_cadence_by_zone(table):
     fig.add_trace(go.Bar(x=table['zone'], y=table['cadence'],
                          text=[f"{c:.0f} rpm<br>{s:.0%} of time" for c, s in zip(table['cadence'], table['share'])],
                          textposition='auto', marker_color='#1f77b4'))
-    fig.update_layout(title="Average cadence by power zone", yaxis_title="rpm",
+    fig.update_layout(title=t("Average cadence by power zone"), yaxis_title=t("rpm"),
                       template="plotly_white", yaxis_range=[0, max(110, table['cadence'].max() * 1.15)])
     return fig
 

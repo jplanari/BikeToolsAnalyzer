@@ -13,6 +13,9 @@ needs none. Placeholders use `{name}`: they must be the same in every language, 
 The language of the current run is set with `set_language` (the Streamlit glue does it at the start of every run,
 see `session.py`) or, for code with no UI such as the weekly e-mail, `with use_language("es"): ...`.
 
+Options of a radio or select box whose value the code compares are marked, not translated: `mark("Week")` in the list
+and `format_func=tr` on the widget. The widget returns the English value; only the label changes.
+
 Two rules for code that calls `t`:
 - the argument must be a plain string (or a literal split over lines): the scanner (`python -m src.i18n.scan`)
   finds strings by reading the source, so a variable cannot be extracted;
@@ -66,6 +69,9 @@ def use_language(code):
 def _fill(text, fallback, kw):
     if not kw:
         return text
+    if any(hasattr(v, "weekday") and hasattr(v, "month") for v in kw.values()):     # dates: translated month/day names
+        from .dates import Dated
+        kw = {k: Dated(v) if hasattr(v, "weekday") and hasattr(v, "month") else v for k, v in kw.items()}
     try:
         return text.format(**kw)
     except (KeyError, IndexError, ValueError):
@@ -75,11 +81,30 @@ def _fill(text, fallback, kw):
             return fallback
 
 
-def t(message, **values):
+def t(message, /, **values):
     """`message` in the current language; `{name}` placeholders are filled from `values`."""
     found = catalog.strings(_language.get()).get(message)
     text = found if isinstance(found, str) and found else message
     return _fill(text, message, values)
+
+
+def mark(text):
+    """Marks text that is translated later, where it is shown: `options = [mark("Week"), mark("Month")]` and then
+    `st.radio(..., options, format_func=tr)`. It returns the text unchanged (the option keeps its English value, so
+    comparisons in the code still work); the scanner reads it like t()."""
+    return text
+
+
+def tr(text):
+    """Translates text that is only known when it is shown (an option marked with mark()). Not for new messages:
+    use t() so the scanner can find them."""
+    return t(text)
+
+
+def fdate(value, spec):
+    """strftime with the month and day names in the current language (see dates.py)."""
+    from .dates import fdate as _fdate
+    return _fdate(value, spec)
 
 
 def plural_form(code, n):
@@ -89,7 +114,7 @@ def plural_form(code, n):
     return "one" if n == 1 else "other"
 
 
-def tn(one, other, n, **values):
+def tn(one, other, n, /, **values):
     """The singular or the plural of a message, as the current language needs it. `{n}` is filled in too.
     The catalog entry is keyed by the singular: {"one": "...", "other": "..."}."""
     values = dict(values, n=n)

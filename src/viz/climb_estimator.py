@@ -6,6 +6,7 @@ import streamlit as st
 from src.physics import climb_model as cm
 from src.physics.aerodyn import get_air_density, get_avg_cda
 from src.viz.formatting import format_duration
+from src.i18n import t, mark, tr
 
 BIKE_MASS_KG = 8.0                # same bike weight the ride analysis assumes
 DEFAULT_CRR = 0.005               # same as the ride analysis
@@ -22,10 +23,10 @@ def climb_baseline(df, climb, settings):
     cda = df.attrs.get('cda_est')
     if cda is None:
         cda = get_avg_cda(df['cda']) if 'cda' in df.columns else np.nan
-    t = seg['time']
+    times = seg['time']
     return {
         'lengths': lengths, 'grades': grades,
-        'actual_s': float((t.iloc[-1] - t.iloc[0]).total_seconds()) if len(t) > 1 else None,
+        'actual_s': float((times.iloc[-1] - times.iloc[0]).total_seconds()) if len(times) > 1 else None,
         'power': power,
         'bike_mass': float(settings.get('bike_mass') or BIKE_MASS_KG),
         'mass': float(settings['weight']) + float(settings.get('bike_mass') or BIKE_MASS_KG),
@@ -51,41 +52,42 @@ def _delta(seconds):
 def render_climb_estimator(df, climb, index, settings, ride_id):
     base = climb_baseline(df, climb, settings)
     if len(base['lengths']) == 0:
-        st.caption("This climb is too short to model.")
+        st.caption(t("This climb is too short to model."))
         return
     k = lambda name: f"clb_{ride_id}_{index}_{name}"          # per ride and climb, so values don't leak
     default_power = min(1500.0, max(20.0, base['power'] if base['power'] else float(settings.get('ftp') or 200) * 0.85))
     eff = EFFICIENCY
 
-    st.markdown("**⏱️ Performance estimator**")
-    st.caption("What would this climb take with a different weight, aerodynamics or power? Steady-state model "
+    st.markdown(t("**⏱️ Performance estimator**"))
+    st.caption(t("What would this climb take with a different weight, aerodynamics or power? Steady-state model "
                "on the climb's gradient profile, no wind. The *as ridden* line applies the model to what you "
-               "actually did, so you can see how close it gets.")
-    mode = st.radio("Estimate", ["Time for a power", "Power for a target time"], horizontal=True, key=k("mode"))
+               "actually did, so you can see how close it gets."))
+    mode = st.radio(t("Estimate"), [mark("Time for a power"), mark("Power for a target time")], horizontal=True,
+                    key=k("mode"), format_func=tr)
 
     c = st.columns(5)
-    mass = c[0].number_input("System weight (kg)", 30.0, 200.0, min(200.0, max(30.0, round(base['mass'], 1))), 0.5, key=k("mass"),
-                             help="Rider + bike + clothing + bottles. Default: your profile weight + the bike chosen for this ride (8 kg if none).")
-    cda = c[1].number_input("CdA estimate (m²)", 0.15, 0.70, round(base['cda'], 3), 0.005, format="%.3f", key=k("cda"),
-                            help="Default: this ride's estimated CdA if it had one, else 0.32 (an estimate, see the aero tab). "
-                                 "Climbing at low speed, so it matters less than weight.")
-    crr = c[2].number_input("Rolling resistance (Crr)", 0.001, 0.020, base['crr'], 0.0005, format="%.4f",
-                            key=k("crr"), help="0.003–0.004 good road tyres, 0.005 typical, 0.008+ rough or gravel.")
-    rho = c[3].number_input("Air density (kg/m³)", 0.7, 1.4, min(1.4, max(0.7, round(base['rho'], 3))), 0.01, format="%.3f",
-                            key=k("rho"), help="From the climb's altitude; lower at altitude and in the heat.")
+    mass = c[0].number_input(t("System weight (kg)"), 30.0, 200.0, min(200.0, max(30.0, round(base['mass'], 1))), 0.5, key=k("mass"),
+                             help=t("Rider + bike + clothing + bottles. Default: your profile weight + the bike chosen for this ride (8 kg if none)."))
+    cda = c[1].number_input(t("CdA estimate (m²)"), 0.15, 0.70, round(base['cda'], 3), 0.005, format="%.3f", key=k("cda"),
+                            help=t("Default: this ride's estimated CdA if it had one, else 0.32 (an estimate, see the aero tab). "
+                                 "Climbing at low speed, so it matters less than weight."))
+    crr = c[2].number_input(t("Rolling resistance (Crr)"), 0.001, 0.020, base['crr'], 0.0005, format="%.4f",
+                            key=k("crr"), help=t("0.003–0.004 good road tyres, 0.005 typical, 0.008+ rough or gravel."))
+    rho = c[3].number_input(t("Air density (kg/m³)"), 0.7, 1.4, min(1.4, max(0.7, round(base['rho'], 3))), 0.01, format="%.3f",
+                            key=k("rho"), help=t("From the climb's altitude; lower at altitude and in the heat."))
 
     if mode == "Time for a power":
-        power = c[4].number_input("Power (W)", 20, 1500, int(round(default_power)), 5, key=k("power"),
-                                  help="Default: your average power over the climb (zeros included)."
-                                  if base['power'] else "No power data on this ride: defaults to 85 % of FTP.")
+        power = c[4].number_input(t("Power (W)"), 20, 1500, int(round(default_power)), 5, key=k("power"),
+                                  help=t("Default: your average power over the climb (zeros included).")
+                                  if base['power'] else t("No power data on this ride: defaults to 85 % of FTP."))
         scenario = cm.climb_time(base['lengths'], base['grades'], power, mass, cda, crr, rho, eff)
         s_time = scenario['time_s']
     else:
-        target_min = c[4].number_input("Target time (min)", 1.0, 600.0,
+        target_min = c[4].number_input(t("Target time (min)"), 1.0, 600.0,
                                        min(600.0, max(1.0, round((base['actual_s'] or 1200) / 60, 1))), 0.5, key=k("target"))
         power = cm.power_for_time(base['lengths'], base['grades'], target_min * 60, mass, cda, crr, rho, eff)
         if power is None:
-            st.warning("That time can't be reached with these settings (it needs under 20 W or over 1500 W).")
+            st.warning(t("That time can't be reached with these settings (it needs under 20 W or over 1500 W)."))
             return
         scenario = cm.climb_time(base['lengths'], base['grades'], power, mass, cda, crr, rho, eff)
         s_time = scenario['time_s']
@@ -96,21 +98,21 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
                                  base['crr'], base['rho'], eff)
 
     m = st.columns(4)
-    m[0].metric("Actual time", _mmss(base['actual_s']) if base['actual_s'] else "N/A",
-                help="Elapsed time on the climb, stops included.")
+    m[0].metric(t("Actual time"), _mmss(base['actual_s']) if base['actual_s'] else t("N/A"),
+                help=t("Elapsed time on the climb, stops included."))
     if asridden:
-        m[1].metric("Model, as ridden", _mmss(asridden['time_s']),
-                    delta=_delta(asridden['time_s'] - base['actual_s']) + " vs actual" if base['actual_s'] else None,
-                    delta_color="off", help="The model with your actual power and the ride's weight, CdA and Crr.")
-    m[2].metric("Scenario", _mmss(s_time),
-                delta=(_delta(s_time - asridden['time_s']) + " vs as ridden") if asridden else None,
+        m[1].metric(t("Model, as ridden"), _mmss(asridden['time_s']),
+                    delta=t("{delta} vs actual", delta=_delta(asridden['time_s'] - base['actual_s'])) if base['actual_s'] else None,
+                    delta_color="off", help=t("The model with your actual power and the ride's weight, CdA and Crr."))
+    m[2].metric(t("Scenario"), _mmss(s_time),
+                delta=t("{delta} vs as ridden", delta=_delta(s_time - asridden['time_s'])) if asridden else None,
                 delta_color="inverse")
-    m[3].metric("Power needed" if mode != "Time for a power" else "Avg speed",
+    m[3].metric(t("Power needed") if mode != "Time for a power" else t("Avg speed"),
                 f"{power:.0f} W ({power / max(mass - base['bike_mass'], 1):.2f} W/kg)" if mode != "Time for a power"
                 else f"{scenario['avg_speed_kmh']:.1f} km/h",
-                help="W/kg uses system weight minus the bike." if mode != "Time for a power" else None)
+                help=t("W/kg uses system weight minus the bike.") if mode != "Time for a power" else None)
     st.caption(f"VAM {scenario['vam_m_h']:.0f} m/h · {power / max(mass - base['bike_mass'], 1):.2f} W/kg"
-               + (" · Model and actual differ because of wind, surface, drafting, pacing and gradient noise."
+               + (t(" · Model and actual differ because of wind, surface, drafting, pacing and gradient noise.")
                   if asridden else ""))
 
     # What each change is worth at the chosen scenario
@@ -120,14 +122,14 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
             a.update(kw)
             return cm.climb_time(base['lengths'], base['grades'], a['power_w'], a['mass_kg'], a['cda'], a['crr'],
                                  rho, eff)['time_s']
-        rows = [("−1 kg system weight", time_with(mass_kg=mass - 1) - s_time),
-                ("−0.01 m² CdA", time_with(cda=max(cda - 0.01, 0.05)) - s_time),
-                ("−0.001 Crr", time_with(crr=max(crr - 0.001, 0.0005)) - s_time),
+        rows = [(t("−1 kg system weight"), time_with(mass_kg=mass - 1) - s_time),
+                (t("−0.01 m² CdA"), time_with(cda=max(cda - 0.01, 0.05)) - s_time),
+                (t("−0.001 Crr"), time_with(crr=max(crr - 0.001, 0.0005)) - s_time),
                 ("+10 W", time_with(power_w=power + 10) - s_time)]
-        st.dataframe(pd.DataFrame({"Change": [r[0] for r in rows],
-                                   "Time": [f"{r[1]:+.0f} s" for r in rows]}),
+        st.dataframe(pd.DataFrame({t("Change"): [r[0] for r in rows],
+                                   t("Time"): [f"{r[1]:+.0f} s" for r in rows]}),
                      hide_index=True, use_container_width=True)
-    if st.button("Reset to ride values", key=k("reset")):
+    if st.button(t("Reset to ride values"), key=k("reset")):
         for name in ("mass", "cda", "crr", "rho", "power", "target"):
             st.session_state.pop(k(name), None)
         st.rerun()

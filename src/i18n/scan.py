@@ -29,9 +29,14 @@ WIDGETS = {"markdown", "write", "caption", "subheader", "header", "title", "info
            "button", "metric", "selectbox", "radio", "number_input", "text_input", "checkbox", "expander", "tabs",
            "spinner", "download_button", "toggle", "slider", "multiselect", "date_input", "file_uploader",
            "form_submit_button", "text_area", "popover", "toast", "segmented_control", "pills", "select_slider",
-           "link_button", "page_link", "sidebar_header", "set_page_config"}
+           "link_button", "page_link", "sidebar_header", "set_page_config", "remembered"}
 TEXT_KEYWORDS = {"help", "label", "placeholder", "caption", "title"}
-TRANSLATE = {"t", "tn"}
+# Plotly: chart titles, axis titles, trace names and annotations are text too (only these keywords, never the data)
+PLOT_CALLS = {"update_layout", "update_xaxes", "update_yaxes", "add_hline", "add_vline", "add_annotation", "Scatter",
+              "Scattergl", "Layout", "add_hrect", "add_vrect", "Bar", "Heatmap", "Pie", "Histogram", "Box", "Violin", "Indicator", "Scatterpolar"}
+PLOT_KEYWORDS = {"title", "title_text", "xaxis_title", "yaxis_title", "yaxis2_title", "xaxis2_title", "name",
+                 "annotation_text", "legend_title_text"}
+TRANSLATE = {"t", "tn", "mark"}
 
 
 def placeholders(text):
@@ -49,6 +54,25 @@ def _is_alpha_text(node):
 
 def _call_name(node):
     return getattr(node.func, "attr", getattr(node.func, "id", ""))
+
+
+def text_args(node):
+    """The arguments of a widget call that carry text: the first (for remembered(), the fourth: widget, key, default,
+    label) and the label, help, placeholder and caption keywords."""
+    plot = _call_name(node) in PLOT_CALLS
+    first = [] if plot else node.args[3:4] if _call_name(node) == "remembered" else node.args[:1]
+    keywords = PLOT_KEYWORDS if plot else TEXT_KEYWORDS
+    out = []
+
+    def flatten(arg):                              # "a" if cond else "b": both branches are text
+        if isinstance(arg, ast.IfExp):
+            flatten(arg.body)
+            flatten(arg.orelse)
+        else:
+            out.append(arg)
+    for arg in list(first) + [k.value for k in node.keywords if k.arg in keywords]:
+        flatten(arg)
+    return out
 
 
 def python_files():
@@ -69,15 +93,17 @@ def scan_file(path):
         return [], [], []
     translated, untranslated, problems = [], [], []
     wrapped_nodes = set()
-    imports_t = any(isinstance(n, ast.ImportFrom) and any(a.name in TRANSLATE for a in n.names)
-                    and ((n.module or "").startswith("src.i18n") or (n.level >= 1 and not n.module)) for n in ast.walk(tree))
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                and ((n.module or "").startswith("src.i18n") or (n.level >= 1 and not n.module))
+                for a in n.names if a.name in TRANSLATE}
+    imports_t = bool(imported)
     if imports_t:                                  # t / tn must mean the translation function in this file
         for n in ast.walk(tree):
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in TRANSLATE:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in imported:
                 problems.append((n.lineno, f"'{n.name}' is redefined here and hides the translation function"))
-            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in TRANSLATE:
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in imported:
                 problems.append((n.lineno, f"'{n.id}' is assigned here and hides the translation function"))
-            elif isinstance(n, ast.arg) and n.arg in TRANSLATE:
+            elif isinstance(n, ast.arg) and n.arg in imported:
                 problems.append((n.lineno, f"'{n.arg}' is an argument here and hides the translation function"))
     for node in ast.walk(tree):
         if imports_t and isinstance(node, ast.Call) and _call_name(node) in TRANSLATE and isinstance(node.func, ast.Name):
@@ -90,9 +116,9 @@ def scan_file(path):
             for a in args[:need]:
                 wrapped_nodes.add(id(a))
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _call_name(node) not in WIDGETS or _call_name(node) in TRANSLATE:
+        if not isinstance(node, ast.Call) or _call_name(node) not in WIDGETS | PLOT_CALLS or _call_name(node) in TRANSLATE:
             continue
-        candidates = list(node.args[:1]) + [k.value for k in node.keywords if k.arg in TEXT_KEYWORDS]
+        candidates = text_args(node)
         for arg in candidates:
             for sub in ast.walk(arg):
                 if isinstance(sub, ast.Call) and _call_name(sub) in TRANSLATE:

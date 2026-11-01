@@ -20,6 +20,7 @@ from src.viz.sections import section_picker, remembered
 from src.viz.deeper_analytics import render_deeper_analytics
 from src.analysis.labels import (PERIODS, period_start, dur_label, ramp_status, acwr_status, form_status,
                                  monotony_status, tid_label)
+from src.i18n import t, fdate, mark, tr
 
 def _theme():
     try:
@@ -42,25 +43,25 @@ def _metric(col, label, value, status, help_text):
 # --- Page --------------------------------------------------------------------
 
 def render_training_page(user_name):
-    st.header("🏋️ Training")
+    st.header(t("🏋️ Training"))
     if not user_name:
-        st.warning("Please select a user in the sidebar.")
+        st.warning(t("Please select a user in the sidebar."))
         return
     user = get_user_data(user_name)
     if not user:
-        st.error("User data not found.")
+        st.error(t("User data not found."))
         return
 
     n_old = count_rides_needing_update(user_name)
     if n_old:
-        st.warning(f"{n_old} rides were saved by an older version and are missing data used here. "
-                   "Run **Update ride history** in the User Corner to include them.")
+        st.warning(t('{n_old} rides were saved by an older version and are missing data used here. Run **Update '
+                        'ride history** in the User Corner to include them.', n_old=n_old))
 
     today = pd.Timestamp.today().normalize()
     mode = _theme()
     _threshold_hint(user_name, user, today)
     _report_expander(user_name, today)
-    sections = ["📈 Load", "⚡ Power profile", "🔋 Durability", "🎯 Intensity", "🔬 Deeper analytics"]
+    sections = [mark("📈 Load"), mark("⚡ Power profile"), mark("🔋 Durability"), mark("🎯 Intensity"), mark("🔬 Deeper analytics")]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
         _render_load(user_name, user['ftp'], today, mode)
@@ -76,21 +77,21 @@ def render_training_page(user_name):
 
 def _report_expander(user_name, today):
     """Builds the PDF only on click (matplotlib is slow-ish) and keeps it for the download button."""
-    with st.expander("📄 PDF report"):
-        label = st.selectbox("Period", list(PERIODS), index=1, key="report_period")
+    with st.expander(t("📄 PDF report")):
+        label = st.selectbox(t("Period"), list(PERIODS), index=1, key="report_period", format_func=tr)
         key = (user_name, label, today)
-        if st.button("Create report", key="report_make"):
+        if st.button(t("Create report"), key="report_make"):
             from src.data.reports.report_data import collect_report_data
             from src.viz.report_pdf import build_report_pdf
-            with st.spinner("Building the report…"):
+            with st.spinner(t("Building the report…")):
                 pdf = build_report_pdf(collect_report_data(user_name, PERIODS[label], today))
             st.session_state["report_pdf"] = (key, pdf)
         ready = st.session_state.get("report_pdf")
         if ready and ready[0] == key:
-            st.download_button("⬇️ Download PDF", ready[1], mime="application/pdf",
+            st.download_button(t("⬇️ Download PDF"), ready[1], mime="application/pdf",
                                file_name=f"training-report-{user_name}-{today:%Y-%m-%d}.pdf", key="report_dl")
         elif ready:
-            st.caption("Period or user changed: create the report again.")
+            st.caption(t("Period or user changed: create the report again."))
 
 
 def _threshold_hint(user_name, user, today):
@@ -101,26 +102,26 @@ def _threshold_hint(user_name, user, today):
     dismissed = f"ftp_hint_dismissed_{user_name}_{s['ftp']}"
     if st.session_state.get(dismissed):
         return
-    when = f"{s['best_20min_date']:%d %b}"
-    cp = f" Critical power from the same efforts: {s['cp']:.0f} W." if s['cp'] else ""
+    when = fdate(s['best_20min_date'], "%d %b")
+    cp = t(" Critical power from the same efforts: {cp:.0f} W.", cp=s['cp']) if s['cp'] else ""
     if s['direction'] == 'up':
-        st.success(f"📈 **Your FTP may be higher.** Your best 20 minutes in the last {s['window_days']} days "
-                   f"was **{s['best_20min_w']:.0f} W** ({when}), which suggests an FTP of about "
-                   f"**{s['ftp']} W** (95 %), {s['change_w']:+d} W vs your current {user['ftp']} W.{cp}")
+        st.success(t('📈 **Your FTP may be higher.** Your best 20 minutes in the last {window_days} days was '
+                        '**{best_20min_w:.0f} W** ({when}), which suggests an FTP of about **{ftp} W** (95 %), '
+                        '{change_w:+d} W vs your current {ftp_2} W.{cp}', window_days=s['window_days'], best_20min_w=s['best_20min_w'], when=when, ftp=s['ftp'], change_w=s['change_w'], ftp_2=user['ftp'], cp=cp))
         b1, b2, _ = st.columns([1, 1, 4])
-        if b1.button(f"Set FTP to {s['ftp']} W", key=f"accept_ftp_{user_name}",
-                     help="Changes your profile FTP for new rides, zones and planning. Rides already saved "
-                          "keep the FTP they were scored with."):
+        if b1.button(t('Set FTP to {ftp} W', ftp=s['ftp']), key=f"accept_ftp_{user_name}",
+                     help=t("Changes your profile FTP for new rides, zones and planning. Rides already saved "
+                          "keep the FTP they were scored with.")):
             update_user_ftp(user_name, s['ftp'])
             st.rerun()
-        if b2.button("Not now", key=f"dismiss_ftp_{user_name}"):
+        if b2.button(t("Not now"), key=f"dismiss_ftp_{user_name}"):
             st.session_state[dismissed] = True
             st.rerun()
     else:
-        st.info(f"ℹ️ Your best 20 minutes in the last {s['window_days']} days was {s['best_20min_w']:.0f} W "
-                f"({when}), about {s['ftp']} W as an FTP, below your current {user['ftp']} W. That only means "
-                f"no recent effort backs it up. If you haven't done a maximal 20-minute test lately, "
-                f"your FTP may well be unchanged.{cp}")
+        st.info(t('ℹ️ Your best 20 minutes in the last {window_days} days was {best_20min_w:.0f} W ({when}), '
+                     'about {ftp} W as an FTP, below your current {ftp_2} W. That only means no recent effort backs '
+                     "it up. If you haven't done a maximal 20-minute test lately, your FTP may well be "
+                     'unchanged.{cp}', window_days=s['window_days'], best_20min_w=s['best_20min_w'], when=when, ftp=s['ftp'], ftp_2=user['ftp'], cp=cp))
 
 
 # --- Load ----------------------------------------------------------------------
@@ -135,25 +136,25 @@ def _plan_editor(user_name, ftp, today):
         quick = pd.DataFrame({'date': pd.Series(dtype='datetime64[ns]'),
                               'tss': pd.Series(dtype=float), 'note': pd.Series(dtype=str)})
     built = get_planned_sessions(user_name, after=today, structured=True)
-    with st.expander(f"🗓️ Planned sessions ({len(quick) + len(built)})", expanded=False):
-        st.caption("Plan the coming days and the chart forecasts fitness, fatigue and form from them. "
-                   "Rest days need no entry. Build a session from intervals, or just enter its TSS.")
+    with st.expander(t('🗓️ Planned sessions ({n})', n=len(quick) + len(built)), expanded=False):
+        st.caption(t("Plan the coming days and the chart forecasts fitness, fatigue and form from them. "
+                   "Rest days need no entry. Build a session from intervals, or just enter its TSS."))
         _session_builder(user_name, ftp, today)
         _built_sessions(user_name, built, ftp, today)
 
-        st.markdown("**Quick entry: just the TSS**")
+        st.markdown(t("**Quick entry: just the TSS**"))
         edited = st.data_editor(
             quick, num_rows="dynamic", hide_index=True, use_container_width=True, key=f"plan_{user_name}",
             column_config={
-                'date': st.column_config.DateColumn("Date", min_value=(today + pd.Timedelta(days=1)).date(),
+                'date': st.column_config.DateColumn(t("Date"), min_value=(today + pd.Timedelta(days=1)).date(),
                                                     format="ddd DD MMM YYYY", required=True),
                 'tss': st.column_config.NumberColumn("TSS", min_value=0, max_value=500, step=5, required=True),
-                'note': st.column_config.TextColumn("Note (optional)"),
+                'note': st.column_config.TextColumn(t("Note (optional)")),
             })
-        st.caption("Edits preview immediately; **Save plan** keeps them.")
-        if st.button("Save plan", key=f"save_plan_{user_name}"):
+        st.caption(t("Edits preview immediately; **Save plan** keeps them."))
+        if st.button(t("Save plan"), key=f"save_plan_{user_name}"):
             n = replace_planned_sessions(user_name, edited, today)
-            st.toast(f"✅ Saved {n} planned sessions")
+            st.toast(t('✅ Saved {n} planned sessions', n=n))
 
     plan = [] if edited is None or edited.empty else edited[['date', 'tss']].to_dict('records')
     plan += built[['date', 'tss']].to_dict('records')
@@ -161,38 +162,38 @@ def _plan_editor(user_name, ftp, today):
 
 
 def _session_builder(user_name, ftp, today):
-    st.markdown("**Build a session from intervals**")
+    st.markdown(t("**Build a session from intervals**"))
     c1, c2 = st.columns([1, 2])
-    day = c1.date_input("Date", value=(today + pd.Timedelta(days=1)).date(),
+    day = c1.date_input(t("Date"), value=(today + pd.Timedelta(days=1)).date(),
                         min_value=(today + pd.Timedelta(days=1)).date(), key=f"build_date_{user_name}")
-    title = c2.text_input("Name (optional)", key=f"build_name_{user_name}",
-                          placeholder="e.g. Threshold 4×8")
-    st.caption("Each row is a block: it repeats *Reps* times, *Work* min at *Work W*, with *Rest* min at "
-               "*Rest W* between the repeats. A warm-up is one rep with no rest.")
+    title = c2.text_input(t("Name (optional)"), key=f"build_name_{user_name}",
+                          placeholder=t("e.g. Threshold 4×8"))
+    st.caption(t("Each row is a block: it repeats *Reps* times, *Work* min at *Work W*, with *Rest* min at "
+               "*Rest W* between the repeats. A warm-up is one rep with no rest."))
     blocks = st.data_editor(
         pd.DataFrame(wo.default_blocks(ftp), columns=wo.BLOCK_COLUMNS), num_rows="dynamic",
         hide_index=True, use_container_width=True, key=f"build_blocks_{user_name}",
         column_config={
-            'name': st.column_config.TextColumn("Block"),
-            'reps': st.column_config.NumberColumn("Reps", min_value=1, max_value=50, step=1),
-            'work_min': st.column_config.NumberColumn("Work (min)", min_value=0, max_value=600, step=0.5),
-            'work_w': st.column_config.NumberColumn("Work (W)", min_value=0, max_value=2000, step=5),
-            'rest_min': st.column_config.NumberColumn("Rest (min)", min_value=0, max_value=600, step=0.5),
-            'rest_w': st.column_config.NumberColumn("Rest (W)", min_value=0, max_value=2000, step=5),
+            'name': st.column_config.TextColumn(t("Block")),
+            'reps': st.column_config.NumberColumn(t("Reps"), min_value=1, max_value=50, step=1),
+            'work_min': st.column_config.NumberColumn(t("Work (min)"), min_value=0, max_value=600, step=0.5),
+            'work_w': st.column_config.NumberColumn(t("Work (W)"), min_value=0, max_value=2000, step=5),
+            'rest_min': st.column_config.NumberColumn(t("Rest (min)"), min_value=0, max_value=600, step=0.5),
+            'rest_w': st.column_config.NumberColumn(t("Rest (W)"), min_value=0, max_value=2000, step=5),
         })
     s = wo.session_stats(blocks, ftp)
     m = st.columns(5)
-    m[0].metric("Duration", f"{s['duration_s'] // 3600}:{s['duration_s'] % 3600 // 60:02d} h")
-    m[1].metric("Average", f"{s['avg_power']:.0f} W")
-    m[2].metric("Normalized", f"{s['np']:.0f} W")
+    m[0].metric(t("Duration"), f"{s['duration_s'] // 3600}:{s['duration_s'] % 3600 // 60:02d} h")
+    m[1].metric(t("Average"), f"{s['avg_power']:.0f} W")
+    m[2].metric(t("Normalized"), f"{s['np']:.0f} W")
     m[3].metric("IF", f"{s['if']:.2f}")
     m[4].metric("TSS", f"{s['tss']:.0f}")
     if not ftp:
-        st.warning("Set an FTP in your profile to score the session.")
-    if st.button("Add to plan", key=f"add_session_{user_name}"):
+        st.warning(t("Set an FTP in your profile to score the session."))
+    if st.button(t("Add to plan"), key=f"add_session_{user_name}"):
         clean = wo.clean_blocks(blocks)
         if not clean:
-            st.warning("Add at least one block with some work time.")
+            st.warning(t("Add at least one block with some work time."))
         else:
             db_add_session(user_name, day, clean, s['tss'], title.strip() or wo.describe(clean))
             st.rerun()
@@ -211,29 +212,29 @@ def _send_controls(user_name, ftp, cfg, row, sent, today):
     from src.data.providers import wahoo as wh
     from src.data.providers import wahoo_send as ws
     sid = int(row['id'])
-    label = "↻ Update on Wahoo" if sent else "📲 Send to Wahoo"
-    if st.button(label, key=f"wahoo_send_{sid}", help="Creates (or updates) this workout in your Wahoo account "
-                 "so it shows up on your ELEMNT."):
+    label = t("↻ Update on Wahoo") if sent else t("📲 Send to Wahoo")
+    if st.button(label, key=f"wahoo_send_{sid}", help=t("Creates (or updates) this workout in your Wahoo account "
+                 "so it shows up on your ELEMNT.")):
         try:
             res = ws.send_session(cfg, user_name, row.to_dict(), ftp, st.session_state.get("wahoo_send_time"),
                                   outdoor=st.session_state.get("wahoo_send_outdoor", True))
-            st.toast("✅ Updated on Wahoo" if res['updated'] else "✅ Sent to Wahoo")
+            st.toast(t("✅ Updated on Wahoo") if res['updated'] else t("✅ Sent to Wahoo"))
             st.rerun()
         except (ws.SendError, wh.WahooError) as e:
-            st.error(f"Wahoo: {e}")
+            st.error(t('Wahoo: {e}', e=e))
     if sent:
-        if st.button("Remove from Wahoo", key=f"wahoo_remove_{sid}"):
+        if st.button(t("Remove from Wahoo"), key=f"wahoo_remove_{sid}"):
             try:
                 ws.remove_session(cfg, user_name, sid)
                 st.rerun()
             except wh.WahooError as e:
-                st.error(f"Wahoo: {e}")
+                st.error(t('Wahoo: {e}', e=e))
 
 
 def _built_sessions(user_name, built, ftp=None, today=None):
     if built.empty:
         return
-    st.markdown("**Built sessions**")
+    st.markdown(t("**Built sessions**"))
     cfg, wahoo_ok = _wahoo_ready(user_name)
     sent = {}
     if wahoo_ok:
@@ -242,35 +243,35 @@ def _built_sessions(user_name, built, ftp=None, today=None):
         from src.data.providers import wahoo_send as ws
         sent = get_wahoo_sent(user_name)
         c1, c2 = st.columns([1, 1])
-        c1.time_input("Start time on Wahoo", value=_dt.time(8, 0), key="wahoo_send_time",
-                      help="Local time shown on the workout. Wahoo only delivers sessions to the ELEMNT from "
-                           "today up to 6 days ahead.")
-        c2.checkbox("Outdoor ride", value=True, key="wahoo_send_outdoor")
+        c1.time_input(t("Start time on Wahoo"), value=_dt.time(8, 0), key="wahoo_send_time",
+                      help=t("Local time shown on the workout. Wahoo only delivers sessions to the ELEMNT from "
+                             "today up to 6 days ahead."))
+        c2.checkbox(t("Outdoor ride"), value=True, key="wahoo_send_outdoor")
     for _, r in built.iterrows():
         c = st.columns([2, 6, 1, 1])
-        c[0].write(f"{r['date']:%a %d %b}")
+        c[0].write(fdate(r['date'], "%a %d %b"))
         try:
             detail = wo.describe(json.loads(r['blocks']))
         except (TypeError, ValueError):
             detail = ""
         c[1].write(f"**{r['note']}**  \n{detail}" if r['note'] and r['note'] != detail else detail)
         c[2].write(f"{r['tss']:.0f} TSS")
-        if c[3].button("✖", key=f"del_plan_{int(r['id'])}", help="Remove this session"):
+        if c[3].button("✖", key=f"del_plan_{int(r['id'])}", help=t("Remove this session")):
             if int(r['id']) in sent:           # also take it off the head unit
                 try:
                     ws.remove_session(cfg, user_name, int(r['id']))
                 except Exception as e:
-                    st.warning(f"Could not remove it from Wahoo ({e}); delete it in the Wahoo app.")
+                    st.warning(t('Could not remove it from Wahoo ({e}); delete it in the Wahoo app.', e=e))
             delete_planned_session(user_name, int(r['id']))
             st.rerun()
         if wahoo_ok:
             with c[1]:
                 _send_controls(user_name, ftp, cfg, r, int(r['id']) in sent, today)
                 if int(r['id']) in sent and not ws.in_sync_window(r['date'], today):
-                    st.caption("Sent. It reaches your ELEMNT within 6 days of the ride; use ↻ Update then if it "
-                               "doesn't show up.")
+                    st.caption(t("Sent. It reaches your ELEMNT within 6 days of the ride; use ↻ Update then if it "
+                               "doesn't show up."))
                 elif int(r['id']) in sent:
-                    st.caption("Sent to Wahoo.")
+                    st.caption(t("Sent to Wahoo."))
 
 
 def _render_load(user_name, ftp, today, mode):
@@ -278,7 +279,7 @@ def _render_load(user_name, ftp, today, mode):
     planned = _plan_editor(user_name, ftp, today)
     pmc = compute_pmc(history, today=today, planned=planned)
     if pmc.empty:
-        st.info("No rides with TSS yet. Upload a ride or import your Strava history.")
+        st.info(t("No rides with TSS yet. Upload a ride or import your Strava history."))
         return
 
     now = pmc.loc[:today].iloc[-1]
@@ -290,32 +291,31 @@ def _render_load(user_name, ftp, today, mode):
     mono_now = mono['monotony'].loc[:today].iloc[-1]
 
     c = st.columns(6)
-    _metric(c[0], "Fitness (CTL)", f"{now['CTL']:.0f}", None, "Chronic training load: 42-day weighted average TSS.")
-    _metric(c[1], "Fatigue (ATL)", f"{now['ATL']:.0f}", None, "Acute training load: 7-day weighted average TSS.")
-    _metric(c[2], "Form (TSB)", f"{now['TSB']:+.0f}", form_status(now['TSB']),
-            "Yesterday's fitness minus fatigue. Rough guide: −10 to −30 productive training, "
-            "+5 to +25 fresh / race-ready, below −30 high fatigue.")
-    _metric(c[3], "Ramp rate", f"{ramp_now:+.1f}/wk" if pd.notna(ramp_now) else "N/A", ramp_status(ramp_now),
-            "CTL change over the last 7 days. Rule of thumb: more than ~8 points/week is aggressive "
-            "and hard to sustain.")
-    _metric(c[4], "Acute:chronic", f"{acwr_now:.2f}" if pd.notna(acwr_now) else "N/A", acwr_status(acwr_now),
-            "ATL / CTL. ~0.8–1.3 is the commonly cited range; above ~1.5 is a sharp load spike. "
-            "Needs 4 weeks of history.")
-    _metric(c[5], "Monotony (7 d)", f"{mono_now:.2f}" if pd.notna(mono_now) else "N/A", monotony_status(mono_now),
-            "Foster's monotony: average daily load ÷ its day-to-day variation over the last week. "
-            "Above ~2 = little variation between hard and easy days.")
+    _metric(c[0], t("Fitness (CTL)"), f"{now['CTL']:.0f}", None, t("Chronic training load: 42-day weighted average TSS."))
+    _metric(c[1], t("Fatigue (ATL)"), f"{now['ATL']:.0f}", None, t("Acute training load: 7-day weighted average TSS."))
+    _metric(c[2], t("Form (TSB)"), f"{now['TSB']:+.0f}", form_status(now['TSB']),
+            t("Yesterday's fitness minus fatigue. Rough guide: −10 to −30 productive training, "
+              "+5 to +25 fresh / race-ready, below −30 high fatigue."))
+    _metric(c[3], t("Ramp rate"), t("{ramp:+.1f}/wk", ramp=ramp_now) if pd.notna(ramp_now) else t("N/A"), ramp_status(ramp_now),
+            t("CTL change over the last 7 days. Rule of thumb: more than ~8 points/week is aggressive "
+              "and hard to sustain."))
+    _metric(c[4], t("Acute:chronic"), f"{acwr_now:.2f}" if pd.notna(acwr_now) else t("N/A"), acwr_status(acwr_now),
+            t("ATL / CTL. ~0.8–1.3 is the commonly cited range; above ~1.5 is a sharp load spike. "
+              "Needs 4 weeks of history."))
+    _metric(c[5], t("Monotony (7 d)"), f"{mono_now:.2f}" if pd.notna(mono_now) else t("N/A"), monotony_status(mono_now),
+            t("Foster's monotony: average daily load ÷ its day-to-day variation over the last week. "
+              "Above ~2 = little variation between hard and easy days."))
 
     if pmc['planned'].any():
         last = pmc.index[-1]
-        st.info(f"With the planned sessions, your form on **{last:%a %d %b}** would be "
-                f"**{pmc['TSB'].iloc[-1]:+.0f}** ({form_status(pmc['TSB'].iloc[-1])}), "
-                f"fitness {pmc['CTL'].iloc[-1]:.0f}.")
+        st.info(t('With the planned sessions, your form on **{last:%a %d %b}** would be **{form:+.0f}** '
+                     '({form_status}), fitness {value4:.0f}.', last=last, form=pmc['TSB'].iloc[-1], form_status=form_status(pmc['TSB'].iloc[-1]), value4=pmc['CTL'].iloc[-1]))
 
-    label = remembered(st.radio, "load_period", "3 months", "Show", list(PERIODS), horizontal=True)
+    label = remembered(st.radio, "load_period", "3 months", t("Show"), list(PERIODS), horizontal=True, format_func=tr)
     start = _period_start(label, today)
     view = pmc if start is None else pmc.loc[start:]
     _chart(tp.plot_training_load(view, today, mode))
-    with st.expander("Raw load data"):
+    with st.expander(t("Raw load data")):
         st.dataframe(view, use_container_width=True)
 
     c1, c2 = st.columns(2)
@@ -324,19 +324,19 @@ def _render_load(user_name, ftp, today, mode):
     with c2:
         _chart(tp.plot_acwr(ratio.loc[view.index[0]:today], mode))
 
-    st.subheader("Volume")
+    st.subheader(t("Volume"))
     v1, v2 = st.columns([1, 3])
-    freq = remembered(v1.radio, "vol_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
-    metrics = {'Hours': 'hours', 'Distance (km)': 'km', 'TSS': 'tss', 'Work (kJ)': 'kj',
-               'Elevation (m)': 'elevation_m', 'Rides': 'rides'}
-    m_label = remembered(v2.radio, "vol_metric", "Hours", "Measure", list(metrics), horizontal=True)
+    freq = remembered(v1.radio, "vol_freq", "Week", t("Group by"), [mark("Week"), mark("Month")], horizontal=True, format_func=tr)
+    metrics = {mark('Hours'): 'hours', mark('Distance (km)'): 'km', 'TSS': 'tss', mark('Work (kJ)'): 'kj',
+               mark('Elevation (m)'): 'elevation_m', mark('Rides'): 'rides'}
+    m_label = remembered(v2.radio, "vol_metric", "Hours", t("Measure"), list(metrics), horizontal=True, format_func=tr)
     stats = get_ride_stats(user_name, start, today)
     vol = tl.volume(stats, 'W' if freq == "Week" else 'M')
     if vol.empty:
-        st.info("No rides in this period.")
+        st.info(t("No rides in this period."))
     else:
         _chart(tp.plot_volume(vol, metrics[m_label], m_label, mode))
-        with st.expander("Table"):
+        with st.expander(t("Table")):
             st.dataframe(vol.rename_axis(freq).round(1), use_container_width=True)
 
 
@@ -345,7 +345,7 @@ def _render_load(user_name, ftp, today, mode):
 def _render_power(user_name, user, today, mode):
     recs = get_power_records(user_name)
     if recs.empty:
-        st.info("No power data yet.")
+        st.info(t("No power data yet."))
         return
     weight, ftp = user['weight'], user['ftp']
     curves = pp.window_curves(recs, today)
@@ -354,52 +354,54 @@ def _render_power(user_name, user, today, mode):
     recent = pp.as_dict(curves['Last 90 days'])
     two = estimate_critical_power(recent) if recent else None
     three = pp.fit_cp3(recent)
-    st.markdown("##### Critical power (from your last 90 days)")
+    st.markdown(t("##### Critical power (from your last 90 days)"))
     c = st.columns(4)
-    c[0].metric("CP (2-parameter)", f"{two['cp']:.0f} W" if two else "N/A",
-                help="Fitted to your best 3–20 min efforts. The power you can sustain for a long time "
-                     "(close to FTP).")
-    c[1].metric("W′", f"{two['w_prime'] / 1000:.1f} kJ" if two else "N/A",
-                help="Work capacity above CP: how much you can spend on surges before you must ease off.")
-    c[2].metric("CP (3-parameter)", f"{three['cp']:.0f} W" if three else "N/A",
-                help="Morton's model, fitted to 1–30 min efforts. It also models the short end of the curve, "
-                     "so it usually matches real efforts better.")
-    c[3].metric("Pmax (model)", f"{three['pmax']:.0f} W" if three else "N/A",
-                help="The 3-parameter model's estimate of your maximal instantaneous power. "
-                     "Reliable only if you have recent all-out sprints.")
+    c[0].metric(t("CP (2-parameter)"), f"{two['cp']:.0f} W" if two else t("N/A"),
+                help=t("Fitted to your best 3–20 min efforts. The power you can sustain for a long time "
+                     "(close to FTP)."))
+    c[1].metric("W′", f"{two['w_prime'] / 1000:.1f} kJ" if two else t("N/A"),
+                help=t("Work capacity above CP: how much you can spend on surges before you must ease off."))
+    c[2].metric(t("CP (3-parameter)"), f"{three['cp']:.0f} W" if three else t("N/A"),
+                help=t("Morton's model, fitted to 1–30 min efforts. It also models the short end of the curve, "
+                     "so it usually matches real efforts better."))
+    c[3].metric(t("Pmax (model)"), f"{three['pmax']:.0f} W" if three else t("N/A"),
+                help=t("The 3-parameter model's estimate of your maximal instantaneous power. "
+                     "Reliable only if you have recent all-out sprints."))
     if not two and not three:
-        st.caption("Needs maximal efforts between 3 and 20 minutes in the last 90 days.")
+        st.caption(t("Needs maximal efforts between 3 and 20 minutes in the last 90 days."))
 
     hist = cp_history(recs, today=today)
     _chart(tp.plot_cp_history(hist, mode))
 
-    st.markdown("##### Power profile")
+    st.markdown(t("##### Power profile"))
     allt = pp.as_dict(curves['All time'])
     prof = pp.power_profile(recent, weight, ftp).merge(
         pp.power_profile(allt, weight, ftp)[['duration', 'w_per_kg']].rename(columns={'w_per_kg': 'all_time'}),
         on='duration')
-    st.dataframe(prof.rename(columns={'duration': 'Duration', 'watts': 'Watts (90 d)',
-                                      'w_per_kg': 'W/kg (90 d)', 'x_ftp': '× FTP (90 d)',
-                                      'all_time': 'W/kg (all time)'}),
+    c_dur, c_w90, c_kg90, c_ftp90, c_kgall = (t('Duration'), t('Watts (90 d)'), t('W/kg (90 d)'), t('× FTP (90 d)'),
+                                              t('W/kg (all time)'))
+    st.dataframe(prof.rename(columns={'duration': c_dur, 'watts': c_w90, 'w_per_kg': c_kg90, 'x_ftp': c_ftp90,
+                                      'all_time': c_kgall}),
                  hide_index=True, use_container_width=True,
-                 column_config={'Watts (90 d)': st.column_config.NumberColumn(format="%.0f"),
-                                'W/kg (90 d)': st.column_config.NumberColumn(format="%.2f"),
-                                '× FTP (90 d)': st.column_config.NumberColumn(format="%.2f"),
-                                'W/kg (all time)': st.column_config.NumberColumn(format="%.2f")})
-    st.caption("“× FTP” shows the shape of your curve: e.g. strong short efforts relative to FTP point to "
-               "punch/sprint, a flat curve to a diesel/time-trial profile.")
+                 column_config={c_w90: st.column_config.NumberColumn(format="%.0f"),
+                                c_kg90: st.column_config.NumberColumn(format="%.2f"),
+                                c_ftp90: st.column_config.NumberColumn(format="%.2f"),
+                                c_kgall: st.column_config.NumberColumn(format="%.2f")})
+    st.caption(t("“× FTP” shows the shape of your curve: e.g. strong short efforts relative to FTP point to "
+               "punch/sprint, a flat curve to a diesel/time-trial profile."))
 
-    with st.expander("🏆 Records with dates"):
+    with st.expander(t("🏆 Records with dates")):
         best = curves['All time'].copy()
         r90 = curves['Last 90 days'].set_index('duration')['watts']
-        best['Duration'] = best['duration'].map(_dur_label)
-        best['W/kg'] = (best['watts'] / weight).round(2)
-        best['Set on'] = best['date'].dt.strftime('%d %b %Y')
-        best['Last 90 d'] = best['duration'].map(r90)
-        st.dataframe(best[['Duration', 'watts', 'W/kg', 'Set on', 'Last 90 d']].rename(columns={'watts': 'Watts'}),
+        c_dur, c_kg, c_set, c_90, c_w = t('Duration'), t('W/kg'), t('Set on'), t('Last 90 d'), t('Watts')
+        best[c_dur] = best['duration'].map(_dur_label)
+        best[c_kg] = (best['watts'] / weight).round(2)
+        best[c_set] = best['date'].map(lambda d: fdate(d, '%d %b %Y'))
+        best[c_90] = best['duration'].map(r90)
+        st.dataframe(best[[c_dur, 'watts', c_kg, c_set, c_90]].rename(columns={'watts': c_w}),
                      hide_index=True, use_container_width=True,
-                     column_config={'Watts': st.column_config.NumberColumn(format="%.0f"),
-                                    'Last 90 d': st.column_config.NumberColumn(format="%.0f")})
+                     column_config={c_w: st.column_config.NumberColumn(format="%.0f"),
+                                    c_90: st.column_config.NumberColumn(format="%.0f")})
 
     _render_cp_profile(user_name)
 
@@ -409,97 +411,99 @@ def _render_cp_profile(user_name):
     best_power = get_user_best_power(user_name)
     if not best_power:
         return
-    with st.expander("💾 Save critical power to your profile (all-time model)"):
+    with st.expander(t("💾 Save critical power to your profile (all-time model)")):
         cp_results = estimate_critical_power(best_power)
         if not cp_results:
-            st.info("Not enough data to model Critical Power. Upload maximal efforts between 3 and 20 minutes.")
+            st.info(t("Not enough data to model Critical Power. Upload maximal efforts between 3 and 20 minutes."))
             return
         c = st.columns(3)
-        c[0].metric("Critical Power (CP)", f"{cp_results['cp']:.0f} W",
-                    help="The theoretical power you can sustain 'indefinitely' (aerobic ceiling). "
-                         "Usually slightly higher than FTP.")
-        c[1].metric("W' (Anaerobic Capacity)", f"{cp_results['w_prime'] / 1000:.1f} kJ",
-                    help="Battery size above CP. Typical values: 10kJ (Sprinter) to 25kJ (Pursuiter).")
-        c[2].metric("Model Fit (R²)", f"{cp_results['r_squared']:.3f}",
-                    help="How well your data fits the model. >0.95 is excellent. If low, you might need more "
-                         "all-out efforts between 3 and 12 mins.")
+        c[0].metric(t("Critical Power (CP)"), f"{cp_results['cp']:.0f} W",
+                    help=t("The theoretical power you can sustain 'indefinitely' (aerobic ceiling). "
+                         "Usually slightly higher than FTP."))
+        c[1].metric(t("W' (Anaerobic Capacity)"), f"{cp_results['w_prime'] / 1000:.1f} kJ",
+                    help=t("Battery size above CP. Typical values: 10kJ (Sprinter) to 25kJ (Pursuiter)."))
+        c[2].metric(t("Model Fit (R²)"), f"{cp_results['r_squared']:.3f}",
+                    help=t("How well your data fits the model. >0.95 is excellent. If low, you might need more "
+                         "all-out efforts between 3 and 12 mins."))
         if cp_results['w_prime'] > 20000:
-            st.caption("💡 You have a high anaerobic capacity: likely a **Puncheur** or **Sprinter**.")
+            st.caption(t("💡 You have a high anaerobic capacity: likely a **Puncheur** or **Sprinter**."))
         elif cp_results['w_prime'] < 12000:
-            st.caption("💡 Your engine is more diesel: likely a **Time Trialist** or **Climber** "
-                       "(or you need more intervals!).")
-        st.caption("Fitted to your best efforts of all time, so it can be higher than the last-90-days "
-                   "figures above.")
+            st.caption(t("💡 Your engine is more diesel: likely a **Time Trialist** or **Climber** "
+                       "(or you need more intervals!)."))
+        st.caption(t("Fitted to your best efforts of all time, so it can be higher than the last-90-days "
+                   "figures above."))
         b1, b2 = st.columns([1, 2])
-        if b1.button("💾 Save CP & W'", key="save_cp"):
+        if b1.button(t("💾 Save CP & W'"), key="save_cp"):
             update_user_physics(user_name, cp=cp_results['cp'], w_prime=cp_results['w_prime'])
-            st.success(f"Updated {user_name}: CP={cp_results['cp']:.0f}W, W'={cp_results['w_prime'] / 1000:.1f}kJ")
+            st.success(t("Updated {user_name}: CP={cp:.0f}W, W'={w_prime:.1f}kJ", user_name=user_name, cp=cp_results['cp'], w_prime=cp_results['w_prime'] / 1000))
             st.rerun()
-        if b2.button("💾 Save CP & W' AND set FTP = CP", key="save_cp_ftp"):
+        if b2.button(t("💾 Save CP & W' AND set FTP = CP"), key="save_cp_ftp"):
             update_user_physics(user_name, cp=cp_results['cp'], w_prime=cp_results['w_prime'], update_ftp=True)
-            st.success(f"Full update! FTP is now {cp_results['cp']:.0f}W.")
+            st.success(t('Full update! FTP is now {cp:.0f}W.', cp=cp_results['cp']))
             st.rerun()
 
 
 # --- Durability ------------------------------------------------------------------
 
 def _render_durability(user_name, today, mode):
-    st.caption("How much of your fresh best power you can still produce after 1, 2 and 3 MJ of work "
+    st.caption(t("How much of your fresh best power you can still produce after 1, 2 and 3 MJ of work "
                "(about 1, 2 and 3 hours at ~280 W). High retention = good durability, which decides "
-               "the end of long races and gran fondos.")
-    label = remembered(st.radio, "dur_period", "6 months", "Period", list(PERIODS), horizontal=True)
+               "the end of long races and gran fondos."))
+    label = remembered(st.radio, "dur_period", "6 months", t("Period"), list(PERIODS), horizontal=True, format_func=tr)
     start = _period_start(label, today)
     table = du.durability_table(get_power_records(user_name, start, today),
                                 get_kj_records(user_name, start, today), start, today)
     if table.empty:
-        st.info("No rides in this period went beyond 1000 kJ (or they haven't been updated yet).")
+        st.info(t("No rides in this period went beyond 1000 kJ (or they haven't been updated yet)."))
         return
     _chart(tp.plot_durability(table, mode))
-    show = table.assign(**{'After': table['kj'].map(lambda k: f"{k / 1000:g} MJ"),
-                           'Duration': table['duration'].map(_dur_label)})
-    with st.expander("Table"):
-        st.dataframe(show[['After', 'Duration', 'fresh', 'fatigued', 'retention_pct']].rename(
-            columns={'fresh': 'Fresh best (W)', 'fatigued': 'Best after (W)', 'retention_pct': 'Kept (%)'}),
+    c_after, c_dur, c_fresh, c_best, c_kept = (t('After'), t('Duration'), t('Fresh best (W)'), t('Best after (W)'),
+                                               t('Kept (%)'))
+    show = table.assign(**{c_after: table['kj'].map(lambda k: f"{k / 1000:g} MJ"),
+                           c_dur: table['duration'].map(_dur_label)})
+    with st.expander(t("Table")):
+        st.dataframe(show[[c_after, c_dur, 'fresh', 'fatigued', 'retention_pct']].rename(
+            columns={'fresh': c_fresh, 'fatigued': c_best, 'retention_pct': c_kept}),
             hide_index=True, use_container_width=True,
-            column_config={'Fresh best (W)': st.column_config.NumberColumn(format="%.0f"),
-                           'Best after (W)': st.column_config.NumberColumn(format="%.0f"),
-                           'Kept (%)': st.column_config.NumberColumn(format="%.0f")})
-    st.caption("A low value can also just mean you never went hard late in a long ride in this period.")
+            column_config={c_fresh: st.column_config.NumberColumn(format="%.0f"),
+                           c_best: st.column_config.NumberColumn(format="%.0f"),
+                           c_kept: st.column_config.NumberColumn(format="%.0f")})
+    st.caption(t("A low value can also just mean you never went hard late in a long ride in this period."))
 
 
 # --- Intensity ---------------------------------------------------------------------
 
 def _render_intensity(user_name, today, mode):
     c1, c2, c3 = st.columns(3)
-    kind = remembered(c1.radio, "tid_kind", "Power", "Based on", ["Power", "Heart rate"], horizontal=True)
-    freq = remembered(c2.radio, "tid_freq", "Week", "Group by", ["Week", "Month"], horizontal=True)
-    label = remembered(c3.selectbox, "tid_period", "3 months", "Period", list(PERIODS))
+    kind = remembered(c1.radio, "tid_kind", "Power", t("Based on"), [mark("Power"), mark("Heart rate")], horizontal=True, format_func=tr)
+    freq = remembered(c2.radio, "tid_freq", "Week", t("Group by"), [mark("Week"), mark("Month")], horizontal=True, format_func=tr)
+    label = remembered(c3.selectbox, "tid_period", "3 months", t("Period"), list(PERIODS), format_func=tr)
     start = _period_start(label, today)
     rows = get_zone_rows(user_name, 'power' if kind == "Power" else 'hr', start, today)
     if rows.empty:
-        st.info("No zone data in this period.")
+        st.info(t("No zone data in this period."))
         return
 
     tot = it.three_zone(rows)
     pi = it.polarization_index(tot['low'], tot['mid'], tot['high'])
     total = sum(tot.values())
     m = st.columns(4)
-    m[0].metric("Easy (Z1–2)", f"{tot['low'] / total:.0%}")
-    m[1].metric("Moderate (Z3–4)", f"{tot['mid'] / total:.0%}")
-    m[2].metric("Hard (Z5+)", f"{tot['high'] / total:.0%}")
-    m[3].metric("Polarization index", f"{pi:.2f}" if pi is not None else "N/A",
+    m[0].metric(t("Easy (Z1–2)"), f"{tot['low'] / total:.0%}")
+    m[1].metric(t("Moderate (Z3–4)"), f"{tot['mid'] / total:.0%}")
+    m[2].metric(t("Hard (Z5+)"), f"{tot['high'] / total:.0%}")
+    m[3].metric(t("Polarization index"), f"{pi:.2f}" if pi is not None else t("N/A"),
                 delta=tid_label(tot['low'], tot['mid'], tot['high'], pi), delta_color="off",
-                help="log10(easy / moderate × hard × 100) on time shares (Treff et al. 2019). "
+                help=t("log10(easy / moderate × hard × 100) on time shares (Treff et al. 2019). "
                      "Above 2.0 = polarized (mostly easy, some hard, little in between). "
-                     "Not defined when there is more hard than easy time.")
+                     "Not defined when there is more hard than easy time."))
 
     dist = it.distribution(rows, 'W' if freq == "Week" else 'M')
     _chart(tp.plot_intensity_distribution(dist, mode))
     _chart(tp.plot_polarization(dist, mode))
-    with st.expander("Table"):
+    with st.expander(t("Table")):
         st.dataframe((dist.assign(low=dist['low'] * 100, mid=dist['mid'] * 100, high=dist['high'] * 100)
-                      .rename(columns={'hours': 'Hours', 'low': 'Easy %', 'mid': 'Moderate %',
-                                       'high': 'Hard %', 'pi': 'PI'}).rename_axis(freq).round(2)),
+                      .rename(columns={'hours': t('Hours'), 'low': t('Easy %'), 'mid': t('Moderate %'),
+                                       'high': t('Hard %'), 'pi': 'PI'}).rename_axis(tr(freq)).round(2)),
                      use_container_width=True)
-    st.caption(("Power zones (Coggan, from your FTP)" if kind == "Power" else "Heart-rate zones (Friel, from your LTHR)")
-               + " grouped into three: Z1–2 easy, Z3–4 moderate, Z5+ hard. Moving time only.")
+    zones = t("Power zones (Coggan, from your FTP)") if kind == "Power" else t("Heart-rate zones (Friel, from your LTHR)")
+    st.caption(t("{zones} grouped into three: Z1–2 easy, Z3–4 moderate, Z5+ hard. Moving time only.", zones=zones))

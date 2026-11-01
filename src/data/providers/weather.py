@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+from src.i18n import t
 
 SEGMENT_KM = 25.0                 # one weather sample position per this much riding
 POSITION_DECIMALS = 2             # positions are rounded (~1 km) before they leave the machine and for the cache
@@ -39,10 +40,10 @@ class WeatherError(Exception):
 
 # ---------------------------------------------------------------------------------------------- positions
 def _naive_utc(times):
-    t = pd.to_datetime(pd.Series(times))
-    if getattr(t.dt, 'tz', None) is not None:
-        t = t.dt.tz_convert('UTC').dt.tz_localize(None)
-    return t
+    ts = pd.to_datetime(pd.Series(times))
+    if getattr(ts.dt, 'tz', None) is not None:
+        ts = ts.dt.tz_convert('UTC').dt.tz_localize(None)
+    return ts
 
 
 def sample_points(df, segment_km=SEGMENT_KM):
@@ -95,18 +96,18 @@ def _get_json(url, params):
         try:
             r = requests.get(url, params=params, timeout=TIMEOUT_S)
             if r.status_code == 429 or r.status_code >= 500:
-                last = WeatherError(f"weather service answered {r.status_code}")
+                last = WeatherError(t('weather service answered {status_code}', status_code=r.status_code))
             elif r.status_code >= 400:
                 reason = ""
                 try:
                     reason = r.json().get('reason', '')
                 except Exception:
                     pass
-                raise WeatherError(f"weather service refused the request ({r.status_code}) {reason}".strip())
+                raise WeatherError(t("weather service refused the request ({code}) {reason}", code=r.status_code, reason=reason).strip())
             else:
                 return r.json()
         except (requests.exceptions.RequestException, ValueError) as e:
-            last = WeatherError(f"weather service not reachable: {e}")
+            last = WeatherError(t('weather service not reachable: {e}', e=e))
         if attempt < RETRIES - 1:
             time.sleep(0.5 * 2 ** attempt)
     raise last
@@ -125,7 +126,7 @@ def fetch_hourly(lat, lon, start_date, end_date):
     if recent:
         days_back = int((today - pd.Timestamp(start_date)).days) + 1
         if days_back > 92:
-            raise WeatherError("the forecast service only covers the last 92 days and the archive has no data yet")
+            raise WeatherError(t("the forecast service only covers the last 92 days and the archive has no data yet"))
         params.update(past_days=max(days_back, 1), forecast_days=1)
     else:
         params.update(start_date=start_date, end_date=end_date)
@@ -133,14 +134,14 @@ def fetch_hourly(lat, lon, start_date, end_date):
     data = _get_json(url, params)
     hourly = data.get('hourly') if isinstance(data, dict) else None
     if not hourly or 'time' not in hourly:
-        raise WeatherError("no weather data for this place and time")
+        raise WeatherError(t("no weather data for this place and time"))
     unit = str((data.get('hourly_units') or {}).get('wind_speed_10m', 'm/s')).lower()
     to_ms = {'km/h': 1 / 3.6, 'mp/h': 0.44704, 'mph': 0.44704, 'kn': 0.514444}.get(unit, 1.0)
 
     def col(name):
         return [None if v is None else float(v) for v in hourly.get(name, [None] * len(hourly['time']))]
     wind = [None if v is None else v * to_ms for v in col('wind_speed_10m')]
-    rows = [[t, a, p, w, d, h] for t, a, p, w, d, h in zip(
+    rows = [[ts, a, p, w, d, h] for ts, a, p, w, d, h in zip(
         hourly['time'], col('temperature_2m'), col('surface_pressure'), wind, col('wind_direction_10m'),
         col('relative_humidity_2m'))]
     return {'elevation': data.get('elevation'), 'rows': rows}
@@ -152,10 +153,10 @@ def fetch_ride_payload(df):
     points = sample_points(df)
     if not points:
         return None
-    t = _naive_utc(df['time'])
+    ts = _naive_utc(df['time'])
     out = []
     for p in points:
-        seg = t.iloc[p['start']:p['end']].dropna()
+        seg = ts.iloc[p['start']:p['end']].dropna()
         if seg.empty:
             continue
         # the hour before and after, so that interpolation has both neighbours
@@ -197,10 +198,10 @@ def _drop_across_gaps(series, valid):
     """NaN where the observations on both sides of a time are more than MAX_GAP apart."""
     if len(valid) == 0:
         return series * np.nan
-    t = series.index.to_numpy()
+    ts = series.index.to_numpy()
     v = valid.to_numpy()
-    nxt = np.searchsorted(v, t, side='left')
-    prev_i = np.clip(np.searchsorted(v, t, side='right') - 1, 0, len(v) - 1)
+    nxt = np.searchsorted(v, ts, side='left')
+    prev_i = np.clip(np.searchsorted(v, ts, side='right') - 1, 0, len(v) - 1)
     next_i = np.clip(nxt, 0, len(v) - 1)
     span = pd.to_timedelta(v[next_i] - v[prev_i])
     return series.where(span <= MAX_GAP)
@@ -276,7 +277,7 @@ def load_or_fetch(df, stored=None):
         try:
             payload = fetch_ride_payload(df)
             if payload is None:
-                message = "No GPS position in this file: weather not available."
+                message = t("No GPS position in this file: weather not available.")
         except Exception as e:                          # nothing in here may stop the ride from opening
-            message = f"Weather not available: {e}"
+            message = t("Weather not available: {e}", e=e)
     return apply_weather(df, payload), payload, message

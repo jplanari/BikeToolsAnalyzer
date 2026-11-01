@@ -16,6 +16,7 @@ from src.analysis import workout as wo
 from src.data import db
 from src.data.providers import wahoo as wh
 from src.data.imports.wahoo_import import get_valid_auth
+from src.i18n import t
 
 
 class SendError(Exception):
@@ -28,7 +29,7 @@ def _tzinfo(name):
             from zoneinfo import ZoneInfo
             return ZoneInfo(name)
         except Exception as e:
-            raise SendError(f"Unknown time zone '{name}' in secrets.toml [wahoo] timezone.") from e
+            raise SendError(t("Unknown time zone '{name}' in secrets.toml [wahoo] timezone.", name=name)) from e
     return datetime.now().astimezone().tzinfo           # this computer's zone
 
 
@@ -59,7 +60,7 @@ def send_session(cfg, user_name, session, ftp, local_time, outdoor=True, usage=N
     except (TypeError, ValueError):
         blocks = []
     if not blocks:
-        raise SendError("Only sessions built from intervals can be sent (quick TSS entries have no steps).")
+        raise SendError(t("Only sessions built from intervals can be sent (quick TSS entries have no steps)."))
     name = (session.get('note') or wo.describe(blocks))[:80]
     plan = wp.plan_json(blocks, ftp, name, outdoor=outdoor)
     minutes = max(1, round(wo.session_stats(blocks, ftp)['duration_s'] / 60))

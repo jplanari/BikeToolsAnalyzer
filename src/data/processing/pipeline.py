@@ -17,6 +17,7 @@ from src.analysis.power import NP, power_curve, calculate_ride_kJ
 from src.analysis import ride_metrics as rm
 from src.analysis import durability
 from src.analysis.hr import estimate_hr_threshold
+from src.i18n import t
 
 MOVING_THRESHOLD_MS = 2.0
 
@@ -54,7 +55,7 @@ def prepare_ride(filename, file_bytes):
         df = parse_gpx(file_bytes)
 
     if df is None or df.empty or 'time' not in df.columns:
-        raise ValueError("no timestamped samples")
+        raise ValueError(t("no timestamped samples"))
 
     df, fixed = clean_channels(df)            # impossible sensor readings, before any metric
     df, total_dist, total_ascent = compute_distance_and_ascent(df)

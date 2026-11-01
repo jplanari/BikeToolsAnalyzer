@@ -1,6 +1,7 @@
 """Riders and their thresholds."""
 import sqlite3
 from .core import backup_db, connect
+from src.i18n import t
 
 DEFAULT_FTP, DEFAULT_LTHR = 200, 170
 DEFAULT_W_PRIME = 20000          # joules, when the rider has not given theirs
@@ -17,11 +18,11 @@ def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0, w_prime=None
                          (name, DEFAULT_FTP if ftp is None else ftp, DEFAULT_LTHR if lthr is None else lthr,
                           weight, height, int(ftp is None), int(lthr is None),
                           DEFAULT_W_PRIME if not w_prime else float(w_prime)))
-        return True, "User saved successfully!"
+        return True, t("User saved successfully!")
     except sqlite3.IntegrityError:
-        return False, "User already exists."
+        return False, t("User already exists.")
     except Exception as e:
-        return False, f"Database Error: {e}"
+        return False, t("Database Error: {e}", e=e)
 
 def set_user_thresholds(user_name, ftp=None, lthr=None, auto_ftp=None, auto_lthr=None):
     """

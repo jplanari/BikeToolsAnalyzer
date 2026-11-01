@@ -12,6 +12,7 @@ are comparable on the same chart.
 """
 import numpy as np
 import pandas as pd
+from src.i18n import t
 
 from src.analysis.power import NP
 
@@ -87,7 +88,7 @@ def default_blocks(ftp):
     ftp = ftp or 200
     w = lambda pct: int(round(ftp * pct / 100 / 5) * 5)
     return [
-        {'name': 'Warm-up', 'reps': 1, 'work_min': 15, 'work_w': w(55), 'rest_min': 0, 'rest_w': 0},
-        {'name': 'Intervals', 'reps': 4, 'work_min': 8, 'work_w': w(95), 'rest_min': 4, 'rest_w': w(50)},
-        {'name': 'Cool-down', 'reps': 1, 'work_min': 10, 'work_w': w(50), 'rest_min': 0, 'rest_w': 0},
+        {'name': t('Warm-up'), 'reps': 1, 'work_min': 15, 'work_w': w(55), 'rest_min': 0, 'rest_w': 0},
+        {'name': t('Intervals'), 'reps': 4, 'work_min': 8, 'work_w': w(95), 'rest_min': 4, 'rest_w': w(50)},
+        {'name': t('Cool-down'), 'reps': 1, 'work_min': 10, 'work_w': w(50), 'rest_min': 0, 'rest_w': 0},
     ]

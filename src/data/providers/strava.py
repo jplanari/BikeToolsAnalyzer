@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import numpy as np
 import pandas as pd
 import requests
+from src.i18n import t
 
 AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -38,6 +39,10 @@ TIMEOUT_S = 30
 
 class StravaError(Exception):
     pass
+
+
+class StravaNoData(StravaError):
+    """The activity has no recorded data streams."""
 
 
 class StravaAuthError(StravaError):
@@ -98,13 +103,13 @@ def _token_request(data):
     try:
         r = requests.post(TOKEN_URL, data=data, timeout=TIMEOUT_S)
     except requests.RequestException as e:
-        raise StravaError(f"Could not reach Strava: {e}") from e
+        raise StravaError(t('Could not reach Strava: {e}', e=e)) from e
     if r.status_code in (400, 401):
-        raise StravaAuthError(f"Strava rejected the request ({r.status_code}): {r.text[:200]}")
+        raise StravaAuthError(t('Strava rejected the request ({status_code}): {detail}', status_code=r.status_code, detail=r.text[:200]))
     if r.status_code == 429:
-        raise StravaRateLimitError("Strava rate limit reached; try again in 15 minutes.")
+        raise StravaRateLimitError(t("Strava rate limit reached; try again in 15 minutes."))
     if not r.ok:
-        raise StravaError(f"Strava token endpoint error {r.status_code}")
+        raise StravaError(t('Strava token endpoint error {status_code}', status_code=r.status_code))
     return r.json()
 
 
@@ -171,19 +176,19 @@ def api_get(path, access_token, params=None, usage=None):
                          headers={"Authorization": f"Bearer {access_token}"},
                          timeout=TIMEOUT_S)
     except requests.RequestException as e:
-        raise StravaError(f"Could not reach Strava: {e}") from e
+        raise StravaError(t('Could not reach Strava: {e}', e=e)) from e
     if usage is not None:
         usage.update(r.headers)
     if r.status_code == 401:
-        raise StravaAuthError("Strava authorization expired or was revoked. Please reconnect.")
+        raise StravaAuthError(t("Strava authorization expired or was revoked. Please reconnect."))
     if r.status_code == 403:
-        raise StravaAuthError("Missing permission for this activity (reconnect and allow activity access).")
+        raise StravaAuthError(t("Missing permission for this activity (reconnect and allow activity access)."))
     if r.status_code == 404:
-        raise StravaError("Activity not found.")
+        raise StravaError(t("Activity not found."))
     if r.status_code == 429:
-        raise StravaRateLimitError("Strava rate limit reached; try again in 15 minutes.")
+        raise StravaRateLimitError(t("Strava rate limit reached; try again in 15 minutes."))
     if not r.ok:
-        raise StravaError(f"Strava API error {r.status_code}")
+        raise StravaError(t('Strava API error {status_code}', status_code=r.status_code))
     return r.json()
 
 
@@ -245,11 +250,11 @@ def streams_to_dataframe(payload_bytes):
     act = payload.get("activity", {})
     s = payload.get("streams", {})
 
-    t = s.get("time") or []
-    if not t or not act.get("start_date"):
+    ts = s.get("time") or []
+    if not ts or not act.get("start_date"):
         return pd.DataFrame()
 
-    n = len(t)
+    n = len(ts)
     start = pd.Timestamp(act["start_date"])
     start = start.tz_convert("UTC").tz_localize(None) if start.tzinfo else start
 
@@ -259,7 +264,7 @@ def streams_to_dataframe(payload_bytes):
             return np.full(n, np.nan)
         return pd.to_numeric(pd.Series(v), errors="coerce").to_numpy(dtype=float)
 
-    df = pd.DataFrame({"time": start + pd.to_timedelta(np.asarray(t, dtype=float), unit="s")})
+    df = pd.DataFrame({"time": start + pd.to_timedelta(np.asarray(ts, dtype=float), unit="s")})
 
     latlng = s.get("latlng")
     if latlng and len(latlng) == n:

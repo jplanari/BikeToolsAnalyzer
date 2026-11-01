@@ -1,5 +1,6 @@
 # src/map_view.py
 import folium
+from src.i18n import t
 
 def create_route_map(df, climbs=None):
     """
@@ -36,7 +37,7 @@ def create_route_map(df, climbs=None):
         color="#3388ff",
         weight=4,
         opacity=0.7,
-        tooltip="Full Route"
+        tooltip=t("Full Route")
     ).add_to(m)
 
     # 2. Highlight Climbs (Red)
@@ -48,10 +49,8 @@ def create_route_map(df, climbs=None):
             
             # Create a popup text with stats
             popup_txt = (
-                f"<b>Climb #{i+1}</b><br>"
-                f"Length: {c['length_m']/1000:.2f} km<br>"
-                f"Avg Grad: {c['avg_gradient_pct']:.1f}%<br>"
-                f"Gain: {int(c['elev_gain_m'])}m"
+                t("<b>Climb #{i}</b><br>Length: {length:.2f} km<br>Avg Grad: {grade:.1f}%<br>Gain: {gain}m",
+                  i=i + 1, length=c['length_m'] / 1000, grade=c['avg_gradient_pct'], gain=int(c['elev_gain_m']))
             )
 
             # Draw the climb line
@@ -61,7 +60,7 @@ def create_route_map(df, climbs=None):
                 weight=6,
                 opacity=0.9,
                 popup=folium.Popup(popup_txt, max_width=200),
-                tooltip=f"Climb #{i+1}"
+                tooltip=t("Climb #{i}", i=i + 1)
             ).add_to(m)
 
             # Add a marker at the summit
@@ -72,7 +71,7 @@ def create_route_map(df, climbs=None):
                 color="red",
                 fill=True,
                 fill_color="white",
-                tooltip=f"Summit #{i+1}"
+                tooltip=t("Summit #{i}", i=i + 1)
             ).add_to(m)
 
     # Fit bounds to show the whole route
@@ -95,7 +94,7 @@ def create_segment_map(df, i0, i1):
     if len(seg) >= 2:
         folium.PolyLine(seg[['lat', 'lon']].values[::max(1, len(seg) // 1000)].tolist(), color="#d62728", weight=6,
                         opacity=0.95).add_to(m)
-        for row, color, label in ((seg.iloc[0], "green", "Start"), (seg.iloc[-1], "black", "End")):
+        for row, color, label in ((seg.iloc[0], "green", t("Start")), (seg.iloc[-1], "black", t("End"))):
             folium.CircleMarker([row['lat'], row['lon']], radius=6, color=color, fill=True, fill_opacity=1,
                                 tooltip=label).add_to(m)
         m.fit_bounds([[seg['lat'].min(), seg['lon'].min()], [seg['lat'].max(), seg['lon'].max()]], padding=(30, 30))

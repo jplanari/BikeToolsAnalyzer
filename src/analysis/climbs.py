@@ -1,4 +1,5 @@
 # src/climbs.py
+from src.i18n import mark
 import numpy as np
 import pandas as pd
 
@@ -126,15 +127,15 @@ def detect_climbs(df, min_gradient=1.0, min_length=500, join_dist=1000):
         category = None
         
         if length_m > 5000 and avg_grad > 3.0:
-            category = "Long & Steady"
+            category = mark("Long & Steady")
         elif length_m > 3000 and avg_grad > 4.0:
-            category = "Mid & Average"
+            category = mark("Mid & Average")
         elif length_m > 1000 and avg_grad > 5.0:
-            category = "Short & Steep"
+            category = mark("Short & Steep")
         elif length_m > 500 and avg_grad > 8.0:
-            category = "Punchy"
+            category = mark("Punchy")
         elif length_m > 1000 and avg_grad > 2.5:
-            category = "Generic Climb"
+            category = mark("Generic Climb")
         
         if category:
             final_climbs.append({

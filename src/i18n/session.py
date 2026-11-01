@@ -5,6 +5,8 @@ the rider change it.
 Order: what the rider saved in their profile > the browser's language > this computer's language > English.
 The picker only shows when at least one language besides English is released (see catalog.py).
 """
+import functools
+
 import streamlit as st
 
 from . import DEFAULT, available_languages, language_name, set_language, t
@@ -31,6 +33,16 @@ def init_session():
     if st.session_state[KEY] not in available_languages():     # a language that is no longer offered
         st.session_state[KEY], st.session_state[SOURCE_KEY] = DEFAULT, "default"
     return set_language(st.session_state[KEY])
+
+
+def keeps_language(func):
+    """Decorator for functions run as an st.fragment. A fragment re-runs on its own, without the main script, so
+    the language set at the top of the run is gone: set it again from the session before the fragment draws."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        init_session()
+        return func(*args, **kwargs)
+    return wrapper
 
 
 def apply_user_language(user_name, saved):

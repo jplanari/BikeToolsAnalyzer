@@ -8,14 +8,15 @@ cadence (rpm) bin lower edge. Cells from many rides are simply summed.
 import numpy as np
 import pandas as pd
 
+from src.i18n import mark
 from src.analysis.power import coggan_zones
 from src.analysis.ride_metrics import POWER_BIN_W, HR_BIN_BPM, CAD_BIN_RPM
 
 QUADRANT_NAMES = {
-    'QI': 'High force · High cadence',
-    'QII': 'High force · Low cadence',
-    'QIII': 'Low force · Low cadence',
-    'QIV': 'Low force · High cadence',
+    'QI': mark('High force · High cadence'),
+    'QII': mark('High force · Low cadence'),
+    'QIII': mark('Low force · Low cadence'),
+    'QIV': mark('Low force · High cadence'),
 }
 
 

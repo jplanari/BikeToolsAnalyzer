@@ -8,6 +8,7 @@ import pandas as pd
 from scipy.optimize import curve_fit
 
 from src.analysis.power import estimate_critical_power
+from src.i18n import mark, t, tr
 
 PROFILE_DURATIONS = {'5 s': 5, '1 min': 60, '5 min': 300, '20 min': 1200}
 
@@ -41,14 +42,21 @@ def _best_of_sorted(r):
     return r.drop_duplicates('duration', keep='first')[cols].reset_index(drop=True)
 
 
+def window_label(label):
+    """The display name of a window_curves key ('Season 2026' carries its year)."""
+    if label.startswith('Season '):
+        return t('Season {year}', year=label[len('Season '):])
+    return tr(label)
+
+
 def window_curves(records, today=None):
     """Best curves for the standard comparison windows."""
     today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
     windows = {
-        'Last 42 days': today - pd.Timedelta(days=41),
-        'Last 90 days': today - pd.Timedelta(days=89),
+        mark('Last 42 days'): today - pd.Timedelta(days=41),
+        mark('Last 90 days'): today - pd.Timedelta(days=89),
         f'Season {today.year}': pd.Timestamp(year=today.year, month=1, day=1),
-        'All time': None,
+        mark('All time'): None,
     }
     return {label: best_curve(records, start, today) for label, start in windows.items()}
 
@@ -60,9 +68,9 @@ def as_dict(curve):
     return {int(d): float(w) for d, w in zip(curve['duration'], curve['watts'])}
 
 
-def _morton(t, cp, w_prime, pmax):
-    # Morton's 3-parameter model: P(t) = CP + W' / (t + W' / (Pmax - CP))
-    return cp + w_prime / (t + w_prime / (pmax - cp))
+def _morton(secs, cp, w_prime, pmax):
+    # Morton's 3-parameter model: P(secs) = CP + W' / (secs + W' / (Pmax - CP))
+    return cp + w_prime / (secs + w_prime / (pmax - cp))
 
 
 def fit_cp3(curve_dict, min_s=60, max_s=1800):
@@ -77,7 +85,7 @@ def fit_cp3(curve_dict, min_s=60, max_s=1800):
                  if min_s <= d <= max_s and w and np.isfinite(w))
     if len(pts) < 4:
         return None
-    t = np.array([d for d, _ in pts], dtype=float)
+    secs = np.array([d for d, _ in pts], dtype=float)
     p = np.array([w for _, w in pts], dtype=float)
 
     two = estimate_critical_power(curve_dict) or {}
@@ -86,11 +94,11 @@ def fit_cp3(curve_dict, min_s=60, max_s=1800):
     pmax0 = float(max(curve_dict.get(1, 0) or 0, p.max() * 1.5, cp0 + 100))
     try:
         (cp, w_prime, pmax), _ = curve_fit(
-            _morton, t, p, p0=[cp0, w0, pmax0],
+            _morton, secs, p, p0=[cp0, w0, pmax0],
             bounds=([20, 500, cp0 + 1], [p.min(), 100000, 5000]), maxfev=20000)
     except (RuntimeError, ValueError):
         return None
-    rmse = float(np.sqrt(np.mean((_morton(t, cp, w_prime, pmax) - p) ** 2)))
+    rmse = float(np.sqrt(np.mean((_morton(secs, cp, w_prime, pmax) - p) ** 2)))
     return {'cp': float(cp), 'w_prime': float(w_prime), 'pmax': float(pmax), 'rmse': rmse}
 
 

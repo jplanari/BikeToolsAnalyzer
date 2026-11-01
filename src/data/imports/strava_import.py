@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.data import db
 from src.data.providers import strava as sv
+from src.i18n import t
 
 # Ride starts closer than this to an existing ride are treated as the same
 # ride (e.g. already uploaded as a GPX/FIT file), so TSS isn't counted twice.
@@ -22,7 +23,7 @@ def get_valid_auth(cfg, user_name):
     """Stored auth for this rider, refreshed (and re-saved) if near expiry."""
     auth = db.get_strava_auth(user_name)
     if not auth:
-        raise sv.StravaAuthError("This profile is not connected to Strava.")
+        raise sv.StravaAuthError(t("This profile is not connected to Strava."))
     auth, changed = sv.refresh_if_needed(cfg, auth)
     if changed:
         db.save_strava_auth(user_name, auth)
@@ -47,7 +48,7 @@ def fetch_ride_file(cfg, user_name, activity, usage=None):
     auth = get_valid_auth(cfg, user_name)
     streams = sv.get_streams(auth['access_token'], activity['id'], usage=usage)
     if not streams.get("time"):
-        raise sv.StravaError("This activity has no recorded data streams.")
+        raise sv.StravaNoData(t("This activity has no recorded data streams."))
     return sv.ride_filename(activity['id']), sv.build_ride_payload(activity, streams)
 
 
@@ -139,8 +140,8 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
             res.duplicates_of_uploads += 1
             continue
         if usage.seen and usage.remaining() <= REQUEST_RESERVE:
-            res.stopped_reason = ("Paused to stay within Strava's rate limit. "
-                                  "Run the import again in 15 minutes to continue.")
+            res.stopped_reason = t("Paused to stay within Strava's rate limit. "
+                                    "Run the import again in 15 minutes to continue.")
             break
 
         try:
@@ -159,7 +160,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
         except sv.StravaAuthError:
             raise
         except sv.StravaError as e:
-            if "no recorded data" in str(e):
+            if isinstance(e, sv.StravaNoData):
                 res.no_data += 1
             else:
                 res.failed.append(f"{name}: {e}")
@@ -171,7 +172,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
         if ok:
             res.imported += 1
             imported_ids.add(act['id'])
-        elif "duplicate" in msg.lower() or "already exists" in msg.lower():
+        elif db.is_duplicate_message(msg):
             res.already_imported += 1
         else:
             res.failed.append(f"{name}: {msg}")
