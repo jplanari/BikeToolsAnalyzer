@@ -34,6 +34,7 @@ from src.viz.bikes import choose_ride_bike
 from src.analysis.bikes import bike_physics, label as bike_label
 from src.viz import timeseries as ts
 from src.i18n import t, mark, tr
+from src.i18n import session as i18n_session
 
 
 @st.cache_data(show_spinner=False)
@@ -139,7 +140,11 @@ def process_and_display_analysis(file_obj, user_name, settings):
 
 # Only the chosen section is drawn (and its charts built); a fragment, so switching section does not re-run the
 # analysis above. Older Streamlit: a plain function.
-_fragment = getattr(st, "fragment", lambda func: func)
+_fragment_decorator = getattr(st, "fragment", lambda func: func)
+
+
+def _fragment(func):
+    return _fragment_decorator(i18n_session.keeps_language(func))
 
 
 @_fragment

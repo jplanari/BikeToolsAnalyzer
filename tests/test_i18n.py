@@ -284,3 +284,16 @@ def test_option_labels_have_translations_in_every_catalog():
         strings = json.load(open(f"src/i18n/locales/{code}.json"))["strings"]
         for label in PERIODS:
             assert strings.get(label), (code, label)
+
+
+def test_keeps_language_restores_it_in_a_fragment_rerun(monkeypatch):
+    """A fragment re-runs without the main script: the wrapper must set the session's language again."""
+    import streamlit as st
+    from src.i18n import current_language, session, set_language
+    monkeypatch.setattr(session, "available_languages", lambda *a, **k: ["en", "es"])
+    monkeypatch.setattr(st, "session_state", {session.KEY: "es", session.SOURCE_KEY: "chosen"}, raising=False)
+    seen = []
+    set_language("en")                         # what a fresh fragment run starts with
+    session.keeps_language(lambda: seen.append(current_language()))()
+    assert seen == ["es"]
+    set_language("en")
