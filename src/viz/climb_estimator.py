@@ -115,15 +115,15 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
 
     # What each change is worth at the chosen scenario
     if mode == "Time for a power":
-        def t(**kw):
+        def time_with(**kw):
             a = dict(power_w=power, mass_kg=mass, cda=cda, crr=crr)
             a.update(kw)
             return cm.climb_time(base['lengths'], base['grades'], a['power_w'], a['mass_kg'], a['cda'], a['crr'],
                                  rho, eff)['time_s']
-        rows = [("−1 kg system weight", t(mass_kg=mass - 1) - s_time),
-                ("−0.01 m² CdA", t(cda=max(cda - 0.01, 0.05)) - s_time),
-                ("−0.001 Crr", t(crr=max(crr - 0.001, 0.0005)) - s_time),
-                ("+10 W", t(power_w=power + 10) - s_time)]
+        rows = [("−1 kg system weight", time_with(mass_kg=mass - 1) - s_time),
+                ("−0.01 m² CdA", time_with(cda=max(cda - 0.01, 0.05)) - s_time),
+                ("−0.001 Crr", time_with(crr=max(crr - 0.001, 0.0005)) - s_time),
+                ("+10 W", time_with(power_w=power + 10) - s_time)]
         st.dataframe(pd.DataFrame({"Change": [r[0] for r in rows],
                                    "Time": [f"{r[1]:+.0f} s" for r in rows]}),
                      hide_index=True, use_container_width=True)

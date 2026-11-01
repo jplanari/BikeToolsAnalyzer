@@ -144,6 +144,7 @@ def migrate_db():
     
         _add_column(c, 'users', 'cp', 'INTEGER DEFAULT 0')
         _add_column(c, 'users', 'timezone', 'TEXT')       # IANA name; NULL = this computer's zone
+        _add_column(c, 'users', 'language', 'TEXT')       # 'es', 'ca'...; NULL = follow the browser / computer
 
         _add_column(c, 'users', 'w_prime', 'REAL DEFAULT 20000')
 

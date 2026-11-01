@@ -12,6 +12,8 @@ init_db()
 # Page Config
 st.set_page_config(page_title="BikeTools Analyzer", page_icon="🚴", layout="wide")
 theme.apply_look()
+from src.i18n import session as i18n_session
+i18n_session.init_session()
 theme.page_header("v1.4")
 
 # Initialize Session State

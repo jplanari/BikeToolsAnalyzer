@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "name": "Català",
+    "released": false
+  },
+  "strings": {
+    "Create/Edit": "Crea/Edita",
+    "Current User": "Usuari actual",
+    "No users found. Create one!": "No hi ha cap usuari. Crea'n un!",
+    "Select User": "Selecciona usuari",
+    "🌐 Language": "🌐 Idioma",
+    "👤 User Profile": "👤 Perfil d'usuari",
+    "📂 Data Import": "📂 Importació de dades",
+    "🕒 Time zone: {zone}": "🕒 Fus horari: {zone}"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "name": "Español",
+    "released": false
+  },
+  "strings": {
+    "Create/Edit": "Crear/Editar",
+    "Current User": "Usuario actual",
+    "No users found. Create one!": "No hay usuarios. ¡Crea uno!",
+    "Select User": "Seleccionar usuario",
+    "🌐 Language": "🌐 Idioma",
+    "👤 User Profile": "👤 Perfil de usuario",
+    "📂 Data Import": "📂 Importar datos",
+    "🕒 Time zone: {zone}": "🕒 Zona horaria: {zone}"
+  }
+}
