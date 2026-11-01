@@ -44,6 +44,13 @@ def set_user_timezone(user_name, timezone):
     with connect() as conn:
         conn.execute("UPDATE users SET timezone = ? WHERE name = ?", (valid_timezone(timezone), user_name))
 
+def set_user_language(user_name, language):
+    """The rider's language ('es'); None or a language the app does not have goes back to following the browser."""
+    from src.i18n import available_languages
+    code = language if language in available_languages(include_unreleased=True) else None
+    with connect() as conn:
+        conn.execute("UPDATE users SET language = ? WHERE name = ?", (code, user_name))
+
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
     with connect() as conn:

@@ -17,6 +17,7 @@ from src.data.db import (save_user,
                          consume_oauth_state,
                          data_stamp)
 from src.viz import theme
+from src.i18n import t, session as i18n_session
 from src.viz.connections import get_credentials, setup_box
 from src.data.parsers.upload import expand_upload, UPLOAD_TYPES
 from src.data.imports.upload_import import import_activities
@@ -63,20 +64,22 @@ def render_sidebar():
     app_mode = st.radio("Go to", pages, horizontal=True, key="nav_top", label_visibility="collapsed")
 
     st.sidebar.markdown("---")
-    st.sidebar.header("👤 User Profile")
+    st.sidebar.header(t("👤 User Profile"))
 
     # User Management
-    tab_select, tab_create = st.sidebar.tabs(["Select User", "Create/Edit"])
+    tab_select, tab_create = st.sidebar.tabs([t("Select User"), t("Create/Edit")])
     
     selected_user_name = None
     
     with tab_select:
         users = get_all_users()
         if users:
-            selected_user_name = st.selectbox("Current User", users, key="current_user")
+            selected_user_name = st.selectbox(t("Current User"), users, key="current_user")
             if selected_user_name:
                 _follow_the_data(selected_user_name)
                 u_data = get_user_data(selected_user_name)
+                if i18n_session.apply_user_language(selected_user_name, (u_data or {}).get('language')):
+                    st.rerun()
                 if u_data:
                     user_ftp = u_data['ftp']
                     user_lthr = u_data['lthr']
@@ -92,7 +95,7 @@ def render_sidebar():
                     delete_user(selected_user_name)
                     st.rerun()
         else:
-            st.info("No users found. Create one!")
+            st.info(t("No users found. Create one!"))
 
     with tab_create:
         with st.form("user_form"):
@@ -116,8 +119,10 @@ def render_sidebar():
                 else:
                     st.error(msg)
 
+    i18n_session.picker(selected_user_name)
+
     st.sidebar.markdown("---")
-    st.sidebar.header("📂 Data Import")
+    st.sidebar.header(t("📂 Data Import"))
     
     # 1. Initialize current_file to None by default
     current_file = None

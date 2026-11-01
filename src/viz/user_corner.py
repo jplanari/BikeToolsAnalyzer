@@ -1,5 +1,6 @@
 """User Corner page: profile summary and ride-history maintenance. The ride history table is render_history."""
 import streamlit as st
+from src.i18n import t
 import pandas as pd
 from src.data.processing.history import recompute_history
 from src.data.db import set_user_thresholds, set_user_w_prime, DEFAULT_FTP, DEFAULT_LTHR
@@ -83,7 +84,7 @@ def _timezone_control(user_name, user):
     current = resolve_timezone(user.get('timezone'))
     if current not in zones:
         zones.append(current)
-    with st.expander(f"🕒 Time zone: {current}"):
+    with st.expander(t("🕒 Time zone: {zone}", zone=current)):
         st.caption("Rides are stored in UTC. Your time zone decides which day each ride counts for in the training "
                    "load, the weekly report and the period filters. Until you choose, this computer's zone is used.")
         choice = st.selectbox("Time zone", zones, index=zones.index(current), key="tz_select")
