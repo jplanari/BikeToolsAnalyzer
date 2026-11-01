@@ -45,8 +45,8 @@ sections = [mark("📊 Summary"), mark("⚡ Power")]       # mark(): extracted b
 st.radio(t("Section"), sections, format_func=tr)        # tr(): translates at display time
 ```
 
-Spanish and Catalan are complete (every string translated) but still `"released": false` until a native
-speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Chart titles, axis titles, trace names and
+Spanish and Catalan are complete (every string translated), reviewed by the author and released. New languages
+stay `"released": false` until reviewed; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Chart titles, axis titles, trace names and
 annotations are covered (the scanner checks Plotly calls). So are the PDF reports and the weekly e-mail (written
 in the rider's saved language, also when it is sent in the background).
 
