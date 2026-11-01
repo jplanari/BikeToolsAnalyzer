@@ -9,7 +9,7 @@ with colours derived from the text colour (currentColor) so it works in light an
 Navigation is a bar at the top of the page.
 """
 import streamlit as st
-from src.i18n import t, mark, tr
+from src.i18n import available_languages, mark, t, tr, use_language
 
 LOOKS = [mark("Compact"), mark("Dashboard"), mark("Classic")]
 DEFAULT_LOOK = "Compact"
@@ -68,6 +68,23 @@ def css_for(look):
     return CSS.get(look, "")
 
 
+def _as_look(value):
+    """A look from a stored value: the English name, or its name in any language (a label that ended up in the
+    session or in the address); None when it is neither."""
+    if value in LOOKS:
+        return value
+    if isinstance(value, str):
+        for look in LOOKS:
+            if value.strip().casefold() in {look.casefold(), tr(look).casefold()}:
+                return look
+        for code in available_languages(include_unreleased=True):
+            with use_language(code):
+                for look in LOOKS:
+                    if value.strip().casefold() == tr(look).casefold():
+                        return look
+    return None
+
+
 def _query_value(name, allowed, default):
     try:
         v = st.query_params.get(name)
@@ -77,8 +94,17 @@ def _query_value(name, allowed, default):
 
 
 def current_look():
-    """The chosen look: this session's widget value, else the ?look= of the address (so a bookmark keeps it)."""
-    return st.session_state.get("look") or _query_value("look", LOOKS, DEFAULT_LOOK)
+    """The chosen look: this session's widget value, else the ?look= of the address (so a bookmark keeps it).
+    Never anything but one of LOOKS: a stale or translated value falls back instead of breaking the sidebar."""
+    chosen = _as_look(st.session_state.get("look"))
+    if chosen is None:
+        try:
+            chosen = _as_look(st.query_params.get("look"))
+        except Exception:
+            chosen = None
+    if st.session_state.get("look") != chosen and "look" in st.session_state:
+        st.session_state["look"] = chosen or DEFAULT_LOOK
+    return chosen or DEFAULT_LOOK
 
 
 def apply_look():
