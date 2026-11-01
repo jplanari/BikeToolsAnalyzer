@@ -20,6 +20,8 @@ no tabs, no address bar, and its own profile in the data folder, so it is a wind
 default browser; (3) your default browser, only if neither works. `launcher.log` in the data folder says which options were
 skipped. To force one, set `BIKETOOLS_WINDOW` to `webview`, `app` or `browser`.
 
+**Saving reports.** In the desktop app the PDF reports have a *💾 Save as…* button that opens the system's own Save dialog (Windows common dialog, macOS AppleScript, `zenity`/`kdialog` on Linux) and writes the file where you choose. If the system has no dialog the usual download button is shown. In a browser the download button is always used.
+
 **Linux native window:** Qt needs one system library on Ubuntu/Debian 22.04+: `sudo apt install libxcb-cursor0`. Without it
 (or without any window backend) the app opens in your browser instead.
 
