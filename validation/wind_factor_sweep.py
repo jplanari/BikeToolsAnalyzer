@@ -14,7 +14,7 @@ What it cannot separate: drafting (a group ride shelters the rider from the head
 with the direction of travel, and a wind error that grows with wind speed. A single factor is a simplification. Treat the
 result as a hypothesis to confirm with the reference tests, not as a calibration to apply blindly.
 
-    python -m validation.wind_factor_sweep --user Pep [--since 2026-01-01] [--factors 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+    python -m validation.wind_factor_sweep --user Pep [--since 2026-01-01] [--factors 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9] [--tags rides.csv]
 """
 import argparse
 import logging
@@ -26,6 +26,7 @@ import pandas as pd
 
 from src.physics import aerodyn as ae
 from validation import cda_consistency as cc
+from validation import ride_types
 
 DEFAULT_FACTORS = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 BOOTSTRAPS = 500
@@ -47,6 +48,7 @@ def sweep(prepared, factors=DEFAULT_FACTORS, progress=False):
                 if m is None:
                     continue
                 rows.append(dict(ride_id=p['ride_id'], date=p['date'], factor=float(f), cda=m['cda'],
+                                 ride_type=p.get('ride_type') or ride_types.UNKNOWN,
                                  cda_head=m['cda_head'], cda_tail=m['cda_tail'], speed_ms=m['speed_ms'],
                                  head10_ms=m['head_ms'] / float(f) if f else np.nan, wind10_ms=m['wind_ms'],
                                  ratio=m['cda_head'] / m['cda_tail'] if m['cda_tail'] else np.nan,
@@ -87,6 +89,18 @@ def at_factor(factors, medians, target):
     return float(np.exp(np.interp(target, factors, np.log(medians))))
 
 
+def _bootstrap_crossing(values, factors, seed=1):
+    """(5th, 95th percentile, number of resamples that crossed) of the crossing over resampled rides; None if none did."""
+    rng = np.random.default_rng(seed)
+    found = []
+    for _ in range(BOOTSTRAPS):
+        idx = rng.integers(0, len(values), len(values))
+        c = crossing(factors, np.nanmedian(values[idx], axis=0))
+        if c is not None:
+            found.append(c)
+    return (float(np.percentile(found, 5)), float(np.percentile(found, 95)), len(found)) if found else None
+
+
 def analyse(long_df, factors=DEFAULT_FACTORS, seed=1):
     """Findings: per-factor table, crossing with a bootstrap interval, and the held-out checks."""
     from scipy import stats
@@ -113,15 +127,7 @@ def analyse(long_df, factors=DEFAULT_FACTORS, seed=1):
     out['crossing'] = crossing(factors, meds)
     out['crossing_adj'] = crossing(factors, out['table']['median_ratio_adj'].to_numpy())
     if len(wide) >= MIN_RIDES:
-        rng = np.random.default_rng(seed)
-        values = wide.to_numpy()
-        found = []
-        for _ in range(BOOTSTRAPS):
-            idx = rng.integers(0, len(values), len(values))
-            c = crossing(factors, np.nanmedian(values[idx], axis=0))
-            if c is not None:
-                found.append(c)
-        out['crossing_ci'] = (float(np.percentile(found, 5)), float(np.percentile(found, 95)), len(found)) if found else None
+        out['crossing_ci'] = _bootstrap_crossing(wide.to_numpy(), factors, seed)
         # held-out: find the crossing on one set of rides, read the median ratio on the other at that factor
         dates = long_df.drop_duplicates('ride_id').set_index('ride_id')['date']
         order = [r for r in dates.sort_values().index if r in wide.index]
@@ -153,6 +159,23 @@ def analyse(long_df, factors=DEFAULT_FACTORS, seed=1):
                                    cda_mean=float(at07.mean()), cda_cv=float(at07.std(ddof=1) / at07.mean() * 100)
                                    if len(at07) > 1 else np.nan))
         out['strata'] = strata
+        # solo against group rides: drafting shelters a group rider, so only solo rides test the wind model cleanly
+        types = {}
+        if 'ride_type' in long_df:
+            kinds = long_df.drop_duplicates('ride_id').set_index('ride_id')['ride_type'].reindex(wide.index)
+            f07 = min(factors, key=lambda f: abs(f - 0.7))
+            for kind in ride_types.KNOWN:
+                ids = kinds[kinds == kind].index
+                if len(ids) < MIN_RIDES:
+                    continue
+                at07 = long_df[(long_df['factor'] == f07) & long_df['ride_id'].isin(ids)]['cda']
+                meds_k = _medians(wide.loc[ids])
+                types[kind] = dict(rides=len(ids), medians=meds_k, crossing=crossing(factors, meds_k),
+                                   ci=_bootstrap_crossing(wide.loc[ids].to_numpy(), factors, seed),
+                                   cda_mean=float(at07.mean()),
+                                   cda_cv=float(at07.std(ddof=1) / at07.mean() * 100) if len(at07) > 1 else np.nan)
+            types['_unlabelled'] = int((~kinds.isin(ride_types.KNOWN)).sum())
+        out['types'] = types
         # is the crossing really located? not if it is at the edge of the range or most resamples never crossed
         step = factors[1] - factors[0] if len(factors) > 1 else 0.1
         ci = out['crossing_ci']
@@ -244,6 +267,36 @@ def report(user, res, skipped):
               "calm rides are the ones to trust."]
     else:
         L.append(f"Needs at least {2 * MIN_RIDES} rides.")
+    L += ["", "## Solo and group rides", ""]
+    types = {k: v for k, v in (res.get('types') or {}).items() if k in ride_types.KNOWN}
+    if types:
+        L += ["Group rides shelter the rider from the head wind, which lowers the CdA fitted into the wind. If drafting "
+              "is what keeps the ratio below 1, solo rides reach 1 at a higher factor than group rides.", "",
+              "| Rides | n | " + " | ".join(f"{f:.2f}" for f in res['factors'])
+              + " | Reaches 1 at | 90 % interval | CdA mean | CdA spread (%) |",
+              "|---|---|" + "---|" * (len(res['factors']) + 4)]
+        for kind, v in types.items():
+            ci_ = v['ci']
+            L.append(f"| {kind} | {v['rides']} | " + " | ".join(f"{m:.2f}" for m in v['medians'])
+                     + f" | {crossing_label(res['factors'], v['medians'], v['crossing'])} | "
+                     + (f"{ci_[0]:.2f} to {ci_[1]:.2f}" if ci_ else "n/a")
+                     + f" | {v['cda_mean']:.3f} | {v['cda_cv']:.1f} |")
+        L += ["", f"Rides without a label (left out above): {res['types'].get('_unlabelled', 0)}.", ""]
+        if len(types) == 2 and all(v['crossing'] is not None for v in types.values()):
+            gap = types['solo']['crossing'] - types['group']['crossing']
+            L.append(f"Solo reaches 1 at {types['solo']['crossing']:.2f} and group at {types['group']['crossing']:.2f} "
+                     f"(difference {gap:+.2f}). "
+                     + ("Solo rides need a clearly higher factor: drafting explains part of the gap."
+                        if gap > MATERIAL else
+                        "No clear difference: drafting does not explain the gap."))
+        if 'solo' in types and types['solo']['crossing'] is not None:
+            at = types['solo']['crossing']
+            L.append(f"Solo rides alone suggest a factor of about {at:.2f}"
+                     + ("; 0.70 is not supported even for them." if (types['solo']['ci'] and types['solo']['ci'][1] + MATERIAL < 0.7)
+                        else "; this includes 0.70 within the interval, so the current value may be fine."))
+    else:
+        L.append(f"Needs at least {MIN_RIDES} rides labelled solo or group: use `--tags FILE` (make a template with "
+                 "`--tags-template FILE`); rides imported from Strava from now on carry the group size.")
     L += ["", "## Reading it", "",
           "- A factor well below 0.70 with a ratio that reaches 1 means the wind felt was weaker than the model says "
           "(shelter, trees, buildings, the 0.25-degree weather grid).",
@@ -298,6 +351,7 @@ def main(argv=None):
     ap.add_argument("--since", help="only rides from this date (YYYY-MM-DD)")
     ap.add_argument("--fetch", action="store_true", help="fetch and store the weather of rides that have none")
     ap.add_argument("--factors", default=",".join(str(f) for f in DEFAULT_FACTORS))
+    ap.add_argument("--tags", help="CSV labelling rides solo or group (columns ride_id or name, and type)")
     ap.add_argument("--out", default="validation/output")
     a = ap.parse_args(argv)
     logging.disable(logging.WARNING)
@@ -307,7 +361,9 @@ def main(argv=None):
     if a.db:
         db.DB_FILE = a.db
     factors = [float(x) for x in a.factors.split(",")]
+    tags = cc.read_tags_or_exit(a.tags)
     prepared, skips = cc.prepare_user_rides(a.user, a.since, a.fetch, progress=True)
+    ride_types.apply_tags(prepared, tags)
     prepared = [p for p in prepared if {'wind_speed', 'wind_deg', 'bearing'} <= set(p['df'].columns)]
     skipped = "; ".join(f"{n} {why}" for why, n in skips.items())
     if not prepared:

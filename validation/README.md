@@ -20,7 +20,7 @@ estimator agrees with reality.
 ## 2. CdA self-consistency on real rides: `cda_consistency.py`
 
 ```
-python -m validation.cda_consistency --user NAME [--db path/to/bikethools.db] [--since 2026-01-01] [--fetch]
+python -m validation.cda_consistency --user NAME [--db path/to/bikethools.db] [--since 2026-01-01] [--fetch] [--tags rides.csv]
 ```
 
 Fits the CdA of each saved ride the way the app does, then checks what should not matter: spread between rides and per
@@ -30,10 +30,24 @@ still air and reported as such; `--fetch` downloads and stores their weather (th
 
 It checks that the CdA behaves like a CdA. It cannot say it is right.
 
+### Solo and group rides
+
+Drafting lowers the CdA fitted into a head wind, so both reports split by ride type when they know it. Strava rides
+imported from now on store the group size (`athlete_count`). For the rides already saved, make a template, fill in the
+last column (`solo` or `group`; blank leaves a ride unlabelled) and pass it back:
+
+```
+python -m validation.cda_consistency --user NAME --tags-template rides.csv
+python -m validation.cda_consistency --user NAME --tags rides.csv
+python -m validation.wind_factor_sweep --user NAME --tags rides.csv
+```
+
+A label in the file wins over what the import recorded. Rows are matched on `ride_id`, or on `name` when there is none.
+
 ## 3. Wind height factor sweep: `wind_factor_sweep.py`
 
 ```
-python -m validation.wind_factor_sweep --user NAME [--since 2026-01-01] [--factors 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+python -m validation.wind_factor_sweep --user NAME [--since 2026-01-01] [--factors 0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9] [--tags rides.csv]
 ```
 
 The app scales the weather service's 10 m wind to rider height by `WIND_HEIGHT_FACTOR` (0.7). If it is wrong, the CdA

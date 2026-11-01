@@ -14,7 +14,7 @@ It cannot say the CdA is *right* (no reference), only whether it behaves like a 
 writes nothing to it unless --fetch is given (then the weather of rides without any is fetched and stored,
 as the app does when a ride is opened).
 
-    python -m validation.cda_consistency --user Pep [--db path/to/bikethools.db] [--since 2026-01-01] [--fetch]
+    python -m validation.cda_consistency --user Pep [--db path/to/bikethools.db] [--since 2026-01-01] [--fetch] [--tags rides.csv]
 """
 import argparse
 import csv
@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from src.physics import aerodyn as ae
+from validation import ride_types
 
 MIN_SAMPLES = 120               # usable seconds needed for a fit (same as estimate_cda)
 HEAD_THRESHOLD_10M_MS = 0.7     # head / tail halves need at least this much 10 m wind along the road (0.5 m/s at 0.7)
@@ -140,6 +141,29 @@ def analyse(rides):
         ha = rides[['cda_head_adj', 'cda_tail_adj']].dropna()
         j['ratio_adj'] = (len(ha), float((ha['cda_head_adj'] / ha['cda_tail_adj']).median())) if len(ha) >= MIN_RIDES_FOR_STATS else None
         out['joint'] = j
+    if 'ride_type' in rides:
+        by_type = {}
+        for kind in ride_types.KNOWN:
+            g = rides[rides['ride_type'] == kind]
+            if len(g) < MIN_RIDES_FOR_STATS:
+                continue
+            ht_g = g[['cda_head', 'cda_tail']].dropna()
+            ratio_g = ht_g['cda_head'] / ht_g['cda_tail']
+            by_type[kind] = dict(n=len(g), cda_mean=float(g['cda'].mean()),
+                                 cda_cv=float(g['cda'].std(ddof=1) / g['cda'].mean() * 100.0),
+                                 n_ratio=len(ratio_g), ratio=float(ratio_g.median()) if len(ratio_g) else np.nan,
+                                 ratio_q1=float(ratio_g.quantile(0.25)) if len(ratio_g) else np.nan,
+                                 ratio_q3=float(ratio_g.quantile(0.75)) if len(ratio_g) else np.nan,
+                                 _ratios=ratio_g.to_numpy())
+        if len(by_type) == 2 and all(v['n_ratio'] >= MIN_RIDES_FOR_STATS for v in by_type.values()):
+            a, b = (by_type[k]['_ratios'] for k in ride_types.KNOWN)
+            by_type['p_ratio'] = float(stats.mannwhitneyu(a, b).pvalue)
+        for v in by_type.values():
+            if isinstance(v, dict):
+                v.pop('_ratios', None)
+        out['unlabelled'] = int((~rides['ride_type'].isin(ride_types.KNOWN)).sum())
+        if by_type:
+            out['by_type'] = by_type
     w = rides[rides['has_wind']][['cda', 'cda_still_air']].dropna()
     if len(w) >= 3:
         out['wind_effect'] = (len(w), float(((w['cda'] / w['cda_still_air']) - 1.0).median() * 100.0))
@@ -194,6 +218,26 @@ def report(user, rides, res, skipped):
               "many rides."]
     else:
         L.append(f"Needs at least {MIN_RIDES_FOR_STATS} rides.")
+    L += ["", "## Solo and group rides", ""]
+    bt = res.get('by_type')
+    if bt:
+        L += ["| Rides | n | Mean CdA | CdA spread (%) | Head/tail CdA ratio (median, quartiles) | Rides in the ratio |",
+              "|---|---|---|---|---|---|"]
+        for kind in ride_types.KNOWN:
+            v = bt.get(kind)
+            if v:
+                L.append(f"| {kind} | {v['n']} | {v['cda_mean']:.3f} | {v['cda_cv']:.1f} | "
+                         + (f"{v['ratio']:.2f} ({v['ratio_q1']:.2f} to {v['ratio_q3']:.2f})" if v['n_ratio'] else "n/a")
+                         + f" | {v['n_ratio']} |")
+        if 'p_ratio' in bt:
+            L += ["", f"Difference between the two head/tail ratios: Mann-Whitney p = {bt['p_ratio']:.3f}."]
+        L += ["", f"Rides without a label (left out above): {res.get('unlabelled', 0)}.", "",
+              "Drafting lowers the apparent CdA in head winds. If solo rides sit clearly closer to 1 than group rides, "
+              "drafting explains part of the ratio; if both are equally far from 1, it does not."]
+    else:
+        L.append("Needs at least "
+                 f"{MIN_RIDES_FOR_STATS} labelled rides of a type: use `--tags FILE` (make a template with "
+                 "`--tags-template FILE`); rides imported from Strava from now on carry the group size.")
     L += ["", "## What the weather wind changes", ""]
     if 'wind_effect' in res:
         n, med = res['wind_effect']
@@ -255,13 +299,15 @@ def prepare_user_rides(user_name, since=None, fetch=False, progress=False):
         bike = None if bike_id == 0 else (bikes.get(bike_id) if bike_id else default)
         bike_mass, crr = bike_physics(bike)
         prepared.append(dict(df=df, rider_mass=user['weight'], bike_mass=bike_mass, crr=crr, ride_id=r['id'],
-                             date=r['date_time'], name=filename, bike=bike_label(bike)))
+                             date=r['date_time'], name=filename, bike=bike_label(bike),
+                             ride_type=ride_types.type_from_content(content)))
     return prepared, skips
 
 
-def load_rides(user_name, since=None, fetch=False, progress=False):
-    """(DataFrame of ride_metrics rows, skipped-reason text) for a user's saved rides."""
+def load_rides(user_name, since=None, fetch=False, progress=False, tags=None):
+    """(DataFrame of ride_metrics rows, skipped-reason text) for a user's saved rides. tags: see ride_types.read_tags."""
     prepared, skips = prepare_user_rides(user_name, since, fetch, progress)
+    ride_types.apply_tags(prepared, tags)
     rows = []
     for p in prepared:
         m = ride_metrics(p['df'], p['rider_mass'], p['bike_mass'], p['crr'])
@@ -269,7 +315,8 @@ def load_rides(user_name, since=None, fetch=False, progress=False):
             why = "too few usable samples (indoor, stops, or an implausible fit)"
             skips[why] = skips.get(why, 0) + 1
             continue
-        m.update(ride_id=p['ride_id'], date=p['date'], name=p['name'], bike=p['bike'])
+        m.update(ride_id=p['ride_id'], date=p['date'], name=p['name'], bike=p['bike'],
+                 ride_type=p.get('ride_type') or ride_types.UNKNOWN)
         rows.append(m)
     return pd.DataFrame(rows), "; ".join(f"{n} {why}" for why, n in skips.items())
 
@@ -308,12 +355,32 @@ def write_outputs(user, rides, res, skipped, out_dir):
     return stem
 
 
+def read_tags_or_exit(path):
+    if not path:
+        return None
+    try:
+        return ride_types.read_tags(path)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"Cannot use the tags file {path}: {e}")
+
+
+def write_tags_template(user, path, since=None):
+    prepared, _ = prepare_user_rides(user, since, fetch=False, progress=True)
+    ride_types.apply_tags(prepared)
+    n = ride_types.write_template(prepared, path)
+    c = ride_types.summary(prepared)
+    print(f"{n} rides written to {path} ({c['solo']} solo and {c['group']} group already known from Strava, "
+          f"{c['unknown']} to fill in: type solo or group in the last column).")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--user", required=True)
     ap.add_argument("--db", help="database file (default: the app's, BIKETOOLS_DB or bikethools.db)")
     ap.add_argument("--since", help="only rides from this date (YYYY-MM-DD)")
     ap.add_argument("--fetch", action="store_true", help="fetch and store the weather of rides that have none")
+    ap.add_argument("--tags", help="CSV labelling rides solo or group (columns ride_id or name, and type)")
+    ap.add_argument("--tags-template", help="write a CSV to label the rides in, then stop")
     ap.add_argument("--out", default="validation/output")
     a = ap.parse_args(argv)
     logging.disable(logging.WARNING)          # Streamlit warns that there is no app runtime; not relevant here
@@ -322,7 +389,10 @@ def main(argv=None):
     from src.data import db
     if a.db:
         db.DB_FILE = a.db
-    rides, skipped = load_rides(a.user, a.since, a.fetch, progress=True)
+    if a.tags_template:
+        return write_tags_template(a.user, a.tags_template, a.since)
+    tags = read_tags_or_exit(a.tags)
+    rides, skipped = load_rides(a.user, a.since, a.fetch, progress=True, tags=tags)
     if rides.empty:
         raise SystemExit(f"No ride could be fitted. Skipped: {skipped or 'nothing found'}")
     res = analyse(rides)

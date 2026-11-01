@@ -230,3 +230,128 @@ def test_sweep_reports_the_ratio_after_removing_the_constant_term():
     res = ws.analyse(long_df, factors)
     assert {'median_ratio_adj', 'delta_med'} <= set(res['table'].columns)
     assert "constant extra power term" in ws.report("Ana", res, "")
+
+
+# --- solo and group rides -----------------------------------------------------------------
+
+def test_athlete_count_is_stored_only_when_strava_gave_it():
+    import json
+    from src.data import strava as sv
+    from tests.test_strava import make_streams, activity
+    with_n = json.loads(sv.build_ride_payload(activity(1, athlete_count=6), make_streams(n=60)))
+    without = json.loads(sv.build_ride_payload(activity(1), make_streams(n=60)))
+    assert with_n['activity']['athlete_count'] == 6 and 'athlete_count' not in without['activity']
+    assert sv.build_ride_payload(activity(1), make_streams(n=60)) == sv.build_ride_payload(activity(1), make_streams(n=60))
+
+
+def test_ride_type_from_the_stored_payload():
+    import json
+    from validation import ride_types as rt
+    pay = lambda n: json.dumps({"activity": {"athlete_count": n}, "streams": {}}).encode()
+    assert rt.type_from_content(pay(1)) == "solo" and rt.type_from_content(pay(7)) == "group"
+    assert rt.type_from_content(pay(None)) is None and rt.type_from_content(pay(0)) is None
+    assert rt.type_from_content(b"not json") is None and rt.type_from_content(b"<gpx/>") is None
+
+
+def test_tags_file_is_read_applied_and_bad_lines_are_named(tmp_path):
+    from validation import ride_types as rt
+    f = tmp_path / "tags.csv"
+    f.write_text("ride_id,date,name,type\n1,2026-01-01,a.fit,Solo\n2,2026-01-02,b.fit,GROUP\n3,2026-01-03,c.fit,\n"
+                 ",,d.fit,group\n")
+    tags = rt.read_tags(str(f))
+    assert tags == {1: "solo", 2: "group", "d.fit": "group"}
+    prepared = [dict(ride_id=1, name="a.fit", ride_type="group"), dict(ride_id=3, name="c.fit", ride_type="solo"),
+                dict(ride_id=4, name="d.fit"), dict(ride_id=5, name="e.fit")]
+    rt.apply_tags(prepared, tags)
+    assert [p['ride_type'] for p in prepared] == ["solo", "solo", "group", "unknown"]     # file wins, then the import
+    f.write_text("ride_id,type\n1,tandem\n")
+    with pytest.raises(ValueError, match="line 2"):
+        rt.read_tags(str(f))
+    f.write_text("foo,bar\n1,solo\n")
+    with pytest.raises(ValueError, match="header"):
+        rt.read_tags(str(f))
+
+
+def test_template_lists_every_ride_with_the_known_type_filled_in(tmp_path):
+    from validation import ride_types as rt
+    prepared = [dict(ride_id=1, date="2026-03-01T07:00:00Z", name="s1.json", ride_type="group"),
+                dict(ride_id=2, date=None, name="s2.json", ride_type=None)]
+    path = tmp_path / "t.csv"
+    assert rt.write_template(prepared, str(path)) == 2
+    back = rt.read_tags(str(path))
+    assert back == {1: "group"}                      # the unfilled row stays unlabelled
+    assert rt.summary(prepared) == {"solo": 0, "group": 1, "unknown": 1}
+
+
+def _typed_rides():
+    """Solo rides whose real wind effect is the app's 0.7; group rides sheltered down to 0.3 (drafting)."""
+    solo = _rides_with_true_factor(0.7, n=10, seed=1)
+    group = _rides_with_true_factor(0.3, n=10, seed=2)
+    for p in solo:
+        p['ride_type'] = "solo"
+    for p in group:
+        p['ride_id'] += 100
+        p['ride_type'] = "group"
+    return solo + group
+
+
+def test_sweep_separates_sheltered_group_rides_from_solo_rides(tmp_path):
+    from validation import wind_factor_sweep as ws
+    factors = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+    long_df = ws.sweep(_typed_rides(), factors)
+    res = ws.analyse(long_df, factors)
+    solo, group = res['types']['solo'], res['types']['group']
+    assert solo['crossing'] == pytest.approx(0.7, abs=0.1) and group['crossing'] == pytest.approx(0.3, abs=0.1)
+    text = ws.report("Ana", res, "")
+    assert "## Solo and group rides" in text and "drafting explains part of the gap" in text
+    assert res['types']['_unlabelled'] == 0
+
+
+def test_sweep_without_labels_says_how_to_get_them():
+    from validation import wind_factor_sweep as ws
+    rides = _rides_with_true_factor(0.5, n=12, seed=4)
+    factors = (0.3, 0.5, 0.7)
+    res = ws.analyse(ws.sweep(rides, factors), factors)
+    assert not [k for k in res['types'] if k in ("solo", "group")]
+    assert "--tags" in ws.report("Ana", res, "")
+
+
+def test_consistency_splits_by_ride_type_and_the_unlabelled_are_counted():
+    rows = []
+    rng = np.random.default_rng(0)
+    for i in range(24):
+        kind = "solo" if i < 10 else ("group" if i < 20 else "unknown")
+        ratio = 0.95 if kind == "solo" else 0.6
+        cda = 0.35 + rng.normal(0, 0.01)
+        rows.append(dict(cda=cda, cda_head=cda * ratio, cda_tail=cda, bike="Road", ride_type=kind,
+                         has_wind=True, cda_still_air=cda, head_ms=1.0 + i * 0.1, cross_ms=0.5, speed_ms=8 + 0.1 * i,
+                         grade_pct=0.5 + rng.normal(0, 0.1), temp_c=15 + rng.normal(0, 1)))
+    rides = pd.DataFrame(rows)
+    res = cc.analyse(rides)
+    assert res['by_type']['solo']['ratio'] == pytest.approx(0.95) and res['by_type']['group']['ratio'] == pytest.approx(0.6)
+    assert res['by_type']['p_ratio'] < 0.01 and res['unlabelled'] == 4
+    text = cc.report("Ana", rides, res, "")
+    assert "## Solo and group rides" in text and "| solo | 10 |" in text and "without a label (left out above): 4" in text
+
+
+def test_tags_flow_through_the_database_loader_and_the_cli_template(temp_db, tmp_path, capsys):
+    from src.data import db, strava as sv
+    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from tests.test_strava import make_streams, activity
+    db.save_user("Rider")
+    payload = sv.build_ride_payload(activity(7, "2026-09-07T07:00:00Z", athlete_count=5), make_streams(n=1800))
+    df, dist, ele = prepare_ride("strava_7.json", payload)
+    summ = summarize_ride(df, 250, 170)
+    meta = db.build_ride_metadata(df, dist, ele, summ['avg_speed_kph'], summ['norm_power'], summ['tss'], summ['if'],
+                                  filename="strava_7.json", metrics=metrics_for_storage(summ))
+    assert db.save_ride("Rider", "strava_7.json", payload, meta, summ['power_curve'])[0]
+    cc.main(["--user", "Rider", "--tags-template", str(tmp_path / "t.csv")])
+    assert "1 group" in capsys.readouterr().out
+    assert (tmp_path / "t.csv").read_text().strip().splitlines()[1].endswith(",group")
+    rides, _ = cc.load_rides("Rider")
+    if len(rides):
+        assert rides['ride_type'].iloc[0] == "group"
+        rides, _ = cc.load_rides("Rider", tags={"strava_7.json": "solo"})
+        assert rides['ride_type'].iloc[0] == "solo"
+    with pytest.raises(SystemExit, match="tags file"):
+        cc.read_tags_or_exit(str(tmp_path / "missing.csv"))
