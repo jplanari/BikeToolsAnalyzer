@@ -63,3 +63,16 @@ Precision on repeated runs, known position differences, and agreement with a win
 calibrated power meter are field work. Record, for each run: the meter's zero offset, rider and kit mass, bike mass, tyres
 and pressure, air temperature, pressure and humidity, and the wind. `cda_consistency.py` and `ride_metrics()` can
 analyse those rides too.
+
+## 4. Wind direction and timing sweep: `wind_direction_sweep.py`
+
+```
+python -m validation.wind_direction_sweep --user NAME [--factors 0.7,0.4] [--tags rides.csv --only solo]
+```
+
+Refits every ride with the weather wind rotated by -80 to +80 degrees, and separately read 3 hours earlier to 3 hours
+later, at each wind height factor given. If the head/tail ratio reaches about 1 at some offset (and the CdA spread does
+not grow), the model is being given a turned or shifted wind and the cause is worth finding in the code. If nothing
+helps, shelter or the rider's position is the better explanation. Each ride is refitted about 15 times per factor, so
+it takes roughly twice as long as the factor sweep with the default two factors.
+

@@ -355,3 +355,63 @@ def test_tags_flow_through_the_database_loader_and_the_cli_template(temp_db, tmp
         assert rides['ride_type'].iloc[0] == "solo"
     with pytest.raises(SystemExit, match="tags file"):
         cc.read_tags_or_exit(str(tmp_path / "missing.csv"))
+
+
+# --- wind direction and timing sweep ------------------------------------------------------
+
+def _rides_with_direction_error(err_deg, n=10, seed=0):
+    rng = np.random.default_rng(seed)
+    out = []
+    for i in range(n):
+        sc = dict(terrain='hilly' if i % 2 else 'flat', route='out_and_back',
+                  wind10=float(rng.uniform(3, 6)), wind_from=float(rng.uniform(0, 360)))
+        truth = sim.simulate(sc)
+        df, kw = sim.observe(truth, sim.Errors(wind_dir_deg=err_deg), rng)
+        out.append(dict(df=df, rider_mass=kw['rider_mass'], bike_mass=kw['bike_mass'], crr=kw['crr'],
+                        ride_id=i, date=f"2026-0{1 + i // 4}-{10 + i:02d}", name=f"r{i}", bike="Road"))
+    return out
+
+
+def test_shifting_the_wind_rotates_it_and_moves_it_in_time():
+    from validation import wind_direction_sweep as wd
+    t = pd.date_range("2026-06-01 10:00", periods=7200, freq="s")
+    ramp = np.linspace(2.0, 8.0, len(t))                                  # wind speed grows over the two hours
+    df = pd.DataFrame(dict(time=t, wind_speed=ramp, wind_deg=90.0))
+    rot = wd.shifted(df, rotation_deg=30)
+    assert np.allclose(rot['wind_deg'], 120.0) and np.allclose(rot['wind_speed'], ramp)
+    later = wd.shifted(df, lag_h=1)                                       # read one hour later: stronger
+    assert later['wind_speed'].iloc[0] == pytest.approx(ramp[3600], rel=1e-3)
+    assert later['wind_speed'].iloc[-1] == pytest.approx(ramp[-1])        # clamped at the end of the ride
+    assert (wd.shifted(df)['wind_speed'] == ramp).all() and df['wind_deg'].eq(90.0).all()      # the input is not touched
+
+
+def test_sweep_finds_a_planted_direction_error_and_ignores_a_clean_set(tmp_path):
+    from validation import wind_direction_sweep as wd
+    kw = dict(factors=(0.7,), rotations=(-60, -40, -20, 0, 20, 40), lags=(0,))
+    bad = _rides_with_direction_error(40.0)
+    res = wd.analyse(wd.sweep(bad, **kw), (0.7,))['results'][(0.7, 'rotation')]
+    assert res['improves'] and res['best']['offset'] == pytest.approx(-40, abs=20)
+    assert abs(res['best']['median'] - 1.0) < abs(res['zero']['median'] - 1.0)
+    clean = wd.analyse(wd.sweep(_rides_with_direction_error(0.0, seed=3), **kw), (0.7,))['results'][(0.7, 'rotation')]
+    assert clean['best']['offset'] == 0 and not clean['improves']
+    long_df = wd.sweep(bad, **kw)
+    res_all = wd.analyse(long_df, (0.7,))
+    text = wd.report("Ana", res_all, "")
+    assert "Direction offset" in text and "Wind height factor 0.70" in text
+    wd.write_outputs("Ana", long_df, res_all, "", str(tmp_path))
+    assert (tmp_path / "wind_direction_sweep_Ana.md").exists()
+
+
+def test_lag_sweep_runs_and_restores_the_factor():
+    from validation import wind_direction_sweep as wd
+    before = ae_factor()
+    rides = _rides_with_direction_error(0.0, n=9, seed=5)
+    res = wd.analyse(wd.sweep(rides, factors=(0.7,), rotations=(0,), lags=(-1, 0, 1)), (0.7,))
+    t = res['results'][(0.7, 'lag')]['table']
+    assert set(t['offset']) == {-1.0, 0.0, 1.0}
+    assert ae_factor() == before
+
+
+def ae_factor():
+    from src.physics import aerodyn as ae
+    return ae.WIND_HEIGHT_FACTOR
