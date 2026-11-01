@@ -141,6 +141,7 @@ def run_server(port):
         redirect_output_to_log()
     folder = data_dir()
     os.environ.setdefault("BIKETOOLS_DB", os.path.join(folder, "biketools.db"))
+    os.environ["BIKETOOLS_DESKTOP"] = "1"      # the app saves files with a Save as dialog instead of a browser download
     os.chdir(folder)                       # backups/ and .streamlit/secrets.toml (Strava keys) live here
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)

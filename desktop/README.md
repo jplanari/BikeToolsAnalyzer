@@ -27,6 +27,8 @@ Closing the window (or the browser tab, if the app had to use the browser) ends 
 came from the internet, and the native window cannot load them. The app now removes that mark itself on start. If it
 still happens, unblock the whole folder once in PowerShell: `Get-ChildItem -Recurse "C:\path\to\BikeToolsAnalyzer" | Unblock-File`.
 
+**Saving reports.** In the desktop app the PDF reports have a *💾 Save as…* button that opens the system's own Save dialog (Windows common dialog, macOS AppleScript, `zenity`/`kdialog` on Linux) and writes the file where you choose. If the system has no dialog the usual download button is shown. In a browser the download button is always used.
+
 **Linux native window:** Qt needs one system library on Ubuntu/Debian 22.04+: `sudo apt install libxcb-cursor0`. Without it
 (or without any window backend) the app opens in your browser instead.
 
