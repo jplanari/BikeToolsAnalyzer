@@ -34,6 +34,7 @@ from src.viz.bikes import choose_ride_bike
 from src.analysis.bikes import bike_physics, label as bike_label
 from src.viz import timeseries as ts
 from src.analysis import balance as bal
+from src.viz.save_file import file_button
 from src.i18n import t, mark, tr
 from src.i18n import session as i18n_session
 
@@ -297,8 +298,7 @@ def _render_report_expander(df, summary, settings, filename, total_dist, total_a
                 st.session_state['ride_report_pdf'] = (ride_id, build_ride_report_pdf(data), thermal is not None)
         ready = st.session_state.get('ride_report_pdf')
         if ready and ready[0] == ride_id:
-            st.download_button(t("⬇️ Download PDF"), ready[1], mime="application/pdf",
-                               file_name=f"ride-report-{filename.rsplit('.', 1)[0]}.pdf", key="ride_report_dl")
+            file_button(ready[1], f"ride-report-{filename.rsplit('.', 1)[0]}.pdf", key="ride_report_dl")
             if not ready[2]:
                 st.caption(t("The thermal chart is left out: run the thermal simulation above first, then create the report again."))
 

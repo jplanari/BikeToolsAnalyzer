@@ -20,6 +20,7 @@ from src.viz.sections import section_picker, remembered
 from src.viz.deeper_analytics import render_deeper_analytics
 from src.analysis.labels import (PERIODS, period_start, dur_label, ramp_status, acwr_status, form_status,
                                  monotony_status, tid_label)
+from src.viz.save_file import file_button
 from src.i18n import t, fdate, mark, tr
 
 def _theme():
@@ -88,8 +89,7 @@ def _report_expander(user_name, today):
             st.session_state["report_pdf"] = (key, pdf)
         ready = st.session_state.get("report_pdf")
         if ready and ready[0] == key:
-            st.download_button(t("⬇️ Download PDF"), ready[1], mime="application/pdf",
-                               file_name=f"training-report-{user_name}-{today:%Y-%m-%d}.pdf", key="report_dl")
+            file_button(ready[1], f"training-report-{user_name}-{today:%Y-%m-%d}.pdf", key="report_dl")
         elif ready:
             st.caption(t("Period or user changed: create the report again."))
 
