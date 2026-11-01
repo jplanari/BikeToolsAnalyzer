@@ -174,6 +174,10 @@ def migrate_db():
             _add_column(c, 'rides', col, typ)
         # Carbohydrate burned in the ride (g), estimated from power (src/analysis/nutrition.py); NULL = no power
         _add_column(c, 'rides', 'carb_g', 'REAL')
+        # What the rider logged for the ride (src/analysis/nutrition.py): carbohydrate eaten (g) and fluid drunk (ml).
+        # NULL = not logged, 0 = logged as nothing. Entered by the rider, so never touched by a metrics update.
+        _add_column(c, 'rides', 'carb_eaten_g', 'REAL')
+        _add_column(c, 'rides', 'fluid_ml', 'REAL')
         c.execute('''
             CREATE TABLE IF NOT EXISTS bikes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

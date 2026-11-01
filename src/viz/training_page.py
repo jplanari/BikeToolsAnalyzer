@@ -14,6 +14,7 @@ from src.analysis import power_profile as pp
 from src.analysis import durability as du
 from src.analysis import intensity as it
 from src.analysis import nutrition as nut
+from src.data.db import set_ride_fuel as db_set_ride_fuel
 from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
@@ -546,3 +547,93 @@ def _render_fuel(user_name, user, today, mode):
     st.caption(t("Heaviest {freq}: {when:%d %b %Y}, {kcal:,.0f} kcal.", freq=tr(freq).lower(), when=heaviest, kcal=per['kcal'].max()))
     st.caption(t("Carbohydrate guide for riding: about 30–60 g/h on rides of 1–2 h, 60–90 g/h beyond 3 h, nothing extra "
                  "under 45 minutes. Guidance, not dietary advice. Each ride's own guide is on its Ride Summary."))
+    _render_intake(user_name, stats, mode)
+
+
+def _render_intake(user_name, stats, mode):
+    """What was eaten: a table to log it for recent rides, and what the logs show."""
+    st.subheader(t("What you ate"))
+    st.caption(t("Log the carbohydrate eaten (and the fluid drunk) on a ride to compare it with what the ride burned and "
+                 "with the guide. You can also log it on each ride's Summary."))
+    _intake_editor(stats)
+    totals = nut.intake_totals(stats)
+    if not totals['logged']:
+        st.info(t("No logs yet in this period. Fill in the table above for the rides where you took fuel."))
+        return
+    c = st.columns(4)
+    c[0].metric(t("Rides logged"), f"{totals['logged']} / {totals['eligible']}",
+                help=t("Rides long enough to need fuel (over about 45 minutes) that have a carbohydrate log."))
+    c[1].metric(t("Intake rate"), f"{totals['rate_g_h']:.0f} g/h" if totals['rate_g_h'] is not None else t("N/A"))
+    c[2].metric(t("Burned carbohydrate replaced"), f"{totals['coverage']:.0%}" if totals['coverage'] is not None else t("N/A"),
+                help=t("Carbohydrate eaten as a share of the estimated amount burned, over the logged rides."))
+    c[3].metric(t("Below the guide"), f"{totals['below']} / {totals['logged']}",
+                help=t("Logged rides where the intake per hour was under the low end of the guide for that ride."))
+    per = nut.intake_by_period(stats, 'W')
+    if not per.empty:
+        _chart(tp.plot_intake(per, t("Carbohydrate (g)"), mode))
+    _render_fade(stats, mode)
+
+
+def _intake_editor(stats, rows=12):
+    """Editable table of the most recent rides that need fuel; writes the changed rows to the database."""
+    if stats is None or stats.empty or 'carb_eaten_g' not in stats.columns:
+        return
+    ifs = stats['if_factor'] if 'if_factor' in stats.columns else pd.Series(float('nan'), index=stats.index)
+    keep = [nut.target_rate(m, i)[1] > 0 for m, i in zip(stats['moving_s'].fillna(0), ifs)]
+    recent = stats[keep].sort_values('date', ascending=False).head(rows)
+    if recent.empty:
+        return
+    frame = pd.DataFrame({
+        'ride_id': recent['ride_id'].to_numpy(),
+        t("Date"): [fdate(d, '%d %b %Y') for d in recent['date']],
+        t("Ride"): [(f or '')[:28] for f in recent['filename']],
+        t("Hours"): (recent['moving_s'].fillna(0) / 3600.0).round(1).to_numpy(),
+        t("Burned (g)"): recent['carb_g'].round(0).to_numpy(),
+        t("Eaten (g)"): recent['carb_eaten_g'].to_numpy(),
+        t("Fluid (ml)"): recent['fluid_ml'].to_numpy(),
+    })
+    eaten_col, fluid_col = t("Eaten (g)"), t("Fluid (ml)")
+    edited = st.data_editor(
+        frame, hide_index=True, use_container_width=True, key="fuel_log_editor",
+        disabled=['ride_id', t("Date"), t("Ride"), t("Hours"), t("Burned (g)")],
+        column_config={'ride_id': None,
+                       eaten_col: st.column_config.NumberColumn(eaten_col, min_value=0, max_value=1500, step=10),
+                       fluid_col: st.column_config.NumberColumn(fluid_col, min_value=0, max_value=20000, step=100)})
+    changed = []
+    for (_, old), (_, new) in zip(frame.iterrows(), edited.iterrows()):
+        if not (_same(old[eaten_col], new[eaten_col]) and _same(old[fluid_col], new[fluid_col])):
+            changed.append((int(new['ride_id']), new[eaten_col], new[fluid_col]))
+    if changed and st.button(t("Save changes ({n})", n=len(changed)), key="fuel_log_save"):
+        failed = [db_set_ride_fuel(i, e, f) for i, e, f in changed]
+        bad = [m for ok, m in failed if not ok]
+        if bad:
+            st.error(t("Could not save: {message}", message="; ".join(bad)))
+        else:
+            st.rerun()
+
+
+def _same(a, b):
+    return (pd.isna(a) and pd.isna(b)) or (not pd.isna(a) and not pd.isna(b) and float(a) == float(b))
+
+
+def _render_fade(stats, mode):
+    """Rides with and without enough fuel, compared on how much power and heart rate drifted apart."""
+    cmp = nut.fade_comparison(stats)
+    if cmp is None:
+        return
+    st.markdown("**" + t("Fuel and fading") + "**")
+    u, f = cmp['under'], cmp['fuelled']
+    if cmp['enough']:
+        st.write(t("On long, steady rides (90 minutes or more) with a log, the ones where you took in at least the low end "
+                   "of the guide ({nf} rides) ended with an aerobic decoupling of **{df:.1f} %**; the ones below it "
+                   "({nu} rides) with **{du:.1f} %**. Lower is steadier.",
+                   nf=f['n'], df=f['decoupling'], nu=u['n'], du=u['decoupling']))
+        if cmp['rho'] is not None:
+            st.caption(t("Rank correlation between intake rate and decoupling: {rho:+.2f}.", rho=cmp['rho']))
+    else:
+        st.info(t("Needs at least {need} long, steady rides with a log on each side of the guide to compare. So far: "
+                  "{nu} below it, {nf} at or above it.", need=nut.MIN_FADE_RIDES, nu=u['n'], nf=f['n']))
+    _chart(tp.plot_intake_vs_fade(cmp['rides'], mode))
+    st.caption(t("An observation across your own rides, not an experiment: heat, intensity, sleep and fitness differ from "
+                 "ride to ride. Controlled studies find performance rising with carbohydrate intake up to about 60–80 g/h "
+                 "(see References)."))

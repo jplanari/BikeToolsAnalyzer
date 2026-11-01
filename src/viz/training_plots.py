@@ -139,6 +139,38 @@ def plot_energy(per, label, mode='light'):
     return _layout(fig, None, label, pal, hovermode='x unified', barmode='stack')
 
 
+def plot_intake(per, label, mode='light'):
+    """Carbohydrate burned (estimated) next to the carbohydrate eaten (logged) per period, grouped bars."""
+    pal = palette(mode)
+    fig = go.Figure()
+    if per is None or per.empty:
+        return fig
+    for name, col, colour in ((t('Burned (estimated)'), 'burned_g', pal['series'][0]), (t('Eaten (logged)'), 'eaten_g', pal['series'][1])):
+        fig.add_trace(go.Bar(x=per.index, y=per[col], name=name, marker_color=colour,
+                             hovertemplate='%{y:,.0f} g<extra>' + name + '</extra>'))
+    return _layout(fig, None, label, pal, hovermode='x unified', barmode='group')
+
+
+def plot_intake_vs_fade(rides, mode='light'):
+    """Intake rate against aerobic decoupling for long steady rides, fuelled (at or above the low end of the guide)
+    and under-fuelled in two colours; the vertical axis is how far power and HR drifted apart."""
+    pal = palette(mode)
+    fig = go.Figure()
+    if rides is None or rides.empty:
+        return fig
+    fuelled = rides['rate_g_h'] >= rides['guide_low']
+    for name, mask, colour in ((t('Fuelled'), fuelled, pal['series'][1]), (t('Below the guide'), ~fuelled, pal['series'][0])):
+        r = rides[mask]
+        if r.empty:
+            continue
+        fig.add_trace(go.Scatter(x=r['rate_g_h'], y=r['decoupling_pct'], mode='markers', name=name,
+                                 marker=dict(size=9, color=colour, line=dict(width=1, color=pal['grid'])),
+                                 hovertemplate='%{x:.0f} g/h · %{y:.1f} %<extra>' + name + '</extra>'))
+    fig.add_hline(y=5, line=dict(color=pal['muted'], width=1, dash='dot'))
+    return _layout(fig, None, t('Aerobic decoupling (%)'), pal, x_title=t('Carbohydrate eaten (g/h)'),
+                   hovermode='closest')
+
+
 # --- Power profile -----------------------------------------------------------
 
 _TICKS = dict(tickvals=[1, 5, 15, 60, 300, 1200, 3600, 18000],

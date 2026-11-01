@@ -173,3 +173,142 @@ def totals(stats):
     return {'kcal': float(p['kcal'].sum()), 'carb_g': carb if carb > 0 else None,
             'carb_pct': float(p['carb_g'].sum() * CARB_KCAL_PER_G / kcal_c * 100) if kcal_c > 0 else None,
             'rides': int(p['rides'].sum()), 'hours': float(p['hours'].sum())}
+
+
+# =====================================================================================================================
+# What was eaten (logged by the rider)
+# =====================================================================================================================
+# Per ride the rider can log grams of carbohydrate eaten and millilitres of fluid drunk. Next to the estimate of what
+# the ride burned (above) this gives the intake rate, how much of the carbohydrate burned was replaced, and a look at
+# whether rides with and without enough fuel end differently. The last one is an observation across rides, not an
+# experiment: heat, intensity, sleep and fitness all differ from ride to ride.
+
+INTAKES = {
+    'below': mark('Below the guide'),
+    'on': mark('Within the guide'),
+    'above': mark('Above the guide'),
+    'none': mark('No fuel needed'),
+}
+MIN_FADE_RIDES = 4                           # rides in each group before the comparison says anything
+FADE_MIN_MINUTES = 90                        # long enough for fuel to matter and for decoupling to be meaningful
+INTAKE_KEYS = ('carb_eaten_g', 'fluid_ml')
+
+
+def intake_rate(amount, moving_s):
+    """Amount per hour of moving time (g/h of carbohydrate, ml/h of fluid), or None."""
+    if amount is None or pd.isna(amount) or not moving_s or moving_s <= 0:
+        return None
+    return float(amount) / (moving_s / 3600.0)
+
+
+def intake_status(rate, moving_s, intensity_factor=None):
+    """Key into INTAKES: where a carbohydrate intake rate (g/h) sits against the guide for the ride, or None."""
+    if rate is None or pd.isna(rate):
+        return None
+    low, high = target_rate(moving_s, intensity_factor)
+    if high == 0:
+        return 'none'
+    return 'below' if rate < low else 'above' if rate > high else 'on'
+
+
+def coverage(eaten_g, burned_g):
+    """Share of the carbohydrate burned that was eaten (can pass 1), or None."""
+    if eaten_g is None or burned_g is None or pd.isna(eaten_g) or pd.isna(burned_g) or burned_g <= 0:
+        return None
+    return float(eaten_g) / float(burned_g)
+
+
+def ride_intake(summary, eaten_g, fluid_ml=None, weight_kg=None):
+    """What a ride's log says: {'carb_rate', 'fluid_rate', 'coverage', 'status', 'net_g', 'store_used'}; every value
+    None for what cannot be worked out. `summary` has moving_time_s, carb_g and optionally 'if'."""
+    moving = summary.get('moving_time_s')
+    rate = intake_rate(eaten_g, moving)
+    burned = summary.get('carb_g')
+    return {'carb_rate': rate, 'fluid_rate': intake_rate(fluid_ml, moving),
+            'coverage': coverage(eaten_g, burned),
+            'status': intake_status(rate, moving, summary.get('if')),
+            'net_g': None if burned is None or eaten_g is None else float(burned) - float(eaten_g),
+            'store_used': store_used(burned, weight_kg, eaten_g or 0.0)}
+
+
+def logged_rides(stats):
+    """The rides with a carbohydrate log, with what it implies: stats rows plus rate_g_h, guide_low, guide_high,
+    status and coverage. Empty when nothing was logged."""
+    if stats is None or stats.empty or 'carb_eaten_g' not in stats.columns:
+        return pd.DataFrame()
+    s = stats[stats['carb_eaten_g'].notna() & (stats['moving_s'].fillna(0) > 0)].copy()
+    if s.empty:
+        return s
+    ifs = s['if_factor'] if 'if_factor' in s.columns else pd.Series(np.nan, index=s.index)
+    s['rate_g_h'] = [intake_rate(e, m) for e, m in zip(s['carb_eaten_g'], s['moving_s'])]
+    guides = [target_rate(m, i) for m, i in zip(s['moving_s'], ifs)]
+    s['guide_low'], s['guide_high'] = [g[0] for g in guides], [g[1] for g in guides]
+    s['status'] = [intake_status(r, m, i) for r, m, i in zip(s['rate_g_h'], s['moving_s'], ifs)]
+    burned = s['carb_g'] if 'carb_g' in s.columns else pd.Series(np.nan, index=s.index)
+    s['coverage'] = [coverage(e, b) for e, b in zip(s['carb_eaten_g'], burned)]
+    return s
+
+
+def intake_totals(stats):
+    """Numbers for a period: rides that needed fuel (guide above zero), how many of them were logged and how they
+    went. {'eligible', 'logged', 'rate_g_h', 'coverage', 'below', 'on', 'above'}."""
+    out = {'eligible': 0, 'logged': 0, 'rate_g_h': None, 'coverage': None, 'below': 0, 'on': 0, 'above': 0}
+    if stats is None or stats.empty or 'moving_s' not in stats.columns:
+        return out
+    ifs = stats['if_factor'] if 'if_factor' in stats.columns else pd.Series(np.nan, index=stats.index)
+    out['eligible'] = int(sum(1 for m, i in zip(stats['moving_s'].fillna(0), ifs) if target_rate(m, i)[1] > 0))
+    s = logged_rides(stats)
+    s = s[s['guide_high'] > 0] if not s.empty else s
+    if s.empty:
+        return out
+    out['logged'] = len(s)
+    out['rate_g_h'] = float(s['carb_eaten_g'].sum() / (s['moving_s'].sum() / 3600.0))
+    cov = s.dropna(subset=['carb_g'])
+    out['coverage'] = coverage(cov['carb_eaten_g'].sum(), cov['carb_g'].sum()) if len(cov) else None
+    for k in ('below', 'on', 'above'):
+        out[k] = int((s['status'] == k).sum())
+    return out
+
+
+def intake_by_period(stats, freq='W'):
+    """Carbohydrate burned and eaten per week ('W') or month ('M') over the rides that have a log:
+    DataFrame(burned_g, eaten_g, rides) indexed by period start; empty when nothing was logged."""
+    s = logged_rides(stats)
+    cols = ['burned_g', 'eaten_g', 'rides']
+    if s.empty:
+        return pd.DataFrame(columns=cols)
+    s = s.dropna(subset=['carb_g'])
+    if s.empty:
+        return pd.DataFrame(columns=cols)
+    dates = pd.to_datetime(s['date'])
+    dates = dates.dt.tz_localize(None) if getattr(dates.dt, 'tz', None) is not None else dates
+    g = s.set_index(dates.dt.normalize()).assign(rides=1).resample(
+        'W-MON' if freq == 'W' else 'MS', label='left', closed='left').agg(
+        {'carb_g': 'sum', 'carb_eaten_g': 'sum', 'rides': 'sum'})
+    g = g[g['rides'] > 0]
+    return pd.DataFrame({'burned_g': g['carb_g'], 'eaten_g': g['carb_eaten_g'], 'rides': g['rides'].astype(int)})
+
+
+def fade_comparison(stats, min_minutes=FADE_MIN_MINUTES):
+    """Do long, steady rides with enough fuel end differently from those without? Compares the aerobic decoupling
+    (power-to-HR drift between the halves; lower is steadier) of rides taken in at or above the low end of the
+    guide with those below it. {'under', 'fuelled'} each {'n', 'decoupling'}, 'difference' (fuelled minus under, in
+    points), 'rho' (Spearman, intake rate against decoupling), 'enough' (both groups have MIN_FADE_RIDES rides) and
+    'rides' (the rows used). None when no ride qualifies."""
+    s = logged_rides(stats)
+    if s.empty or 'decoupling_pct' not in s.columns:
+        return None
+    m = ((s['moving_s'] >= min_minutes * 60) & s['decoupling_pct'].notna() & (s['guide_high'] > 0)
+         & (s['vi'].fillna(99) <= 1.10))
+    r = s[m]
+    if r.empty:
+        return None
+    fuelled = r['rate_g_h'] >= r['guide_low']
+    group = lambda x: {'n': int(len(x)), 'decoupling': float(x['decoupling_pct'].mean()) if len(x) else None}
+    under, ok = group(r[~fuelled]), group(r[fuelled])
+    enough = under['n'] >= MIN_FADE_RIDES and ok['n'] >= MIN_FADE_RIDES
+    rho = float(r['rate_g_h'].corr(r['decoupling_pct'], method='spearman')) if len(r) >= 2 * MIN_FADE_RIDES else None
+    if rho is not None and np.isnan(rho):
+        rho = None
+    diff = ok['decoupling'] - under['decoupling'] if enough else None
+    return {'under': under, 'fuelled': ok, 'difference': diff, 'rho': rho, 'enough': enough, 'rides': r}

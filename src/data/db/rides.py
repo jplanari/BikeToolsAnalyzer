@@ -281,6 +281,36 @@ def get_user_rides(user_name):
         r['start_local'] = None if pd.isna(stamp) else stamp.isoformat()        # the rider's own clock, naive
     return out
 
+MAX_CARB_EATEN_G, MAX_FLUID_ML = 1500.0, 20000.0       # a typo guard, not a physiological limit
+
+
+def set_ride_fuel(ride_id, carb_eaten_g, fluid_ml):
+    """Stores what the rider ate and drank on a saved ride: grams of carbohydrate and millilitres of fluid. None
+    clears a value (not logged); 0 means "nothing". Returns (ok, message)."""
+    values = []
+    for name, v, top in (("carbohydrate", carb_eaten_g, MAX_CARB_EATEN_G), ("fluid", fluid_ml, MAX_FLUID_ML)):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            values.append(None)
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return False, f"{name}: not a number"
+        if not 0 <= v <= top:
+            return False, f"{name}: {v:g} is outside 0-{top:g}"
+        values.append(v)
+    with connect() as conn:
+        done = conn.execute("UPDATE rides SET carb_eaten_g = ?, fluid_ml = ? WHERE id = ?", (*values, ride_id)).rowcount
+    return (True, "") if done else (False, "ride not found")
+
+
+def get_ride_fuel(ride_id):
+    """(carbohydrate eaten g, fluid ml) logged for a ride; (None, None) when nothing was logged."""
+    with connect() as conn:
+        row = conn.execute("SELECT carb_eaten_g, fluid_ml FROM rides WHERE id = ?", (ride_id,)).fetchone()
+    return (row[0], row[1]) if row else (None, None)
+
+
 def get_ride_file(ride_id):
     """(filename, original file bytes) of a stored ride, or (None, None)."""
     with connect() as conn:

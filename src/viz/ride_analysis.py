@@ -137,8 +137,9 @@ def process_and_display_analysis(file_obj, user_name, settings):
     # Detect Climbs
     detected_climbs = climbs
 
+    stored = get_ride_bike(user_name, file_bytes) if user_name else None       # saved above: its id logs the fuelling
     _render_sections(df, summary, settings, file_obj.name, total_dist, total_ascent, detected_climbs, laps_df,
-                     lap_spans, p_comps, user_name)
+                     lap_spans, p_comps, user_name, db_ride_id=stored[0] if stored else None)
 
 
 # Only the chosen section is drawn (and its charts built); a fragment, so switching section does not re-run the
@@ -152,7 +153,7 @@ def _fragment(func):
 
 @_fragment
 def _render_sections(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, lap_spans, p_comps,
-                     user_name):
+                     user_name, db_ride_id=None):
     ride_id = _thermal_ride_id(df)
     has_power = 'power' in df.columns and df['power'].notna().any()
     sections = [mark("📊 Summary"), mark("📈 Time series"), mark("⚡ Power")]
@@ -164,7 +165,8 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     section = section_picker(sections, key=f"ride_section_{ride_id}")
 
     if section == "📊 Summary":
-        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=settings.get('weight'))
+        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=settings.get('weight'),
+                        db_ride_id=db_ride_id, user_name=user_name)
         _render_report_expander(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, user_name)
     elif section == "📈 Time series":
         _render_time_series(df)
@@ -179,7 +181,8 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
         render_segment_analysis(df, settings, lap_spans, climbs, ride_id=ride_id)
 
 
-def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=None):
+def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=None, db_ride_id=None,
+                    user_name=None):
     duration_s = summary['duration_s']
     avg_speed = summary['avg_speed_kph']
     avg_power = summary['avg_power']
@@ -227,7 +230,7 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals."))
     
     if summary.get('carb_g') is not None:
-        render_fuel_summary(summary, weight)
+        render_fuel_summary(summary, weight, ride_id=db_ride_id, user_name=user_name)
 
     if summary.get('bal_right_pct') is not None:
         _render_balance_summary(summary)
