@@ -6,12 +6,14 @@ Desktop launcher: starts the Streamlit server on a free local port and shows it 
 Your data lives in a per-user folder (BIKETOOLS_DATA overrides it), never next to the program, so the app can
 be updated or moved without touching the database, the ride files or the backups.
 """
+import json
 import multiprocessing
 import os
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import webbrowser
@@ -83,6 +85,56 @@ def server_command(port):
     return base + ["--server", str(port)]
 
 
+STATUS_FILE = "status.json"
+WATCH_INTERVAL_S = 2
+IDLE_POLLS_BEFORE_QUIT = 30            # about a minute without any open page, after one had been open
+
+
+def active_sessions():
+    """How many pages are connected to the server right now (None when Streamlit cannot tell)."""
+    try:
+        from streamlit.runtime import Runtime
+        return int(Runtime.instance()._session_mgr.num_active_sessions())
+    except Exception:
+        return None
+
+
+def watch_sessions(folder, count=active_sessions, interval=WATCH_INTERVAL_S, idle_polls=IDLE_POLLS_BEFORE_QUIT,
+                   quit_now=lambda: os._exit(0)):
+    """Runs in the server: writes how many pages are open to status.json (so the launcher can tell that a window
+    really showed the app, whatever process it belongs to) and ends the server once the last page has been closed
+    for about a minute, so closing the window (or the browser tab) really quits the program.
+    BIKETOOLS_KEEP_RUNNING=1 keeps the server running regardless."""
+    seen, idle = False, 0
+    while True:
+        time.sleep(interval)
+        n = count()
+        try:
+            with open(os.path.join(folder, STATUS_FILE), "w") as fh:
+                json.dump({"sessions": n, "time": time.time()}, fh)
+        except OSError:
+            pass
+        if n:
+            seen, idle = True, 0
+        elif seen and n == 0:
+            idle += 1
+            if idle >= idle_polls and not os.environ.get("BIKETOOLS_KEEP_RUNNING"):
+                quit_now()
+                return
+
+
+def read_sessions(folder=None, max_age_s=10):
+    """Pages connected according to the server's status.json, or None when it is missing or stale."""
+    try:
+        with open(os.path.join(folder or data_dir(), STATUS_FILE)) as fh:
+            status = json.load(fh)
+        if time.time() - float(status["time"]) <= max_age_s:
+            return status["sessions"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def run_server(port):
     """Runs Streamlit in this process (blocking). The database and backups go to the data folder."""
     if FROZEN or sys.stdout is None:
@@ -102,6 +154,11 @@ def run_server(port):
     }
     for key, value in options.items():          # bootstrap.run(flag_options=...) alone leaves the defaults in place
         config.set_option(key, value, "desktop launcher")
+    try:
+        os.remove(os.path.join(folder, STATUS_FILE))
+    except OSError:
+        pass
+    threading.Thread(target=watch_sessions, args=(folder,), daemon=True).start()
     bootstrap.run(os.path.join(ROOT, "app.py"), False, [], flag_options=options)
 
 
@@ -189,12 +246,32 @@ def tell(message):
         print(message)
 
 
+def unblock_downloaded_files(folders):
+    """Windows marks files that came from a download (a zip from GitHub) as blocked, and .NET then refuses to load
+    the DLLs the native window needs ("Failed to resolve Python.Runtime.Loader.Initialize"). Removing the mark is
+    what 'Unblock' in a file's properties does. Returns how many files were unblocked."""
+    if sys.platform != "win32":
+        return 0
+    count = 0
+    for folder in folders:
+        for here, _, names in os.walk(folder):
+            for name in names:
+                if name.lower().endswith((".dll", ".pyd", ".exe")):
+                    try:
+                        os.remove(os.path.join(here, name) + ":Zone.Identifier")
+                        count += 1
+                    except OSError:
+                        pass                       # no mark on this file (the usual case), or not allowed
+    return count
+
+
 def show_window(url):
     """Runs the native window in this process (blocking until it is closed).
     On Windows the Edge WebView2 engine is required: without it pywebview would quietly fall back to the old
     Internet Explorer engine, which cannot show Streamlit, so asking for it makes that case an error instead
     and the launcher moves on to the next kind of window. The window keeps its cookies and local storage
     in the data folder between runs."""
+    unblock_downloaded_files([os.path.join(ROOT, n) for n in ("pythonnet", "clr_loader", "webview")])
     import webview
     webview.create_window("BikeTools Analyzer", url, width=1400, height=900, min_size=(900, 600))
     kwargs = {"private_mode": False, "storage_path": os.path.join(data_dir(), "webview")}
@@ -222,8 +299,6 @@ def open_window(url, log=None):
 #    not depend on the default browser or on the browser's open windows.
 # 3. The default browser, as a last resort.
 # BIKETOOLS_WINDOW = auto (default) | webview | app | browser forces one of them.
-
-APP_WINDOW_MIN_S = 3         # an app window that "closes" sooner than this never really opened
 
 
 def _windows_browsers():
@@ -259,21 +334,51 @@ def app_window_command(browser, url, profile_dir):
             "--no-default-browser-check", "--disable-features=Translate", "--disable-session-crashed-bubble"]
 
 
-def open_app_window(url, log=None):
+APP_WINDOW_WAIT_S = 30       # how long the app window may take to show the page
+APP_WINDOW_GONE_S = 45       # no page connected for this long: the window was closed
+
+
+def open_app_window(url, log=None, sessions=None):
     """Shows the app in a Chromium app window (blocking until it is closed). False when there is no such browser or
-    the window did not stay open."""
+    no page ever connected. It does not rely on the browser process staying alive: Edge and Chrome may hand the
+    window to another process and exit, so a page connecting to the server is what proves the window is there, and
+    the page going away is what says it was closed."""
+    sessions = sessions or read_sessions
     browser = find_app_browser()
     if not browser:
+        print("No Chromium-based browser found for an app window (Edge, Chrome, Chromium, Brave).", file=sys.stderr)
         return False
     profile = os.path.join(data_dir(), "app-window")
     os.makedirs(profile, exist_ok=True)
     started = time.time()
     try:
-        code = subprocess.call(app_window_command(browser, url, profile), stdout=log, stderr=log,
-                               stdin=subprocess.DEVNULL)
-    except OSError:
+        proc = subprocess.Popen(app_window_command(browser, url, profile), stdout=log, stderr=log,
+                                stdin=subprocess.DEVNULL)
+    except OSError as e:
+        print(f"Could not start {browser}: {e}", file=sys.stderr)
         return False
-    return code == 0 and time.time() - started >= APP_WINDOW_MIN_S
+    connected = False
+    while time.time() - started < APP_WINDOW_WAIT_S:
+        if sessions():
+            connected = True
+            break
+        if proc.poll() is not None and time.time() - started > 3:
+            break
+        time.sleep(0.5)
+    if not connected:
+        print(f"{os.path.basename(browser)} showed no page within {time.time() - started:.0f} s "
+              f"(exit code {proc.poll()}).", file=sys.stderr)
+        if proc.poll() is None:
+            proc.terminate()
+        return False
+    last_seen = time.time()
+    while time.time() - last_seen < APP_WINDOW_GONE_S:    # until no page has been connected for a while
+        if sessions():
+            last_seen = time.time()
+        time.sleep(1)
+    if proc.poll() is None:                              # Edge may stay in the background after its window closed
+        proc.terminate()
+    return True
 
 
 def window_modes():
