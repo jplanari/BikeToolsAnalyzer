@@ -39,13 +39,13 @@ def _overview(df, i0, i1):
                                fill='tozeroy', fillcolor='rgba(200,200,200,0.2)', hoverinfo='skip'))
     sel = df.iloc[i0:i1 + 1]
     fig.add_trace(go.Scatter(x=x.iloc[i0:i1 + 1], y=sel['ele'], mode='lines', line=dict(color='#d62728', width=3),
-                             name='Selection', hoverinfo='skip'))
+                             name=t('Selection'), hoverinfo='skip'))
     step = max(1, len(df) // MAX_SELECT_POINTS)                  # invisible markers: Plotly reports a box selection
     fig.add_trace(go.Scatter(x=x.iloc[::step], y=df['ele'].iloc[::step], mode='markers', hoverinfo='skip',
                              marker=dict(size=8, opacity=0), showlegend=False,
                              selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0))))
     fig.update_layout(height=200, margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
-                      xaxis_title="Distance (km)" if 'dist_m' in df.columns else "Minutes", yaxis_title="m",
+                      xaxis_title=t("Distance (km)") if 'dist_m' in df.columns else t("Minutes"), yaxis_title=t("m"),
                       dragmode="select", selectdirection="h")     # a horizontal drag picks a stretch of the route
     rng = elevation_range(df['ele'])
     if rng:
@@ -77,8 +77,8 @@ def _channels(df, i0, i1):
     """Power, heart rate, speed and cadence along the selection (the ones the file has)."""
     seg = df.iloc[i0:i1 + 1]
     x = seg['dist_m'] / 1000.0 if 'dist_m' in seg.columns else pd.Series(np.arange(len(seg)) / 60.0, index=seg.index)
-    spec = [('power', 'Power (W)', '#1f77b4'), ('hr', 'HR (bpm)', '#d62728'),
-            ('speed_kmh', 'Speed (km/h)', '#2ca02c'), ('cadence', 'Cadence (rpm)', '#9467bd')]
+    spec = [('power', t('Power (W)'), '#1f77b4'), ('hr', t('HR (bpm)'), '#d62728'),
+            ('speed_kmh', t('Speed (km/h)'), '#2ca02c'), ('cadence', t('Cadence (rpm)'), '#9467bd')]
     have = [s for s in spec if s[0] in seg.columns and seg[s[0]].notna().any()]
     if not have:
         return None
@@ -88,7 +88,7 @@ def _channels(df, i0, i1):
         fig.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color=color, width=1.5), name=title), row=r, col=1)
         fig.update_yaxes(title_text=title, row=r, col=1)
     fig.update_layout(height=170 * len(have) + 40, margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
-    fig.update_xaxes(title_text="Distance (km)" if 'dist_m' in seg.columns else "Minutes", row=len(have), col=1)
+    fig.update_xaxes(title_text=t("Distance (km)") if 'dist_m' in seg.columns else t("Minutes"), row=len(have), col=1)
     return fig
 
 

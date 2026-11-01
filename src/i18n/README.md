@@ -45,5 +45,6 @@ st.radio(t("Section"), sections, format_func=tr)        # tr(): translates at di
 ```
 
 Spanish and Catalan are complete (every string translated) but still `"released": false` until a native
-speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Not yet translated: chart titles and
-axis labels, PDFs, the weekly e-mail body, and month/day names produced by `strftime`.
+speaker has reviewed them; set `BIKETOOLS_I18N_PREVIEW=1` to try them. Chart titles, axis titles, trace names and
+annotations are covered (the scanner checks Plotly calls). Not yet translated: PDFs, table column headers, the weekly
+e-mail body, and month/day names produced by `strftime`.

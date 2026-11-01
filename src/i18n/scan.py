@@ -31,6 +31,11 @@ WIDGETS = {"markdown", "write", "caption", "subheader", "header", "title", "info
            "form_submit_button", "text_area", "popover", "toast", "segmented_control", "pills", "select_slider",
            "link_button", "page_link", "sidebar_header", "set_page_config", "remembered"}
 TEXT_KEYWORDS = {"help", "label", "placeholder", "caption", "title"}
+# Plotly: chart titles, axis titles, trace names and annotations are text too (only these keywords, never the data)
+PLOT_CALLS = {"update_layout", "update_xaxes", "update_yaxes", "add_hline", "add_vline", "add_annotation", "Scatter",
+              "Scattergl", "Layout", "add_hrect", "add_vrect", "Bar", "Heatmap", "Pie", "Histogram", "Box", "Violin", "Indicator", "Scatterpolar"}
+PLOT_KEYWORDS = {"title", "title_text", "xaxis_title", "yaxis_title", "yaxis2_title", "xaxis2_title", "name",
+                 "annotation_text", "legend_title_text"}
 TRANSLATE = {"t", "tn", "mark"}
 
 
@@ -54,7 +59,9 @@ def _call_name(node):
 def text_args(node):
     """The arguments of a widget call that carry text: the first (for remembered(), the fourth: widget, key, default,
     label) and the label, help, placeholder and caption keywords."""
-    first = node.args[3:4] if _call_name(node) == "remembered" else node.args[:1]
+    plot = _call_name(node) in PLOT_CALLS
+    first = [] if plot else node.args[3:4] if _call_name(node) == "remembered" else node.args[:1]
+    keywords = PLOT_KEYWORDS if plot else TEXT_KEYWORDS
     out = []
 
     def flatten(arg):                              # "a" if cond else "b": both branches are text
@@ -63,7 +70,7 @@ def text_args(node):
             flatten(arg.orelse)
         else:
             out.append(arg)
-    for arg in list(first) + [k.value for k in node.keywords if k.arg in TEXT_KEYWORDS]:
+    for arg in list(first) + [k.value for k in node.keywords if k.arg in keywords]:
         flatten(arg)
     return out
 
@@ -107,7 +114,7 @@ def scan_file(path):
             for a in args[:need]:
                 wrapped_nodes.add(id(a))
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _call_name(node) not in WIDGETS or _call_name(node) in TRANSLATE:
+        if not isinstance(node, ast.Call) or _call_name(node) not in WIDGETS | PLOT_CALLS or _call_name(node) in TRANSLATE:
             continue
         candidates = text_args(node)
         for arg in candidates:

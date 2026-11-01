@@ -356,7 +356,7 @@ def _render_time_series(df):
         return
     default = [c for c in ("Power",) if c in channels] or channels[:1]
     chosen = remembered(st.multiselect, "ts_channels", default, t("Channels under the elevation profile"),
-                        options=channels, max_selections=6)
+                        options=channels, max_selections=6, format_func=tr)
     st.caption(t('Smoothed with a {smoothing_s} s moving average. Drag or scroll to zoom along the route (the '
                     'vertical scales stay whole), double-click to reset.', smoothing_s=ts.SMOOTHING_S))
     st.plotly_chart(ts.build_figure(df, [x for x in chosen if x in channels]),
@@ -393,7 +393,7 @@ def _render_aero(df, settings, p_comps):
 
     st.subheader(t("CdA estimate"))
     if 'cda' in df.columns:
-        show_centered(plot_x_time(df, 'cda', 'CdA estimate (m²)'))
+        show_centered(plot_x_time(df, 'cda', t('CdA estimate (m²)')))
     else:
         st.info(t("No CdA data available."))
 
@@ -437,7 +437,7 @@ def _render_power(df, settings, current_curve, user_name):
     if 'power' in df.columns and settings['ftp']:
         zones = coggan_zones(settings['ftp'])
         times = time_in_zones(df['power'], zones)
-        fig = plot_zone_distribution(times, "Power Zones")
+        fig = plot_zone_distribution(times, t("Power Zones"))
         if fig: c1.plotly_chart(fig, use_container_width=True)
 
     active_lthr = settings['lthr']
@@ -447,7 +447,7 @@ def _render_power(df, settings, current_curve, user_name):
 
     if 'hr' in df.columns and active_lthr:
         times = time_in_hr_zones(df['hr'], active_lthr)
-        fig = plot_zone_distribution(times, "Heart Rate Zones")
+        fig = plot_zone_distribution(times, t("Heart Rate Zones"))
         if fig: c2.plotly_chart(fig, use_container_width=True)
 
 
@@ -498,10 +498,10 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
             # X-Axis: Distance in km
             if 'dist_m' in df.columns:
                 x_data = df['dist_m'] / 1000.0
-                x_label = "Distance (km)"
+                x_label = t("Distance (km)")
             else:
                 x_data = thermal_df.index
-                x_label = "Index"
+                x_label = t("Index")
 
             # Y-Axis 2: Elevation (Handle naming variations)
             if 'ele' in thermal_df.columns:
@@ -521,7 +521,7 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=ele_data,
-                name="Elevation (m)",
+                name=t("Elevation (m)"),
                 line=dict(width=1, color='gray'),
                 fill='tozeroy',
                 fillcolor='rgba(128, 128, 128, 0.2)', # Transparent gray
@@ -531,31 +531,31 @@ def _render_thermal_analysis(df, user_weight, user_height, ftp=None):
 
             # 2. Optimal & Heat Stress Zones (Background Bands)
             # We add these first so the line draws ON TOP
-            fig.add_hrect(y0=36, y1=37, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Optimal")
-            fig.add_hrect(y0=38.5, y1=42.0, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Heat Stress")
+            fig.add_hrect(y0=36, y1=37, fillcolor="green", opacity=0.1, line_width=0, annotation_text=t("Optimal"))
+            fig.add_hrect(y0=38.5, y1=42.0, fillcolor="red", opacity=0.1, line_width=0, annotation_text=t("Heat Stress"))
 
             # 3. Core Temperature (Main Line)
             fig.add_trace(go.Scatter(
                 x=x_data, 
                 y=thermal_df['core_temp'],
-                name="Core Temp (°C)",
+                name=t("Core Temp (°C)"),
                 line=dict(color='firebrick', width=3),
                 yaxis='y1'
             ))
             
             # Layout
             fig.update_layout(
-                title="Body Core Temperature",
+                title=t("Body Core Temperature"),
                 xaxis=dict(title=x_label),
                 # Left Axis: Temperature
                 yaxis=dict(
-                    title="Core Temperature (°C)", 
+                    title=t("Core Temperature (°C)"), 
                     range=[35.5, 40.0],
                     showgrid=True
                 ),
                 # Right Axis: Elevation
                 yaxis2=dict(
-                    title="Elevation (m)", 
+                    title=t("Elevation (m)"), 
                     overlaying='y', 
                     side='right', 
                     showgrid=False

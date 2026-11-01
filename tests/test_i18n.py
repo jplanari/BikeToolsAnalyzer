@@ -297,3 +297,33 @@ def test_keeps_language_restores_it_in_a_fragment_rerun(monkeypatch):
     session.keeps_language(lambda: seen.append(current_language()))()
     assert seen == ["es"]
     set_language("en")
+
+
+def test_scanner_finds_untranslated_chart_labels(tmp_path):
+    import ast
+    from src.i18n import scan
+    src = ("import plotly.graph_objects as go\n"
+           "from src.i18n import t\n"
+           "fig = go.Figure()\n"
+           "fig.add_trace(go.Scatter(x=[1], y=[1], name='Power'))\n"
+           "fig.update_layout(title=t('Done'), yaxis_title='Watts')\n")
+    f = tmp_path / "chart.py"
+    f.write_text(src)
+    translated, untranslated, problems = scan.scan_file(f)
+    assert [u[2] for u in untranslated] == ["Power", "Watts"]
+    assert [x[1] for x in translated] == ["Done"]
+
+
+def test_plot_labels_follow_the_language():
+    import pandas as pd
+    from src.i18n import set_language, tr
+    from src.viz import timeseries as ts
+    df = pd.DataFrame({"dist_m": [0, 1000, 2000], "ele": [10, 20, 15], "power": [100, 200, 150]})
+    set_language("ca")
+    try:
+        assert ts._x(df)[1] == "Distància (km)"
+        assert tr("Elevation (m)") == "Desnivell positiu (m)"
+        assert tr("Power") == "Potència"
+    finally:
+        set_language("en")
+    assert ts._x(df)[1] == "Distance (km)"

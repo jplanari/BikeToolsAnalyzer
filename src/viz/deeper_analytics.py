@@ -87,13 +87,13 @@ def render_deeper_analytics(user_name, user_data):
                 st.caption(t('Deltas compare with {lab_b}.', lab_b=lab_b))
 
             curve_a = co.mean_y_by_power(hr_a)
-            st.plotly_chart(plot_joint_heatmap(co.aggregate(hr_a), 5, "Heart rate (bpm, 30 s avg)",
-                                               f"Time at power × heart rate · {lab_a}", overlay=curve_a),
+            st.plotly_chart(plot_joint_heatmap(co.aggregate(hr_a), 5, t("Heart rate (bpm, 30 s avg)"),
+                                               t("Time at power × heart rate · {lab_a}", lab_a=lab_a), overlay=curve_a),
                             use_container_width=True)
             curves = {lab_a: curve_a}
             if compare and hr_b is not None and not hr_b.empty:
                 curves[lab_b] = co.mean_y_by_power(hr_b)
-            st.plotly_chart(plot_y_by_power(curves, "Average HR (bpm)", "Heart rate at each power"),
+            st.plotly_chart(plot_y_by_power(curves, t("Average HR (bpm)"), t("Heart rate at each power")),
                             use_container_width=True)
             st.caption(t("If this curve moves **down** between periods, you are producing the same power "
                        "at a lower heart rate: the clearest sign of improving aerobic fitness."))
@@ -101,7 +101,7 @@ def render_deeper_analytics(user_name, user_data):
             hr_all = pd.concat([x for x in [hr_b, hr_a] if x is not None and not x.empty])
             weekly_hr = co.weekly(hr_all, lambda g: co.y_at_power(g, ref_p, min_seconds=180))
             if len(weekly_hr) >= 2:
-                st.plotly_chart(plot_trend({hr_label: weekly_hr}, "bpm",
+                st.plotly_chart(plot_trend({hr_label: weekly_hr}, t("bpm"),
                                            t("Weekly heart rate at {ref_p} W", ref_p=ref_p)), use_container_width=True)
 
     # ---- Power vs cadence ----
@@ -138,8 +138,8 @@ def render_deeper_analytics(user_name, user_data):
                            "at the same cadence (often seen on climbs or with a big gear)."))
 
             cc1, cc2 = st.columns(2)
-            cc1.plotly_chart(plot_joint_heatmap(co.aggregate(cad_a), 5, "Cadence (rpm)",
-                                                f"Time at power × cadence · {lab_a}",
+            cc1.plotly_chart(plot_joint_heatmap(co.aggregate(cad_a), 5, t("Cadence (rpm)"),
+                                                t("Time at power × cadence · {lab_a}", lab_a=lab_a),
                                                 overlay=co.mean_y_by_power(cad_a, y_bin=5)),
                              use_container_width=True)
             cc2.plotly_chart(plot_cadence_by_zone(co.cadence_by_zone(cad_a, ftp)), use_container_width=True)
@@ -147,7 +147,7 @@ def render_deeper_analytics(user_name, user_data):
             if quads:
                 st.plotly_chart(plot_quadrants(co.aggregate(cad_a), ftp, ref_cad, crank_mm / 1000),
                                 use_container_width=True)
-                rows = [{"Quadrant": q, "Meaning": co.QUADRANT_NAMES[q], lab_a: f"{quads[q]:.0%}"} for q in quads]
+                rows = [{"Quadrant": q, "Meaning": tr(co.QUADRANT_NAMES[q]), lab_a: f"{quads[q]:.0%}"} for q in quads]
                 if quads_b:
                     for r in rows:
                         r[lab_b] = f"{quads_b[r['Quadrant']]:.0%}"
@@ -159,7 +159,7 @@ def render_deeper_analytics(user_name, user_data):
             cad_all = pd.concat([x for x in [cad_b, cad_a] if x is not None and not x.empty])
             weekly_cad = co.weekly(cad_all, lambda g: co.weighted_median_y(g) if g['seconds'].sum() >= 600 else None)
             if len(weekly_cad) >= 2:
-                st.plotly_chart(plot_trend({"Median cadence": weekly_cad}, "rpm", "Weekly median cadence"),
+                st.plotly_chart(plot_trend({t("Median cadence"): weekly_cad}, t("rpm"), t("Weekly median cadence")),
                                 use_container_width=True)
 
     # ---- Recovery & efficiency ----
@@ -192,14 +192,14 @@ def render_deeper_analytics(user_name, user_data):
                   help=t("Median power:HR drift on the same rides. Below ~5 % suggests solid aerobic endurance."))
 
         if hrr is not None and not hrr.empty:
-            st.plotly_chart(plot_trend({"HRR60": hrr.set_index('date')['hrr60_bpm']}, "bpm drop in 60 s",
-                                       "Heart-rate recovery after hard efforts", rolling=5),
+            st.plotly_chart(plot_trend({t("HRR60"): hrr.set_index('date')['hrr60_bpm']}, t("bpm drop in 60 s"),
+                                       t("Heart-rate recovery after hard efforts"), rolling=5),
                             use_container_width=True)
         else:
             st.info(t("No hard efforts followed by easy riding found (needs power + HR)."))
         if endu is not None and not endu.empty:
             st.plotly_chart(plot_trend({"EF": endu.set_index('date')['ef']}, "NP / HR",
-                                       "Efficiency factor on endurance rides", rolling=5),
+                                       t("Efficiency factor on endurance rides"), rolling=5),
                             use_container_width=True)
         else:
             st.info(t("No steady endurance rides (60+ min, VI ≤ 1.10, power + HR) in this period."))
