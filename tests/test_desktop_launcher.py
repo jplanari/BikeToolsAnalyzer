@@ -145,14 +145,99 @@ def test_the_app_browser_is_found_where_each_system_keeps_it(monkeypatch, tmp_pa
     assert launcher.find_app_browser() is None
 
 
-def test_an_app_window_that_never_stayed_open_does_not_count(monkeypatch):
+def _fast(monkeypatch):
     monkeypatch.setattr(launcher, "find_app_browser", lambda: "x")
     monkeypatch.setattr(launcher, "app_window_command", lambda *a: [sys.executable, "-c", "pass"])
-    assert launcher.open_app_window("http://127.0.0.1:1") is False        # closed at once: not a window
-    monkeypatch.setattr(launcher, "APP_WINDOW_MIN_S", 0)
-    assert launcher.open_app_window("http://127.0.0.1:1") is True
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+
+
+def test_an_app_window_that_never_connects_does_not_count(monkeypatch):
+    _fast(monkeypatch)
+    monkeypatch.setattr(launcher, "APP_WINDOW_WAIT_S", 1)
+    assert launcher.open_app_window("http://127.0.0.1:1", sessions=lambda: None) is False
     monkeypatch.setattr(launcher, "find_app_browser", lambda: None)
-    assert launcher.open_app_window("http://127.0.0.1:1") is False
+    assert launcher.open_app_window("http://127.0.0.1:1", sessions=lambda: 1) is False
+
+
+def test_an_app_window_counts_when_a_page_connects_even_if_the_browser_process_exits(monkeypatch):
+    """Edge and Chrome may hand the window to another process and exit at once: the page connecting is the proof."""
+    _fast(monkeypatch)
+    monkeypatch.setattr(launcher, "APP_WINDOW_GONE_S", 0.01)
+    monkeypatch.setattr(launcher.time, "time", iter([0, 0, 1, 1, 1, 100, 100, 100, 100]).__next__)
+    answers = iter([1, 1, 0, 0])
+    assert launcher.open_app_window("http://127.0.0.1:1", sessions=lambda: next(answers, 0)) is True
+
+
+def test_the_server_reports_open_pages_and_ends_after_the_last_one_closes(tmp_path):
+    counts = iter([None, 0, 2, 1, 0, 0, 0])               # unknown, nobody yet, two pages, one, then everyone left
+    ended = []
+
+    class Stop(Exception):
+        pass
+
+    def quit_now():
+        ended.append(True)
+        raise Stop
+
+    import time as real_time
+    original = launcher.time.sleep
+    launcher.time.sleep = lambda s: None
+    try:
+        with pytest.raises(Stop):
+            launcher.watch_sessions(str(tmp_path), count=lambda: next(counts), interval=0, idle_polls=3,
+                                    quit_now=quit_now)
+    finally:
+        launcher.time.sleep = original
+    assert ended == [True] and launcher.read_sessions(str(tmp_path)) == 0
+
+
+def test_the_server_never_quits_before_a_page_has_connected_or_when_asked_to_stay(tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher.time, "sleep", lambda s: None)
+    calls = iter([0, 0, 0, 0, 0, 0])
+
+    class Done(Exception):
+        pass
+
+    def count():
+        try:
+            return next(calls)
+        except StopIteration:
+            raise Done
+
+    with pytest.raises(Done):                              # idle from the start: never "seen", so never quits
+        launcher.watch_sessions(str(tmp_path), count=count, interval=0, idle_polls=2,
+                                quit_now=lambda: pytest.fail("quit"))
+    monkeypatch.setenv("BIKETOOLS_KEEP_RUNNING", "1")
+    calls2 = iter([1, 0, 0, 0, 0])
+
+    def count2():
+        try:
+            return next(calls2)
+        except StopIteration:
+            raise Done
+
+    with pytest.raises(Done):
+        launcher.watch_sessions(str(tmp_path), count=count2, interval=0, idle_polls=2,
+                                quit_now=lambda: pytest.fail("quit"))
+
+
+def test_stale_or_missing_status_means_unknown(tmp_path):
+    assert launcher.read_sessions(str(tmp_path)) is None
+    (tmp_path / "status.json").write_text('{"sessions": 3, "time": %f}' % launcher.time.time())
+    assert launcher.read_sessions(str(tmp_path)) == 3
+    (tmp_path / "status.json").write_text('{"sessions": 3, "time": 1}')
+    assert launcher.read_sessions(str(tmp_path)) is None
+
+
+def test_unblocking_downloaded_files_only_touches_windows_and_marked_files(tmp_path, monkeypatch):
+    (tmp_path / "a.dll").write_text("")
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert launcher.unblock_downloaded_files([str(tmp_path)]) == 0
+    monkeypatch.setattr(sys, "platform", "win32")
+    removed = []
+    monkeypatch.setattr(launcher.os, "remove", lambda path: removed.append(path) if path.endswith(":Zone.Identifier") else None)
+    assert launcher.unblock_downloaded_files([str(tmp_path)]) == 1
+    assert removed == [str(tmp_path / "a.dll") + ":Zone.Identifier"]
 
 
 def test_window_modes_follow_the_setting(monkeypatch):
