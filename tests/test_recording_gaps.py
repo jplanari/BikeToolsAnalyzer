@@ -103,5 +103,5 @@ def test_period_coverage_explains_empty_analytics(temp_db):
     df = pd.DataFrame({'time': pd.date_range('2026-10-01', periods=60, freq='1s')})
     db.save_ride("Rider", "old.gpx", b"a", db.build_ride_metadata(df, 1000, 0, 20, 0, 0, 0), {})
     cov = db.period_coverage("Rider", "2026-09-01", "2026-10-31")
-    assert cov == {'rides': 1, 'needs_update': 1, 'p_hr': 0, 'p_cad': 0}
+    assert cov == {'rides': 1, 'needs_update': 1, 'p_hr': 0, 'p_cad': 0, 'p_bal': 0}
     assert db.period_coverage("Rider", "2026-01-01", "2026-01-31")['rides'] == 0

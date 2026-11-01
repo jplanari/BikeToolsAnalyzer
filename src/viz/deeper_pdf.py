@@ -6,6 +6,7 @@ power x heart rate, power x cadence, recovery and efficiency.
 import numpy as np
 import pandas as pd
 
+from src.analysis import balance as bal
 from src.analysis import correlations as co
 from src.viz.report_pdf import (INK, LEFT, PAL, RIGHT, SERIES, SOFT, _axes, _dates, _empty, _fmt, _legend,
                                 _new_page, _note, _style, _table, _tile_row)
@@ -167,5 +168,54 @@ def _page_recovery(d):
     return fig
 
 
+def _page_balance(d):
+    fig = _new_page(t('Deeper analytics: left / right balance'), _label(d['start'], d['end']))
+    b = d['balance']
+    share, prev = b['right'], b['right_prev']
+    _tile_row(fig, 0.895, [
+        (t('Left / right split'), bal.split_text(share, 1) or '–', _delta(share, prev, '+.1f')),
+        (t('Time within 48–52 %'), _fmt(b['even'], '.0%'), _delta(b['even'] and b['even'] * 100,
+                                                                    b['even_prev'] and b['even_prev'] * 100, '+.0f', ' pp')),
+        (t('Right leg per +100 W'), _fmt(b['slope'], '+.1f', ' pts'), ''),
+    ], cols=3)
+    fig.text(LEFT, 0.80, t('Time at power × right-leg share (minutes)'), fontsize=9.5, fontweight='bold', color=INK, va='top')
+    ax = _axes(fig, 0.775, 0.2, LEFT, 0.55)
+    _heatmap(ax, b['cells'], 2, t('Right leg (%)'), b['curve'])
+    ax.axhline(50, color=PAL['muted'], lw=0.7, ls='--')
+    fig.text(0.63, 0.80, t('Split by power zone'), fontsize=9.5, fontweight='bold', color=INK, va='top')
+    ax = _axes(fig, 0.775, 0.2, 0.63, RIGHT)
+    z = b['by_zone']
+    _style(ax, None, t('Right leg (%)'))
+    if z is not None and not z.empty:
+        ax.bar(z['zone'], z['right'] - 50, bottom=50, color=SERIES[0], width=0.6)
+        for x, v, s in zip(z['zone'], z['right'], z['share']):
+            ax.text(x, v, f"{v:.1f}\n{s:.0%}", ha='center', va='bottom', fontsize=6.5, color=INK)
+        ax.axhline(50, color=PAL['muted'], lw=0.7, ls='--')
+        span = max(6.0, float((z['right'] - 50).abs().max()) + 2)
+        ax.set_ylim(50 - span, 50 + span)
+    else:
+        _empty(ax, t('No data.'))
+    fig.text(LEFT, 0.535, t('Weekly left / right balance'), fontsize=9.5, fontweight='bold', color=INK, va='top')
+    ax = _axes(fig, 0.51, 0.2, LEFT, 0.55)
+    _trend(ax, {t('Right leg (%)'): b['weekly'] if len(b['weekly']) >= 2 else None}, t('Right leg (%)'))
+    ax.axhline(50, color=PAL['muted'], lw=0.7, ls='--')
+    fig.text(0.63, 0.535, t('Balance drift within rides'), fontsize=9.5, fontweight='bold', color=INK, va='top')
+    ax = _axes(fig, 0.51, 0.2, 0.63, RIGHT)
+    _trend(ax, {t('Last third minus first third'): b['drift'] if len(b['drift']) >= 2 else None}, t('points'))
+    ax.axhline(0, color=PAL['muted'], lw=0.7, ls='--')
+    if b['avg_power'] and share is not None:
+        left_w, right_w = bal.leg_watts(b['avg_power'], share)
+        fig.text(LEFT, 0.275, t('At an average pedalling power of {avg:.0f} W: about {left:.0f} W from the left leg and '
+                               '{right:.0f} W from the right.', avg=b['avg_power'], left=left_w, right=right_w),
+                 fontsize=8.5, color=INK, va='top')
+    _note(fig, 0.075, t("Share of the work done by each leg, weighted by power; 50 is an even split and most riders sit "
+                      "within 48–52 %. Worth watching: a split that changes with fatigue, intensity or cadence. "
+                      "A training aid, not medical advice."))
+    return fig
+
+
 def deeper_figures(data):
-    return [_page_hr(data), _page_cadence(data), _page_recovery(data)]
+    pages = [_page_hr(data), _page_cadence(data), _page_recovery(data)]
+    if data.get('balance'):
+        pages.append(_page_balance(data))
+    return pages

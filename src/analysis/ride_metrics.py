@@ -126,6 +126,7 @@ def training_stress(norm_power, duration_s, ftp, hr_series, lthr, moving=None):
 POWER_BIN_W = 10
 HR_BIN_BPM = 5
 CAD_BIN_RPM = 5
+BAL_BIN_PCT = 2          # left/right balance: width of a bin of the right leg's share (percentage points)
 # HR lags changes in power by tens of seconds: pairing raw 1 s samples blurs
 # the relationship, so both channels are smoothed before pairing.
 PAIR_SMOOTH_S = 30
@@ -140,7 +141,8 @@ def _hist2d(x, y, x_bin, y_bin):
 
 def joint_histograms(df, moving=None):
     """
-    {'p_hr': {(power_bin, hr_bin): s}, 'p_cad': {(power_bin, cadence_bin): s}}
+    {'p_hr': {(power_bin, hr_bin): s}, 'p_cad': {(power_bin, cadence_bin): s},
+     'p_bal': {(power_bin, right_leg_pct_bin): s}, 'c_bal': {(cadence_bin, right_leg_pct_bin): s}}  (the last two only with balance)
     - p_hr: 30 s smoothed power and HR, moving and pedalling (raw power > 0,
       smoothed power >= 10 W)
     - p_cad: raw 1 s samples while pedalling (power > 0 and cadence > 0)
@@ -166,6 +168,18 @@ def joint_histograms(df, moving=None):
         m = mov & ~np.isnan(p) & ~np.isnan(c) & (p > 0) & (c > 0)
         if m.any():
             out['p_cad'] = _hist2d(p[m], c[m], POWER_BIN_W, CAD_BIN_RPM)
+
+    # Left/right balance (dual-sided power meters only): the right leg's share against power and against cadence
+    if has('power') and has('lr_balance'):
+        p, b = _clean(df['power']), _clean(df['lr_balance'])
+        m = mov & ~np.isnan(p) & ~np.isnan(b) & (p > 0)
+        if m.any():
+            out['p_bal'] = _hist2d(p[m], b[m], POWER_BIN_W, BAL_BIN_PCT)
+            if has('cadence'):
+                c = _clean(df['cadence'])
+                mc = m & ~np.isnan(c) & (c > 0)
+                if mc.any():
+                    out['c_bal'] = _hist2d(c[mc], b[mc], CAD_BIN_RPM, BAL_BIN_PCT)
     return out
 
 

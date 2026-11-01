@@ -165,6 +165,13 @@ def migrate_db():
             _add_column(c, 'rides', col, typ)
         # the bike a ride was done on: NULL = not chosen (the rider's default bike), 0 = the generic bike
         _add_column(c, 'rides', 'bike_id', 'INTEGER')
+        # Left/right balance (dual-sided power meters): right leg's share in %, power-weighted, over the whole ride
+        # and over its first / last third; seconds of pedalling with balance; torque effectiveness and pedal
+        # smoothness (%) per leg. All NULL when the ride has none.
+        for col, typ in [("bal_right_pct", "REAL"), ("bal_first_pct", "REAL"), ("bal_last_pct", "REAL"),
+                         ("bal_s", "INTEGER"), ("te_l", "REAL"), ("te_r", "REAL"), ("ps_l", "REAL"),
+                         ("ps_r", "REAL")]:
+            _add_column(c, 'rides', col, typ)
         c.execute('''
             CREATE TABLE IF NOT EXISTS bikes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,7 +203,7 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS ride_hist (
                 ride_id INTEGER NOT NULL,
-                pair TEXT NOT NULL,          -- 'p_hr' (power x HR) or 'p_cad' (power x cadence)
+                pair TEXT NOT NULL,          -- 'p_hr' (power x HR), 'p_cad' (power x cadence), 'p_bal' / 'c_bal' (power / cadence x right-leg %)
                 x INTEGER NOT NULL,          -- lower edge of the power bin (W)
                 y INTEGER NOT NULL,          -- lower edge of the HR (bpm) / cadence (rpm) bin
                 seconds INTEGER NOT NULL,

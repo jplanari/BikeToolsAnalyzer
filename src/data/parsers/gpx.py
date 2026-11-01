@@ -269,7 +269,7 @@ def resample_to_seconds(df):
     df_resampled[cols_to_interp] = df_resampled[cols_to_interp].interpolate(method='time', limit=30)
 
     # 3. Effort channels: carry across short gaps only
-    for col in ['power', 'cadence', 'speed']:
+    for col in ['power', 'cadence', 'speed', 'lr_balance', 'te_l', 'te_r', 'ps_l', 'ps_r']:   # last five: dual-sided pedals
         if col in df_resampled.columns:
             filled = pd.to_numeric(df_resampled[col], errors='coerce').interpolate(
                 method='time', limit_area='inside')

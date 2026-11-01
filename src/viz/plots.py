@@ -670,6 +670,73 @@ def plot_cadence_by_zone(table):
     return fig
 
 
+def _balance_axis(fig, values, title, axis='y'):
+    """Right-leg share axis: centred on 50 with the 'even' band (48-52) shaded, wide enough for the data."""
+    vals = [v for v in values if v == v]
+    span = max([abs(v - 50) for v in vals] + [6]) + 2
+    fig.add_hrect(y0=50 - 2, y1=50 + 2, fillcolor='rgba(0,158,115,0.12)', line_width=0)
+    fig.add_hline(y=50, line=dict(color='gray', dash='dash', width=1))
+    fig.update_yaxes(range=[50 - span, 50 + span], title_text=title)
+    return fig
+
+
+def plot_balance_by_power(curves, title):
+    """curves: {label: DataFrame(power, mean)} -> the right leg's share at each power, one line per period."""
+    fig = go.Figure()
+    colors = ['#1f77b4', '#aaaaaa']
+    values = []
+    for i, (label, c) in enumerate(curves.items()):
+        if c is None or c.empty:
+            continue
+        values += list(c['mean'])
+        fig.add_trace(go.Scatter(x=c['power'], y=c['mean'], mode='lines+markers', name=label,
+                                 line=dict(color=colors[i % 2], width=3 if i == 0 else 2,
+                                           dash='solid' if i == 0 else 'dash')))
+    fig.update_layout(title=title, xaxis_title=t("Power (W)"), template="plotly_white", hovermode="x unified",
+                      legend=dict(orientation="h", y=1.12))
+    return _balance_axis(fig, values, t("Right leg (%)"))
+
+
+def plot_balance_by_cadence(table):
+    """DataFrame(cadence, mean) -> the right leg's share at each cadence."""
+    fig = go.Figure()
+    if table is None or table.empty:
+        return fig
+    fig.add_trace(go.Scatter(x=table['cadence'], y=table['mean'], mode='lines+markers',
+                             line=dict(color='#1f77b4', width=3), name=t("Right leg (%)")))
+    fig.update_layout(title=t("Balance at each cadence"), xaxis_title=t("Cadence (rpm)"),
+                      template="plotly_white", showlegend=False)
+    return _balance_axis(fig, list(table['mean']), t("Right leg (%)"))
+
+
+def plot_balance_by_zone(table):
+    """DataFrame(zone, right, share) -> bars from 50 % to the right leg's share in each power zone."""
+    fig = go.Figure()
+    if table is None or table.empty:
+        return fig
+    fig.add_trace(go.Bar(x=table['zone'], y=table['right'] - 50, base=50,
+                         text=[t("{left:.1f} / {right:.1f}<br>{share:.0%} of time", left=100 - r, right=r, share=s)
+                               for r, s in zip(table['right'], table['share'])],
+                         textposition='outside', marker_color='#1f77b4', cliponaxis=False,
+                         hovertemplate="%{x}: %{text}<extra></extra>"))
+    fig.update_layout(title=t("Left / right split by power zone"), template="plotly_white", showlegend=False)
+    return _balance_axis(fig, list(table['right']), t("Right leg (%)"))
+
+
+def plot_balance_trend(series_by_label, title, rolling=None):
+    """Right leg's share over time (per week or per ride), with the even band."""
+    fig = plot_trend(series_by_label, t("Right leg (%)"), title, rolling=rolling)
+    values = [v for s in series_by_label.values() if s is not None for v in s.values]
+    return _balance_axis(fig, values, t("Right leg (%)"))
+
+
+def plot_balance_drift(series, title):
+    """Per-ride change of the right leg's share between the first and last third of the ride (points)."""
+    fig = plot_trend({t("Last third minus first third"): series}, t("points"), title, rolling=5)
+    fig.add_hline(y=0, line=dict(color='gray', dash='dash', width=1))
+    return fig
+
+
 # Title, legend and plot area never overlap: every plot_* builder above returns a tidied figure.
 from src.viz.figstyle import tidy_builders  # noqa: E402
 tidy_builders(globals())

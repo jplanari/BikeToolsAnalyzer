@@ -5,6 +5,7 @@ so the weekly PDF and the screen agree.
 """
 import pandas as pd
 
+from src.analysis import balance as bal
 from src.analysis import correlations as co
 from src.data import db
 from src.i18n import t
@@ -27,6 +28,8 @@ def collect_deeper_data(user_name, start, end):
     hr_a, hr_b = db.get_hist(user_name, 'p_hr', a0, a1), db.get_hist(user_name, 'p_hr', b0, b1)
     cad_a, cad_b = db.get_hist(user_name, 'p_cad', a0, a1), db.get_hist(user_name, 'p_cad', b0, b1)
     stats = db.get_ride_stats(user_name, b0, a1)
+    bal_a, bal_b = db.get_hist(user_name, 'p_bal', a0, a1), db.get_hist(user_name, 'p_bal', b0, b1)
+    cbal_a = db.get_hist(user_name, 'c_bal', a0, a1)
     ref_p = int(round(0.65 * ftp / 5) * 5) if ftp else 150
 
     # --- power vs heart rate ---------------------------------------------------------------
@@ -70,5 +73,19 @@ def collect_deeper_data(user_name, start, end):
                 'decoupling': med(endu, 'decoupling_pct'), 'decoupling_prev': med(endu, 'decoupling_pct', False),
                 'hrr_series': hrr.set_index('date')['hrr60_bpm'] if hrr is not None and not hrr.empty else None,
                 'ef_series': endu.set_index('date')['ef'] if endu is not None and not endu.empty else None}
+    # --- left / right balance (dual-sided power meters only) -------------------------------
+    balance = None
+    if not bal_a.empty:
+        in_period = stats[(stats['date'] >= a0) & (stats['date'] < a1 + pd.Timedelta(days=1))] if not stats.empty else stats
+        bal_all = pd.concat([x for x in (bal_b, bal_a) if not x.empty])
+        share = bal.right_share(bal_a)
+        balance = {'right': share, 'right_prev': bal.right_share(bal_b) if not bal_b.empty else None,
+                   'even': bal.time_even(bal_a), 'even_prev': bal.time_even(bal_b) if not bal_b.empty else None,
+                   'spread': bal.spread(bal_a), 'slope': bal.intensity_slope(bal_a),
+                   'avg_power': bal.mean_power(bal_a), 'cells': co.aggregate(bal_a), 'curve': bal.by_power(bal_a),
+                   'curve_prev': bal.by_power(bal_b) if not bal_b.empty else None,
+                   'by_zone': bal.by_zone(bal_a, ftp), 'by_cadence': bal.by_cadence(cbal_a),
+                   'weekly': co.weekly(bal_all, lambda g: bal.right_share(g)),
+                   'drift': bal.ride_drift(in_period), 'pedal': bal.pedal_table(in_period)}
     return {'user': user, 'ftp': ftp, 'start': a0, 'end': a1, 'prev_start': b0, 'prev_end': b1,
-            'hr': hr, 'cadence': cad, 'recovery': recovery}
+            'hr': hr, 'cadence': cad, 'recovery': recovery, 'balance': balance}

@@ -15,6 +15,7 @@ CHANNELS = {
     mark("Cadence"): ("cadence", "rpm", "#CC79A7"),
     mark("Gradient"): ("grade_smooth", "%", "#E69F00"),
     "W′ balance": ("w_prime_balance", "J", "#56B4E9"),
+    mark("Right leg (%)"): ("lr_balance_30s", "%", "#882255"),
 }
 SMOOTHING_S = 5                  # moving-average window, seconds (samples at 1 Hz)
 MAX_POINTS = 3000
