@@ -284,9 +284,13 @@ def report(user, res, skipped):
         L += ["", f"Rides without a label (left out above): {res['types'].get('_unlabelled', 0)}.", ""]
         if len(types) == 2 and all(v['crossing'] is not None for v in types.values()):
             gap = types['solo']['crossing'] - types['group']['crossing']
+            cs, cg = types['solo']['ci'], types['group']['ci']
+            separate = bool(cs and cg and cs[0] > cg[1])
             L.append(f"Solo reaches 1 at {types['solo']['crossing']:.2f} and group at {types['group']['crossing']:.2f} "
                      f"(difference {gap:+.2f}). "
-                     + ("Solo rides need a clearly higher factor: drafting explains part of the gap."
+                     + ("The intervals do not overlap: solo rides need a higher factor, so drafting explains part of the gap."
+                        if separate and gap > MATERIAL else
+                        "The intervals overlap, so the difference is within the uncertainty of the data."
                         if gap > MATERIAL else
                         "No clear difference: drafting does not explain the gap."))
         if 'solo' in types and types['solo']['crossing'] is not None:

@@ -303,7 +303,7 @@ def test_sweep_separates_sheltered_group_rides_from_solo_rides(tmp_path):
     solo, group = res['types']['solo'], res['types']['group']
     assert solo['crossing'] == pytest.approx(0.7, abs=0.1) and group['crossing'] == pytest.approx(0.3, abs=0.1)
     text = ws.report("Ana", res, "")
-    assert "## Solo and group rides" in text and "drafting explains part of the gap" in text
+    assert "## Solo and group rides" in text and "do not overlap" in text and "drafting explains part of the gap" in text
     assert res['types']['_unlabelled'] == 0
 
 
