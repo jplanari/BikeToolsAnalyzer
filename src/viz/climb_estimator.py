@@ -66,8 +66,8 @@ def render_climb_estimator(df, climb, index, settings, ride_id):
     c = st.columns(5)
     mass = c[0].number_input("System weight (kg)", 30.0, 200.0, min(200.0, max(30.0, round(base['mass'], 1))), 0.5, key=k("mass"),
                              help="Rider + bike + clothing + bottles. Default: your profile weight + the bike chosen for this ride (8 kg if none).")
-    cda = c[1].number_input("CdA (m²)", 0.15, 0.70, round(base['cda'], 3), 0.005, format="%.3f", key=k("cda"),
-                            help="Default: this ride's average estimate if it had one, else 0.32. "
+    cda = c[1].number_input("CdA estimate (m²)", 0.15, 0.70, round(base['cda'], 3), 0.005, format="%.3f", key=k("cda"),
+                            help="Default: this ride's estimated CdA if it had one, else 0.32 (an estimate, see the aero tab). "
                                  "Climbing at low speed, so it matters less than weight.")
     crr = c[2].number_input("Rolling resistance (Crr)", 0.001, 0.020, base['crr'], 0.0005, format="%.4f",
                             key=k("crr"), help="0.003–0.004 good road tyres, 0.005 typical, 0.008+ rough or gravel.")
