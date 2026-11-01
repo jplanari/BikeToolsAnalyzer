@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import strava as sv
-from src.data import strava_import as si
+from src.data.providers import strava as sv
+from src.data.imports import strava_import as si
 
 
 CFG = sv.StravaConfig(client_id="1", client_secret="s", redirect_uri="http://localhost:8501/")
@@ -178,7 +178,7 @@ def test_filename_and_strava_id():
 def real_distances(monkeypatch):
     """When geographiclib is stubbed (local runs without it), use plain haversine."""
     from unittest.mock import MagicMock
-    from src.data import gpx
+    from src.data.parsers import gpx
     if isinstance(gpx.Geodesic, MagicMock):
         def hav(lat1, lon1, lat2, lon2):
             if np.isnan([lat1, lon1, lat2, lon2]).any():

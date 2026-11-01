@@ -3,9 +3,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data import db, fit, pipeline
-from src.data import strava as sv
-from src.data.gpx import resample_to_seconds
+from src.data import db
+from src.data.parsers import fit
+from src.data.processing import pipeline
+from src.data.providers import strava as sv
+from src.data.parsers.gpx import resample_to_seconds
 from tests.test_strava import activity, real_distances  # noqa: F401 (fixture)
 
 

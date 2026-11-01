@@ -124,9 +124,10 @@ The code is four layers. A module may import from the layers to its right, never
 \end{center}
 
 \begin{description}[style=nextline,leftmargin=1.2em]
-\item[\code{src/data}] Everything that is read or written: file parsers (\code{fit.py}, \code{gpx.py}, \code{tcx.py}),
-  service clients (\code{strava.py}, \code{wahoo.py}, \code{polar.py}), the SQLite layer (\code{db/}) and the
-  \emph{pipeline} (\code{pipeline.py}) that turns a file into a standard table and its summary numbers.
+\item[\code{src/data}] Everything that is read or written, in subpackages: file parsers (\code{parsers/}: \code{fit.py},
+  \code{gpx.py}, \code{tcx.py}), clients of the outside services (\code{providers/}: Strava, Wahoo, Polar, weather), import
+  workflows (\code{imports/}), the SQLite layer (\code{db/}), the \emph{pipeline} (\code{processing/pipeline.py}) that turns a
+  file into a standard table and its summary numbers, and the data behind the PDF reports and the weekly e-mail (\code{reports/}).
 \item[\code{src/analysis}] Pure functions: normalized power and TSS (\code{power.py}), per-ride quality metrics
   (\code{ride_metrics.py}), the performance management chart (\code{training_load.py}), power profile and critical
   power (\code{power_profile.py}), climbs, segments, correlations, workout building.
@@ -157,12 +158,12 @@ Path & Role\\
 \code{src/viz/sections.py} & Tab-like selector and \texttt{remembered()} widgets.\\
 \code{src/viz/theme.py} & Look (CSS), welcome page, help texts.\\
 \code{src/viz/report_pdf.py}, \code{ride_report_pdf.py} & PDF writers (matplotlib).\\
-\code{src/data/pipeline.py} & File $\rightarrow$ standard table $\rightarrow$ summary dict.\\
+\code{src/data/processing/pipeline.py} & File $\rightarrow$ standard table $\rightarrow$ summary dict.\\
 \code{src/data/db/} & Schema, migrations, every read and write.\\
 \code{src/data/cached.py} & Cached reads for the pages.\\
-\code{src/data/credentials.py} & Where service client IDs and secrets come from.\\
-\code{src/data/*_import.py} & Import workflows per source.\\
-\code{src/data/thresholds.py} & FTP and LTHR estimated from data.\\
+\code{src/data/providers/credentials.py} & Where service client IDs and secrets come from.\\
+\code{src/data/imports/*_import.py} & Import workflows per source.\\
+\code{src/data/processing/thresholds.py} & FTP and LTHR estimated from data.\\
 \code{desktop/} & Launcher and PyInstaller recipe for the packaged app.\\
 \code{docs/} & OAuth forwarding page, physics report, this guide.\\
 \code{tests/} & One test file per area.\\

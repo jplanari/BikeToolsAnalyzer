@@ -14,8 +14,8 @@ import pandas as pd
 from src.analysis import wahoo_plan as wp
 from src.analysis import workout as wo
 from src.data import db
-from src.data import wahoo as wh
-from src.data.wahoo_import import get_valid_auth
+from src.data.providers import wahoo as wh
+from src.data.imports.wahoo_import import get_valid_auth
 
 
 class SendError(Exception):

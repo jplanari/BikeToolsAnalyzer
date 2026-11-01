@@ -67,7 +67,7 @@ def backfill_hr20(user_name, limit=25):
     Returns how many rides were processed.
     """
     from src.analysis.hr import estimate_hr_threshold
-    from src.data.pipeline import prepare_ride          # imports streamlit
+    from src.data.processing.pipeline import prepare_ride          # imports streamlit
     rows = db.get_rides_without_hr20(user_name, limit)
     for ride_id, filename in rows:
         peak = 0.0

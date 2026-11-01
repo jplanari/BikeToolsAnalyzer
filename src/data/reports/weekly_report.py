@@ -11,7 +11,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from src.data import db, mailer
+from src.data import db
+from src.data.reports import mailer
 
 MAX_RIDES = 14                     # ride sections per report: keeps the PDF and the build time bounded
 
@@ -40,8 +41,8 @@ def week_rides(user_name, monday, sunday):
 def _with_weather(df, ride_id):
     """The ride with its weather, as on the ride page: the stored one, else fetched now and kept for next time.
     A ride whose weather cannot be had (offline, no GPS) is reported without wind, never failed."""
-    from src.data import weather
-    from src.data.gpx import calculate_bearing
+    from src.data.providers import weather
+    from src.data.parsers.gpx import calculate_bearing
     try:
         df['bearing'] = calculate_bearing(df)
         stored = db.get_ride_weather(ride_id)
@@ -58,9 +59,9 @@ def _ride_figures(user, ride):
     from src.analysis import power_profile as pp
     from src.analysis.climbs import detect_climbs
     from src.analysis.power import calculate_w_prime_balance
-    from src.data.history import ftp_used_for_ride
-    from src.data.pipeline import prepare_ride, summarize_ride
-    from src.data.ride_report_data import collect_ride_report
+    from src.data.processing.history import ftp_used_for_ride
+    from src.data.processing.pipeline import prepare_ride, summarize_ride
+    from src.data.reports.ride_report_data import collect_ride_report
     from src.viz.ride_report_pdf import ride_figures
 
     filename, content = db.get_ride_file(ride['id'])
@@ -108,8 +109,8 @@ def build_weekly_pdf(user_name, monday=None, sunday=None, today=None):
     Returns (pdf_bytes, summary dict). Raises ValueError for an unknown user. A ride that cannot be read is
     listed on the first page instead of stopping the report.
     """
-    from src.data.deeper_data import collect_deeper_data
-    from src.data.report_data import collect_report_data
+    from src.data.reports.deeper_data import collect_deeper_data
+    from src.data.reports.report_data import collect_report_data
     from src.viz.deeper_pdf import deeper_figures
     from src.viz.report_pdf import report_figures, write_pdf
 

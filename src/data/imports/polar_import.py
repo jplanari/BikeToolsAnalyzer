@@ -7,8 +7,8 @@ Polar only lists exercises from the last 30 days, so there is no history import:
 import pandas as pd
 
 from src.data import db
-from src.data import polar as pl
-from src.data.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
+from src.data.providers import polar as pl
+from src.data.imports.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
 
 
 def get_auth(user_name):
@@ -45,7 +45,7 @@ def sync_new_rides(user_name, ftp, progress=None, lthr=None):
     Imports every cycling exercise Polar lists that is not in the history yet. Idempotent. Returns ImportResult.
     A ride that starts within 2 minutes of one already saved (another source) is skipped.
     """
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage    # parsers import streamlit
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage    # parsers import streamlit
 
     res = ImportResult()
     auth = get_auth(user_name)

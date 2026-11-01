@@ -3,7 +3,8 @@ import pandas as pd
 import pytest
 import requests
 
-from src.data import db, weather
+from src.data import db
+from src.data.providers import weather
 from src.physics.aerodyn import get_air_density, _density, _wind_components
 
 
@@ -225,7 +226,7 @@ def test_stored_weather_needs_no_network(monkeypatch):
 
 
 def test_weekly_report_ride_gets_stored_weather(path, monkeypatch):
-    from src.data import weekly_report
+    from src.data.reports import weekly_report
     monkeypatch.setattr(weather.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("net")))
     db.save_user("ann", 70, 250, 180)
     with db.connect() as conn:

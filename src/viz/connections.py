@@ -1,7 +1,7 @@
 """Setting up the Strava / Wahoo / Polar API apps inside the app, instead of editing .streamlit/secrets.toml."""
 import streamlit as st
 
-from src.data import credentials as cr
+from src.data.providers import credentials as cr
 from src.data import db
 
 
@@ -14,7 +14,7 @@ def _secrets_section(provider):
 
 
 def get_credentials(provider):
-    """What the app uses for this provider (see src.data.credentials.resolve), or None when not set up."""
+    """What the app uses for this provider (see src.data.providers.credentials.resolve), or None when not set up."""
     return cr.resolve(provider, db.get_app_credentials(provider), _secrets_section(provider))
 
 

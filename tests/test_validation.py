@@ -82,8 +82,9 @@ def test_report_text_and_few_rides():
 
 
 def test_load_rides_from_the_database_end_to_end(temp_db, tmp_path):
-    from src.data import db, strava as sv
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from src.data import db
+    from src.data.providers import strava as sv
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     from tests.test_strava import make_streams, activity
     db.save_user("Rider")
     payload = sv.build_ride_payload(activity(7, "2026-09-07T07:00:00Z"), make_streams(n=1800))
@@ -236,7 +237,7 @@ def test_sweep_reports_the_ratio_after_removing_the_constant_term():
 
 def test_athlete_count_is_stored_only_when_strava_gave_it():
     import json
-    from src.data import strava as sv
+    from src.data.providers import strava as sv
     from tests.test_strava import make_streams, activity
     with_n = json.loads(sv.build_ride_payload(activity(1, athlete_count=6), make_streams(n=60)))
     without = json.loads(sv.build_ride_payload(activity(1), make_streams(n=60)))
@@ -335,8 +336,9 @@ def test_consistency_splits_by_ride_type_and_the_unlabelled_are_counted():
 
 
 def test_tags_flow_through_the_database_loader_and_the_cli_template(temp_db, tmp_path, capsys):
-    from src.data import db, strava as sv
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from src.data import db
+    from src.data.providers import strava as sv
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     from tests.test_strava import make_streams, activity
     db.save_user("Rider")
     payload = sv.build_ride_payload(activity(7, "2026-09-07T07:00:00Z", athlete_count=5), make_streams(n=1800))

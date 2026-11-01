@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from src.physics import aerodyn as ae
-from src.data.gpx import calculate_bearing
+from src.data.parsers.gpx import calculate_bearing
 
 G = ae.G
 
@@ -146,7 +146,7 @@ def test_bearing_is_stable_under_gps_jitter():
 
 @pytest.mark.parametrize("unit, factor", [("m/s", 1.0), ("km/h", 1 / 3.6)])
 def test_wind_is_converted_to_metres_per_second(monkeypatch, unit, factor):
-    from src.data import weather
+    from src.data.providers import weather
 
     asked = {}
 

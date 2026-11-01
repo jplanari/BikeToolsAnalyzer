@@ -254,9 +254,10 @@ def prepare_user_rides(user_name, since=None, fetch=False, progress=False):
     Heavy imports are local.
     """
     from src.analysis.bikes import bike_physics, label as bike_label
-    from src.data import db, weather
-    from src.data.gpx import calculate_bearing
-    from src.data.pipeline import prepare_ride
+    from src.data import db
+    from src.data.providers import weather
+    from src.data.parsers.gpx import calculate_bearing
+    from src.data.processing.pipeline import prepare_ride
 
     user = db.get_user_data(user_name)
     if not user:

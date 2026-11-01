@@ -8,7 +8,7 @@ from src.analysis import durability as du
 from src.analysis import intensity as it
 from src.analysis.power import MMP_DURATIONS
 from src.data import db
-from src.data import strava as sv
+from src.data.providers import strava as sv
 from tests.test_strava import make_streams, activity, real_distances  # noqa: F401 (fixture)
 
 
@@ -193,7 +193,7 @@ def temp_db(tmp_path, monkeypatch):
 
 
 def test_phase2_queries(temp_db):
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     payload = sv.build_ride_payload(activity(5, "2026-10-01T07:00:00Z"), make_streams(n=6000, power=250.0))
     df, dist, ele = prepare_ride("strava_5.json", payload)
     s = summarize_ride(df, 250, 170)

@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data import db, fit, pipeline, tcx, upload
-from src.data import upload_import as ui
+from src.data import db
+from src.data.parsers import fit, tcx, upload
+from src.data.processing import pipeline
+from src.data.imports import upload_import as ui
 
 FIT_HEADER = b"\x0e\x10\x00\x00\x10\x00\x00\x00.FIT\x00\x00"       # 14-byte header with the ".FIT" signature
 

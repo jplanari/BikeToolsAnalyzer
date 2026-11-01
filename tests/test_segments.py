@@ -119,7 +119,7 @@ def test_detected_climbs_become_selectable_spans():
 
 def test_lap_times_survive_missing_start_times():
     pytest.importorskip("fitparse")
-    from src.data.fit import lap_spans_from_messages
+    from src.data.parsers.fit import lap_spans_from_messages
     ts = pd.Timestamp("2026-10-01 08:10:00")
     spans = lap_spans_from_messages([
         {'start_time': pd.Timestamp("2026-10-01 08:00:00"), 'total_elapsed_time': 300.0},

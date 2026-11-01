@@ -18,16 +18,16 @@ from src.data.db import (save_user,
                          data_stamp)
 from src.viz import theme
 from src.viz.connections import get_credentials, setup_box
-from src.data.upload import expand_upload, UPLOAD_TYPES
-from src.data.upload_import import import_activities
-from src.data.thresholds import backfill_hr20, refresh_auto_thresholds
+from src.data.parsers.upload import expand_upload, UPLOAD_TYPES
+from src.data.imports.upload_import import import_activities
+from src.data.processing.thresholds import backfill_hr20, refresh_auto_thresholds
 from src.data.cached import get_user_data
-from src.data import strava as sv
-from src.data import wahoo as wh
-from src.data import wahoo_import as wi
-from src.data import polar as pl
-from src.data import polar_import as pi
-from src.data.strava_import import (list_recent_rides,
+from src.data.providers import strava as sv
+from src.data.providers import wahoo as wh
+from src.data.imports import wahoo_import as wi
+from src.data.providers import polar as pl
+from src.data.imports import polar_import as pi
+from src.data.imports.strava_import import (list_recent_rides,
                                     list_rides_between,
                                     fetch_ride_file,
                                     import_history,

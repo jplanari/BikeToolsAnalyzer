@@ -5,7 +5,7 @@ import pytest
 from src.analysis import ride_metrics as rm
 from src.analysis import correlations as co
 from src.data import db
-from src.data import strava as sv
+from src.data.providers import strava as sv
 from tests.test_strava import make_streams, activity, real_distances  # noqa: F401 (fixture)
 
 
@@ -133,7 +133,7 @@ def temp_db(tmp_path, monkeypatch):
 
 
 def _save_strava(aid, start, **kw):
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     payload = sv.build_ride_payload(activity(aid, start), make_streams(n=1800, **kw))
     df, dist, ele = prepare_ride(sv.ride_filename(aid), payload)
     summ = summarize_ride(df, 250, 170)
@@ -159,7 +159,7 @@ def test_histograms_stored_and_filtered_by_date(temp_db):
 
 
 def test_recompute_replaces_histograms(temp_db):
-    from src.data.history import recompute_history
+    from src.data.processing.history import recompute_history
     _save_strava(3, "2026-09-03T07:00:00Z")
     before = len(db.get_hist("Rider", 'p_hr'))
     recompute_history("Rider", 250, 170, all_rides=True)

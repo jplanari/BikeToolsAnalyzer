@@ -21,7 +21,7 @@ values; the real ones live in the user's data folder. The same applies to tokens
 
 \section{Step by step}
 
-\subsection*{1. The client: \texttt{src/data/acme.py}}
+\subsection*{1. The client: \texttt{src/data/providers/acme.py}}
 
 No Streamlit, no database. It holds the configuration, the errors, the OAuth calls and the API calls:
 
@@ -55,7 +55,7 @@ In \code{db/auth.py}, create \code{acme_auth} in \code{migrate_db} (copy \code{p
 \code{get_imported_acme_ids(user)} and \code{acme_id_from_filename} on the model of the Polar pair: the
 \emph{file name carries the service's activity ID}, which is how a repeated sync knows what it already has.
 
-\subsection*{3. The import workflow: \texttt{src/data/acme\_import.py}}
+\subsection*{3. The import workflow: \texttt{src/data/imports/acme\_import.py}}
 
 Functions the sidebar will call: \code{get_auth}, \texttt{connect}, \code{list_recent_rides},
 \code{fetch_ride_file}, \code{sync_new_rides}. The last returns the shared \texttt{ImportResult}

@@ -161,7 +161,7 @@ decision in it (a threshold, a colour rule), test the decision as a separate pur
 \section{Read a new file format}\label{rec:format}
 
 \begin{enumerate}
-\item \textbf{Parser.} Add \code{src/data/myformat.py} with \code{parse_myformat(file_bytes)} returning a DataFrame with
+\item \textbf{Parser.} Add \code{src/data/parsers/myformat.py} with \code{parse_myformat(file_bytes)} returning a DataFrame with
   at least a \texttt{time} column and, where available, \texttt{lat}, \texttt{lon}, \texttt{ele}, \texttt{power},
   \texttt{hr}, \texttt{cadence}, and \texttt{speed} in m/s. Look at \code{tcx.py}, the shortest example. Raise
   \texttt{ValueError} if the file holds no timestamped samples.

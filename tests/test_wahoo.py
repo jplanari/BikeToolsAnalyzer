@@ -4,9 +4,9 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import strava as sv
-from src.data import wahoo as wh
-from src.data import wahoo_import as wi
+from src.data.providers import strava as sv
+from src.data.providers import wahoo as wh
+from src.data.imports import wahoo_import as wi
 from tests.test_strava import (make_streams, real_distances, temp_db, FakeResponse,  # noqa: F401 (fixtures)
                                _upload_ride)
 
@@ -55,7 +55,7 @@ def fake_wahoo(monkeypatch):
     monkeypatch.setattr(wh, "list_workouts", fake_list)
     monkeypatch.setattr(wh, "get_workout", fake_detail)
     monkeypatch.setattr(wh, "download_fit", fake_download)
-    monkeypatch.setattr("src.data.pipeline.prepare_ride", fake_prepare)
+    monkeypatch.setattr("src.data.processing.pipeline.prepare_ride", fake_prepare)
     return calls
 
 
@@ -157,13 +157,13 @@ def test_scheduled_workout_without_a_file_is_counted_not_failed(connected, fake_
 
 
 def test_unparsable_file_is_reported_and_the_rest_continue(connected, fake_wahoo, monkeypatch):
-    good = __import__("src.data.pipeline", fromlist=["prepare_ride"]).prepare_ride
+    good = __import__("src.data.processing.pipeline", fromlist=["prepare_ride"]).prepare_ride
 
     def flaky(filename, payload):
         if filename == "wahoo_10.fit":
             raise ValueError("no timestamped samples")
         return good(filename, payload)
-    monkeypatch.setattr("src.data.pipeline.prepare_ride", flaky)
+    monkeypatch.setattr("src.data.processing.pipeline.prepare_ride", flaky)
     res = wi.import_history(CFG, "Rider", date(2026, 8, 1), ftp=250)
     assert res.imported == 2 and len(res.failed) == 1 and "wahoo_10" not in db.get_imported_wahoo_ids("Rider")
 

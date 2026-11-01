@@ -28,7 +28,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
     Rebuilds outdated rides (or all of them). Returns (n_updated, [failures]).
     progress: optional callback(done, total).
     """
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # imports streamlit
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # imports streamlit
 
     rows = db.get_rides_for_recompute(user_name, all_rides=all_rides)
     if rows:

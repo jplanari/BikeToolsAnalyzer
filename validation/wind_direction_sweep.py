@@ -25,7 +25,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from src.data import weather
+from src.data.providers import weather
 from src.physics import aerodyn as ae
 from validation import cda_consistency as cc
 from validation import ride_types

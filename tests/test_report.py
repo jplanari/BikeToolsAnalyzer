@@ -4,9 +4,9 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import strava as sv
-from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
-from src.data.report_data import collect_report_data
+from src.data.providers import strava as sv
+from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+from src.data.reports.report_data import collect_report_data
 from src.viz.report_pdf import build_report_pdf
 from tests.test_strava import make_streams, activity, real_distances  # noqa: F401 (fixture)
 

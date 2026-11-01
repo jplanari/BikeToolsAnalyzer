@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from src.data import db
-from src.data import strava as sv
+from src.data.providers import strava as sv
 
 # Ride starts closer than this to an existing ride are treated as the same
 # ride (e.g. already uploaded as a GPX/FIT file), so TSS isn't counted twice.
@@ -111,7 +111,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
 
     progress: optional callback(done, total, activity_name).
     """
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # parsers import streamlit
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # parsers import streamlit
 
     usage = usage or sv.RateUsage()
     res = ImportResult()
