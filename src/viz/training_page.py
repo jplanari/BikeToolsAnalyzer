@@ -13,6 +13,7 @@ from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
 from src.analysis import durability as du
 from src.analysis import intensity as it
+from src.analysis import nutrition as nut
 from src.analysis import workout as wo
 from src.analysis.power import estimate_critical_power
 from src.viz import training_plots as tp
@@ -62,7 +63,7 @@ def render_training_page(user_name):
     mode = _theme()
     _threshold_hint(user_name, user, today)
     _report_expander(user_name, today)
-    sections = [mark("📈 Load"), mark("⚡ Power profile"), mark("🔋 Durability"), mark("🎯 Intensity"), mark("🔬 Deeper analytics")]
+    sections = [mark("📈 Load"), mark("⚡ Power profile"), mark("🔋 Durability"), mark("🎯 Intensity"), mark("🍌 Fuel"), mark("🔬 Deeper analytics")]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
         _render_load(user_name, user['ftp'], today, mode)
@@ -72,6 +73,8 @@ def render_training_page(user_name):
         _render_durability(user_name, today, mode)
     elif section == sections[3]:
         _render_intensity(user_name, today, mode)
+    elif section == sections[4]:
+        _render_fuel(user_name, user, today, mode)
     else:
         render_deeper_analytics(user_name, user)
 
@@ -507,3 +510,39 @@ def _render_intensity(user_name, today, mode):
                      use_container_width=True)
     zones = t("Power zones (Coggan, from your FTP)") if kind == "Power" else t("Heart-rate zones (Friel, from your LTHR)")
     st.caption(t("{zones} grouped into three: Z1–2 easy, Z3–4 moderate, Z5+ hard. Moving time only.", zones=zones))
+
+
+# --- Fuel ----------------------------------------------------------------------
+
+def _render_fuel(user_name, user, today, mode):
+    st.caption(t("Energy and carbohydrate burned on the bike, estimated from your power. No food is logged: "
+                 "these are estimates of what the riding cost, not of what you ate."))
+    label = remembered(st.radio, "fuel_period", "3 months", t("Show"), list(PERIODS), horizontal=True, format_func=tr)
+    start = _period_start(label, today)
+    stats = get_ride_stats(user_name, start, today)
+    total = nut.totals(stats)
+    if not total['rides']:
+        st.info(t("No rides with power in this period."))
+        return
+    days = max(1, (today - (start if start is not None else pd.to_datetime(stats['date']).min().normalize())).days + 1)
+    c = st.columns(4)
+    c[0].metric(t("Energy burned"), f"{total['kcal']:,.0f} kcal",
+                help=t("Work on the pedals converted to energy (about 24 % efficiency). Resting energy is not included."))
+    c[1].metric(t("Per week"), f"{total['kcal'] / days * 7:,.0f} kcal")
+    c[2].metric(t("Carbohydrate burned"), f"{total['carb_g']:,.0f} g" if total['carb_g'] else t("N/A"),
+                help=t("From a typical fuel-mix curve: the harder the riding, the larger the carbohydrate share."))
+    c[3].metric(t("Carbohydrate share"), f"{total['carb_pct']:.0f} %" if total['carb_pct'] is not None else t("N/A"),
+                help=t("Share of the energy that came from carbohydrate rather than fat."))
+    n_old = count_rides_needing_update(user_name)
+    if n_old and total['carb_g'] is None:
+        st.info(t("Carbohydrate figures need the ride history to be updated: run **Update ride history** in the User Corner."))
+    freq = remembered(st.radio, "fuel_freq", "Week", t("Group by"), [mark("Week"), mark("Month")], horizontal=True, format_func=tr)
+    per = nut.by_period(stats, 'W' if freq == "Week" else 'M')
+    _chart(tp.plot_energy(per, t("Energy (kcal)"), mode))
+    with st.expander(t("Table")):
+        st.dataframe(per.rename(columns={'kcal': 'kcal', 'carb_g': 'carb (g)', 'fat_g': 'fat (g)',
+                                         'carb_pct': 'carb (%)'}).round(1), use_container_width=True)
+    heaviest = per['kcal'].idxmax()
+    st.caption(t("Heaviest {freq}: {when:%d %b %Y}, {kcal:,.0f} kcal.", freq=tr(freq).lower(), when=heaviest, kcal=per['kcal'].max()))
+    st.caption(t("Carbohydrate guide for riding: about 30–60 g/h on rides of 1–2 h, 60–90 g/h beyond 3 h, nothing extra "
+                 "under 45 minutes. Guidance, not dietary advice. Each ride's own guide is on its Ride Summary."))

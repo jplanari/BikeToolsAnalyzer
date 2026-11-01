@@ -40,6 +40,7 @@ A standalone version with its own window (no terminal, no Python install) can be
 - Power ↔ Heart rate: time heatmap, HR at each power, correlation and slope, weekly HR at 65 % FTP (falling = fitter).
 - Power ↔ Cadence: heatmap, cadence by power zone, Coggan quadrant analysis around your own median cadence (set your crank length there), weekly median cadence.
 - Left / right balance (dual-sided power meters that record it in FIT files, such as pedals or a crank-arm meter on each side): the split of the work between the legs, time within 48–52 %, balance by power, power zone and cadence, drift between the start and the end of each ride, a weekly trend, and torque effectiveness / pedal smoothness when recorded. It also appears in the ride summary and as a Time series channel, and gets its own page in the weekly PDF. Strava rides have no balance data; run **Update ride history** to add it to FIT rides saved before.
+- Energy and fuel (estimated from power, nothing to log): energy burned per ride (kcal is about kJ), the carbohydrate and fat behind it from a typical fuel-mix curve, a carbohydrate guide in g/h for the ride's length and intensity, and how much of a full glycogen store the ride would use. A **Fuel** section on the Training page shows weekly or monthly energy and carbohydrate, and the weekly e-mail mentions the week's total. Estimates and guidance, not dietary advice; run **Update ride history** to add the carbohydrate figures to rides saved before.
 - Recovery & efficiency: heart-rate recovery 60 s after hard efforts, efficiency factor and aerobic decoupling on steady endurance rides.
 - Computed from compact per-ride histograms stored at save time; older rides get them via **Update ride history**.
 
@@ -106,6 +107,7 @@ BikeToolsAnalyzer/
     │   ├── balance.py        # left/right leg balance, torque effectiveness, pedal smoothness
     │   ├── durability.py
     │   ├── intensity.py      # intensity distribution, polarization index
+    │   ├── nutrition.py      # energy burned, carbohydrate / fat split, fuelling guide, period totals
     │   ├── power.py
     │   ├── power_profile.py  # window curves, CP models, history
     │   ├── ride_metrics.py   # per-ride VI, EF, decoupling, zones, histograms
