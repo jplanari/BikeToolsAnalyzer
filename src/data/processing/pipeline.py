@@ -14,6 +14,7 @@ from src.data.parsers.upload import sniff_kind
 from src.data.providers.strava import streams_to_dataframe
 from src.data.processing.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
+from src.analysis import balance as bal
 from src.analysis import ride_metrics as rm
 from src.analysis import durability
 from src.analysis.hr import estimate_hr_threshold
@@ -65,6 +66,8 @@ def prepare_ride(filename, file_bytes):
     if kind not in ("fit", "tcx") or 'speed' not in df.columns or df['speed'].isna().all():
         df = compute_speed(df)
     df = compute_grade(df)
+    if bal.has_balance(df):
+        df['lr_balance_30s'] = bal.ride_series(df)         # right leg's share, smoothed, for the time-series chart
     df.attrs['cleaned'] = fixed
     return df, total_dist, total_ascent
 
@@ -126,6 +129,8 @@ def summarize_ride(df, ftp, lthr=None):
         'fatigued': durability.fatigued_curves(df['power']) if has_power else {},
         'hist': rm.joint_histograms(df, is_moving),
         'hrr60': hrr60,
+        'has_balance': bal.has_balance(df),
+        **bal.ride_metrics(df, is_moving),
         'hrr_efforts': hrr_n,
         'hr20': float(estimate_hr_threshold(hr)[1] or 0.0) if has_hr else 0.0,
         'ftp': ftp,
@@ -137,7 +142,7 @@ def summarize_ride(df, ftp, lthr=None):
 def metrics_for_storage(summary):
     """The per-ride columns that build_ride_metadata() adds to the metadata."""
     keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
-            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'hr20', 'fatigued']
+            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'hr20', 'fatigued', *bal.RIDE_KEYS]
     out = {k: summary.get(k) for k in keys}
     out['ftp_at_ride'] = summary.get('ftp') or None
     out['lthr_at_ride'] = summary.get('lthr') or None

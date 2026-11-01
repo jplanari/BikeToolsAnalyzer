@@ -32,7 +32,9 @@ def get_ride_stats(user_name, start=None, end=None):
         df = pd.read_sql_query(f"""SELECT r.id AS ride_id, r.date_time AS date, r.duration_s, r.moving_s,
                                           r.norm_power, r.avg_hr, r.vi, r.ef, r.decoupling_pct,
                                           r.hrr60_bpm, r.hrr_efforts, r.tss, r.tss_source,
-                                          r.distance_km, r.elevation_m, r.kj
+                                          r.distance_km, r.elevation_m, r.kj,
+                                          r.avg_power, r.bal_right_pct, r.bal_first_pct, r.bal_last_pct, r.bal_s,
+                                          r.te_l, r.te_r, r.ps_l, r.ps_r
                                    FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
                                    ORDER BY r.date_time""", conn, params=[user['id'], *params])
     df['date'] = _parse_dates(df['date'], user)
@@ -40,7 +42,7 @@ def get_ride_stats(user_name, start=None, end=None):
 
 def period_coverage(user_name, start=None, end=None):
     """Why analytics may be empty: rides in the period and what they contain."""
-    out = {'rides': 0, 'needs_update': 0, 'p_hr': 0, 'p_cad': 0}
+    out = {'rides': 0, 'needs_update': 0, 'p_hr': 0, 'p_cad': 0, 'p_bal': 0}
     user = get_user_data(user_name)
     if not user:
         return out
@@ -51,7 +53,7 @@ def period_coverage(user_name, start=None, end=None):
                                                    OR r.metrics_version < ? THEN 1 ELSE 0 END), 0)
                 FROM rides r WHERE r.user_id = ?{where}""",
             [METRICS_VERSION, user['id'], *params]).fetchone()
-        for pair in ('p_hr', 'p_cad'):
+        for pair in ('p_hr', 'p_cad', 'p_bal'):
             out[pair] = conn.execute(
                 f"""SELECT COUNT(DISTINCT h.ride_id) FROM ride_hist h JOIN rides r ON r.id = h.ride_id
                     WHERE r.user_id = ? AND h.pair = ?{where}""", [user['id'], pair, *params]).fetchone()[0]

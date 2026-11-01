@@ -6,8 +6,15 @@ from src.viz.plots import (plot_joint_heatmap,
                            plot_y_by_power,
                            plot_trend,
                            plot_quadrants,
-                           plot_cadence_by_zone)
+                           plot_cadence_by_zone,
+                           plot_balance_by_power,
+                           plot_balance_by_cadence,
+                           plot_balance_by_zone,
+                           plot_balance_trend,
+                           plot_balance_drift)
+from src.analysis import balance as bal
 from src.analysis import correlations as co
+from src.analysis.ride_metrics import BAL_BIN_PCT
 from src.data.db import update_user_crank
 from src.data.cached import get_ride_stats, get_hist, period_coverage
 from src.viz.sections import section_picker, remembered
@@ -54,7 +61,8 @@ def render_deeper_analytics(user_name, user_data):
         return t("None of the {n} up-to-date rides in this period has both power and {what} while pedalling.",
                  n=cov['rides'] - cov['needs_update'], what=what)
 
-    sections = [mark("❤️ Power ↔ Heart rate"), mark("🦵 Power ↔ Cadence"), mark("🔁 Recovery & Efficiency")]
+    sections = [mark("❤️ Power ↔ Heart rate"), mark("🦵 Power ↔ Cadence"), mark("🔁 Recovery & Efficiency"),
+                mark("⚖️ Left / right balance")]
     section = section_picker(sections, key="da_section")
 
     # ---- Power vs HR ----
@@ -203,3 +211,101 @@ def render_deeper_analytics(user_name, user_data):
                             use_container_width=True)
         else:
             st.info(t("No steady endurance rides (60+ min, VI ≤ 1.10, power + HR) in this period."))
+
+
+    # ---- Left / right balance ----
+    if section == sections[3]:
+        _render_balance(user_name, user_data, a0, a1, b0, b1, compare, lab_a, lab_b, stats, cov)
+
+
+def _render_balance(user_name, user_data, a0, a1, b0, b1, compare, lab_a, lab_b, stats, cov):
+    ftp = user_data['ftp']
+    bal_a = get_hist(user_name, 'p_bal', a0, a1)
+    if bal_a.empty:
+        if cov['rides'] == 0:
+            st.info(t("No rides in this period."))
+        elif cov['needs_update'] == cov['rides']:
+            st.info(t("None of the {rides} rides in this period has been updated yet (run **Update ride history** in the User Corner).", rides=cov['rides']))
+        else:
+            st.info(t("None of the {n} up-to-date rides in this period has left/right balance. It needs a dual-sided "
+                      "power meter (pedals or a crank-arm meter on each side) that records it in the ride file; "
+                      "a single-sided meter only doubles one leg and cannot show it.", n=cov['rides'] - cov['needs_update']))
+        return
+    bal_b = get_hist(user_name, 'p_bal', b0, b1) if compare else None
+    cbal_a = get_hist(user_name, 'c_bal', a0, a1)
+
+    share_a = bal.right_share(bal_a)
+    share_b = bal.right_share(bal_b) if compare else None
+    even_a, even_b = bal.time_even(bal_a), (bal.time_even(bal_b) if compare else None)
+    wander = bal.spread(bal_a)
+    slope = bal.intensity_slope(bal_a)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(t("Left / right split"), bal.split_text(share_a, 1) or t("N/A"),
+              delta=_fmt_delta(share_a, share_b, "{:+.1f}"), delta_color="off",
+              help=t("Share of the work done by each leg, left first, weighted by power (so hard seconds count "
+                     "more). Your head unit usually shows the plain time average instead, which can differ a little."))
+    m2.metric(t("Time within 48–52 %"), f"{even_a:.0%}" if even_a is not None else t("N/A"),
+              delta=_fmt_delta(even_a and even_a * 100, even_b and even_b * 100, "{:+.0f} pp"), delta_color="off",
+              help=t("Share of the pedalling time in which the right leg was between 48 % and 52 %."))
+    m3.metric(t("Wander (SD)"), f"{wander:.1f} pts" if wander is not None else t("N/A"),
+              help=t("How much the split moves around from second to second. A low value means a steady, repeatable stroke."))
+    m4.metric(t("Right leg per +100 W"), f"{slope:+.1f} pts" if slope is not None else t("N/A"),
+              help=t("How the split changes as the effort gets harder. Near zero = it stays put; a clear positive or "
+                     "negative value means one leg takes over when you push."))
+    if compare:
+        st.caption(t('Deltas compare with {lab_b}.', lab_b=lab_b))
+
+    word = bal.verdict(share_a)
+    avg_w = bal.mean_power(bal_a)
+    left_w, right_w = bal.leg_watts(avg_w, share_a)
+    if word and left_w is not None:
+        st.markdown(t("**{word}.** At your average pedalling power of {avg:.0f} W that is about {left:.0f} W from the left "
+                      "leg and {right:.0f} W from the right.", word=tr(bal.VERDICTS[word]), avg=avg_w,
+                      left=left_w, right=right_w))
+
+    curve_a = bal.by_power(bal_a)
+    heat = plot_joint_heatmap(co.aggregate(bal_a), BAL_BIN_PCT, t("Right leg (%)"),
+                              t("Time at power × right-leg share · {lab_a}", lab_a=lab_a), overlay=curve_a)
+    heat.add_hline(y=50, line=dict(color='gray', dash='dash', width=1))
+    st.plotly_chart(heat, use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    c1.plotly_chart(plot_balance_by_zone(bal.by_zone(bal_a, ftp)), use_container_width=True)
+    c2.plotly_chart(plot_balance_by_cadence(bal.by_cadence(cbal_a)), use_container_width=True)
+
+    curves = {lab_a: curve_a}
+    if compare and bal_b is not None and not bal_b.empty:
+        curves[lab_b] = bal.by_power(bal_b)
+    if len(curves) > 1:
+        st.plotly_chart(plot_balance_by_power(curves, t("Right leg's share at each power")), use_container_width=True)
+
+    bal_all = pd.concat([x for x in [bal_b, bal_a] if x is not None and not x.empty])
+    weekly_bal = co.weekly(bal_all, lambda g: bal.right_share(g))
+    if len(weekly_bal) >= 2:
+        st.plotly_chart(plot_balance_trend({t("Right leg (%)"): weekly_bal}, t("Weekly left / right balance")),
+                        use_container_width=True)
+
+    in_a = (stats['date'] >= a0) & (stats['date'] < a1 + pd.Timedelta(days=1)) if not stats.empty else None
+    mine = stats[in_a] if in_a is not None else stats
+    drift = bal.ride_drift(mine)
+    if len(drift) >= 2:
+        st.plotly_chart(plot_balance_drift(drift, t("Balance drift within each ride")), use_container_width=True)
+        st.caption(t("Positive = the right leg took a bigger share towards the end of the ride than at the start "
+                     "(compared over the first and last third of the pedalling time, rides of 20+ minutes). "
+                     "A drift that grows on your long or hard days points to one side tiring first."))
+
+    te, ps = bal.pedal_table(mine)['te'], bal.pedal_table(mine)['ps']
+    if any(v is not None for v in te + ps):
+        fmt = lambda v: f"{v:.0f} %" if v is not None else "–"
+        st.dataframe(pd.DataFrame([{t("Metric"): t("Torque effectiveness"), t("Left"): fmt(te[0]), t("Right"): fmt(te[1])},
+                                   {t("Metric"): t("Pedal smoothness"), t("Left"): fmt(ps[0]), t("Right"): fmt(ps[1])}]),
+                     hide_index=True, use_container_width=True)
+        st.caption(t("Torque effectiveness is the share of each pedal stroke that pushes the crank forward; pedal "
+                     "smoothness is how evenly the power is spread over the stroke. Averages over the rides in this "
+                     "period that recorded them. Higher is not automatically better: look at differences between "
+                     "the legs and changes over time."))
+
+    st.caption(t("A rule of thumb: most riders sit within 48–52 % on either side, and a small constant gap is normal. "
+                 "What is worth watching is a split that changes with fatigue, intensity or cadence. This is a "
+                 "training aid, not medical advice."))

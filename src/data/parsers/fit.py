@@ -5,6 +5,8 @@ import numpy as np
 import io
 import streamlit as st
 
+from src.analysis import balance as bal
+
 @st.cache_data(show_spinner=False)
 def parse_fit(file_bytes):
     """
@@ -65,6 +67,14 @@ def parse_fit(file_bytes):
             df[plain] = df[enhanced]
 
     df.rename(columns=col_mapping, inplace=True)
+
+    # Dual-sided power meters: left/right balance (as the right leg's share, %) and the per-leg pedal metrics
+    if 'left_right_balance' in df.columns:
+        df['lr_balance'] = bal.right_percent(df['left_right_balance']).to_numpy()
+    for col, field in (('te_l', 'left_torque_effectiveness'), ('te_r', 'right_torque_effectiveness'),
+                       ('ps_l', 'left_pedal_smoothness'), ('ps_r', 'right_pedal_smoothness')):
+        if field in df.columns:
+            df[col] = bal.percent_channel(df[field]).to_numpy()
 
     df['speed_kmh'] = df['speed'] * 3.6 if 'speed' in df.columns else np.nan
 

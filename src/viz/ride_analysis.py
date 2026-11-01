@@ -33,6 +33,7 @@ from src.viz.sections import section_picker, remembered
 from src.viz.bikes import choose_ride_bike
 from src.analysis.bikes import bike_physics, label as bike_label
 from src.viz import timeseries as ts
+from src.analysis import balance as bal
 from src.i18n import t, mark, tr
 from src.i18n import session as i18n_session
 
@@ -223,6 +224,9 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
               help=t("Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals."))
     
+    if summary.get('bal_right_pct') is not None:
+        _render_balance_summary(summary)
+
     fixed = summary.get('cleaned') or {}
     if sum(fixed.values()):
         parts = [f"{n} {name}" for name, n in ((t("power"), fixed.get('power', 0)),
@@ -238,6 +242,31 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
         if not laps_df.empty:
             with st.expander(t("⏱️ Laps / Intervals")):
                 st.dataframe(laps_df.rename(columns=tr))
+
+
+def _render_balance_summary(summary):
+    """Left/right balance of the ride (dual-sided power meters only)."""
+    st.subheader(t("Pedal balance"))
+    right = summary['bal_right_pct']
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric(t("Left / right split"), bal.split_text(right, 1),
+              help=t("Share of the work done by each leg, left first, weighted by power. Even is about 50 / 50; "
+                     "within 48–52 % is typical."))
+    first, last = summary.get('bal_first_pct'), summary.get('bal_last_pct')
+    b2.metric(t("Drift, start to end"), f"{last - first:+.1f} pts" if first is not None and last is not None else t("N/A"),
+              help=t("Change of the right leg's share between the first and the last third of the pedalling time. "
+                     "Needs 20+ minutes of pedalling; a growing drift on long rides points to one side tiring first."))
+    te = (summary.get('te_l'), summary.get('te_r'))
+    ps = (summary.get('ps_l'), summary.get('ps_r'))
+    pair = lambda v: f"{v[0]:.0f} / {v[1]:.0f} %" if v[0] is not None and v[1] is not None else t("N/A")
+    b3.metric(t("Torque effectiveness"), pair(te),
+              help=t("Left / right. The share of each pedal stroke that pushes the crank forward."))
+    b4.metric(t("Pedal smoothness"), pair(ps),
+              help=t("Left / right. How evenly the power is spread over the pedal stroke."))
+    word = bal.verdict(right)
+    if word:
+        st.caption(t("{word}. The channel \"Right leg (%)\" in Time series shows how it moved during the ride.",
+                     word=tr(bal.VERDICTS[word])))
 
 
 def _thermal_ride_id(df):
