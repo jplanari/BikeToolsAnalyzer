@@ -14,6 +14,12 @@ Build the standalone app for the OS you are on (PyInstaller cannot cross-compile
 The *Desktop build* GitHub workflow does this for Windows, macOS and Linux (Actions → Desktop build → Run
 workflow, or push a `v*` tag) and attaches the three zips.
 
+**Which window opens.** The app tries, in this order, whatever the machine has: (1) a native window (WebView2 on
+Windows, WebKit on macOS, Qt on Linux); (2) an *app window* of Edge, Chrome, Chromium or Brave (Edge comes with Windows 10/11):
+no tabs, no address bar, and its own profile in the data folder, so it is a window of its own and does not depend on your
+default browser; (3) your default browser, only if neither works. `launcher.log` in the data folder says which options were
+skipped. To force one, set `BIKETOOLS_WINDOW` to `webview`, `app` or `browser`.
+
 **Linux native window:** Qt needs one system library on Ubuntu/Debian 22.04+: `sudo apt install libxcb-cursor0`. Without it
 (or without any window backend) the app opens in your browser instead.
 

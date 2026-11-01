@@ -115,3 +115,60 @@ def test_oauth_forwarding_page_targets_only_localhost():
     html = open(os.path.join(ROOT, "docs", "oauth", "index.html"), encoding="utf-8").read()
     assert 'var target = "http://localhost:8501/" + window.location.search;' in html
     assert "location.replace(target)" in html.replace("window.", "")
+
+
+# --- a dedicated window whatever the machine has ---------------------------------------------------------------------
+
+def test_app_window_command_has_its_own_profile_and_no_browser_chrome():
+    cmd = launcher.app_window_command("/usr/bin/chromium", "http://127.0.0.1:8501", "/data/app-window")
+    assert cmd[0] == "/usr/bin/chromium" and "--app=http://127.0.0.1:8501" in cmd
+    assert "--user-data-dir=/data/app-window" in cmd           # never joins the browser that is already open
+
+
+def test_the_app_browser_is_found_where_each_system_keeps_it(monkeypatch, tmp_path):
+    edge = tmp_path / "Microsoft" / "Edge" / "Application"
+    edge.mkdir(parents=True)
+    (edge / "msedge.exe").write_text("")
+    monkeypatch.setattr(sys, "platform", "win32")
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.setenv(var, str(tmp_path / "nowhere"))
+    assert launcher.find_app_browser() is None
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
+    assert launcher.find_app_browser() == str(edge / "msedge.exe")
+
+    chrome = tmp_path / "google-chrome"
+    chrome.write_text("")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: str(chrome) if name == "google-chrome" else None)
+    assert launcher.find_app_browser() == str(chrome)
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: None)
+    assert launcher.find_app_browser() is None
+
+
+def test_an_app_window_that_never_stayed_open_does_not_count(monkeypatch):
+    monkeypatch.setattr(launcher, "find_app_browser", lambda: "x")
+    monkeypatch.setattr(launcher, "app_window_command", lambda *a: [sys.executable, "-c", "pass"])
+    assert launcher.open_app_window("http://127.0.0.1:1") is False        # closed at once: not a window
+    monkeypatch.setattr(launcher, "APP_WINDOW_MIN_S", 0)
+    assert launcher.open_app_window("http://127.0.0.1:1") is True
+    monkeypatch.setattr(launcher, "find_app_browser", lambda: None)
+    assert launcher.open_app_window("http://127.0.0.1:1") is False
+
+
+def test_window_modes_follow_the_setting(monkeypatch):
+    monkeypatch.delenv("BIKETOOLS_WINDOW", raising=False)
+    assert launcher.window_modes() == ["webview", "app"]
+    for value, expected in (("app", ["app"]), ("webview", ["webview"]), ("browser", []), ("nonsense", ["webview", "app"])):
+        monkeypatch.setenv("BIKETOOLS_WINDOW", value)
+        assert launcher.window_modes() == expected
+
+
+@pytest.mark.parametrize("webview, app, expected, tried", [
+    (True, True, "webview", ["webview"]), (False, True, "app", ["webview", "app"]),
+    (False, False, None, ["webview", "app"])])
+def test_each_kind_of_window_is_tried_in_turn(monkeypatch, webview, app, expected, tried):
+    monkeypatch.delenv("BIKETOOLS_WINDOW", raising=False)
+    seen = []
+    monkeypatch.setattr(launcher, "open_window", lambda url, log=None: seen.append("webview") or webview)
+    monkeypatch.setattr(launcher, "open_app_window", lambda url, log=None: seen.append("app") or app)
+    assert launcher.open_dedicated_window("http://127.0.0.1:1") == expected and seen == tried

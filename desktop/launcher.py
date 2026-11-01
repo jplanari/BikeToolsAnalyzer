@@ -190,10 +190,17 @@ def tell(message):
 
 
 def show_window(url):
-    """Runs the native window in this process (blocking until it is closed)."""
+    """Runs the native window in this process (blocking until it is closed).
+    On Windows the Edge WebView2 engine is required: without it pywebview would quietly fall back to the old
+    Internet Explorer engine, which cannot show Streamlit, so asking for it makes that case an error instead
+    and the launcher moves on to the next kind of window. The window keeps its cookies and local storage
+    in the data folder between runs."""
     import webview
-    webview.create_window("BikeTools Analyzer", url, width=1400, height=900)
-    webview.start()
+    webview.create_window("BikeTools Analyzer", url, width=1400, height=900, min_size=(900, 600))
+    kwargs = {"private_mode": False, "storage_path": os.path.join(data_dir(), "webview")}
+    if sys.platform == "win32":
+        kwargs["gui"] = "edgechromium"
+    webview.start(**kwargs)
 
 
 def open_window(url, log=None):
@@ -206,6 +213,83 @@ def open_window(url, log=None):
     except OSError:
         return False
     return code == 0
+
+
+# --- a dedicated window whatever the machine has -------------------------------------------------------------------
+# 1. pywebview (WebView2 / WebKit / Qt): a real native window.
+# 2. The app window of a Chromium-based browser (Edge ships with Windows 10/11; Chrome, Chromium, Brave and Edge
+#    elsewhere): no tabs, no address bar, its own profile in the data folder, so it is a window of its own and does
+#    not depend on the default browser or on the browser's open windows.
+# 3. The default browser, as a last resort.
+# BIKETOOLS_WINDOW = auto (default) | webview | app | browser forces one of them.
+
+APP_WINDOW_MIN_S = 3         # an app window that "closes" sooner than this never really opened
+
+
+def _windows_browsers():
+    roots = [os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+    parts = [("Microsoft", "Edge", "Application", "msedge.exe"), ("Google", "Chrome", "Application", "chrome.exe"),
+             ("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+             ("Chromium", "Application", "chrome.exe")]
+    return [os.path.join(r, *p) for p in parts for r in roots if r]
+
+
+def _mac_browsers():
+    names = ["Microsoft Edge", "Google Chrome", "Brave Browser", "Chromium"]
+    return [f"/Applications/{n}.app/Contents/MacOS/{n}" for n in names] + [
+        os.path.expanduser(f"~/Applications/{n}.app/Contents/MacOS/{n}") for n in names]
+
+
+def find_app_browser():
+    """A Chromium-based browser that can show a page as an app window, or None."""
+    if sys.platform == "win32":
+        candidates = _windows_browsers()
+    elif sys.platform == "darwin":
+        candidates = _mac_browsers()
+    else:
+        candidates = [shutil.which(n) for n in ("microsoft-edge", "microsoft-edge-stable", "google-chrome",
+                                                "google-chrome-stable", "chromium", "chromium-browser",
+                                                "brave-browser")]
+    return next((c for c in candidates if c and os.path.isfile(c)), None)
+
+
+def app_window_command(browser, url, profile_dir):
+    """Command that opens `url` as an app window of its own (separate profile, so it never joins a running browser)."""
+    return [browser, f"--app={url}", f"--user-data-dir={profile_dir}", "--window-size=1400,900", "--no-first-run",
+            "--no-default-browser-check", "--disable-features=Translate", "--disable-session-crashed-bubble"]
+
+
+def open_app_window(url, log=None):
+    """Shows the app in a Chromium app window (blocking until it is closed). False when there is no such browser or
+    the window did not stay open."""
+    browser = find_app_browser()
+    if not browser:
+        return False
+    profile = os.path.join(data_dir(), "app-window")
+    os.makedirs(profile, exist_ok=True)
+    started = time.time()
+    try:
+        code = subprocess.call(app_window_command(browser, url, profile), stdout=log, stderr=log,
+                               stdin=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return code == 0 and time.time() - started >= APP_WINDOW_MIN_S
+
+
+def window_modes():
+    """The kinds of window to try, in order, from BIKETOOLS_WINDOW."""
+    chosen = (os.environ.get("BIKETOOLS_WINDOW") or "auto").strip().lower()
+    return {"webview": ["webview"], "app": ["app"], "browser": []}.get(chosen, ["webview", "app"])
+
+
+def open_dedicated_window(url, log=None):
+    """Tries each kind of window in turn; returns the one that was shown ('webview' or 'app'), else None."""
+    for mode in window_modes():
+        shown = open_window(url, log) if mode == "webview" else open_app_window(url, log)
+        if shown:
+            return mode
+        print(f"No {mode} window; trying the next option.", file=sys.stderr)
+    return None
 
 
 def main():
@@ -239,7 +323,7 @@ def main():
                   file=sys.stderr)
             return 1
         url = f"http://127.0.0.1:{port}"
-        if not open_window(url, log):
+        if not open_dedicated_window(url, log):
             webbrowser.open(url)
             print(f"BikeTools Analyzer is running at {url} (Ctrl+C or close this program to quit)")
             server.wait()
