@@ -1,6 +1,6 @@
 """
 Deeper-analytics pages for the PDF reports (matplotlib, A4, same furniture as src.viz.report_pdf).
-deeper_figures(data) takes the dict from src.data.deeper_data.collect_deeper_data and returns three figures:
+deeper_figures(data) takes the dict from src.data.reports.deeper_data.collect_deeper_data and returns three figures:
 power x heart rate, power x cadence, recovery and efficiency.
 """
 import numpy as np

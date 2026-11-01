@@ -80,7 +80,7 @@ def _report_expander(user_name, today):
         label = st.selectbox("Period", list(PERIODS), index=1, key="report_period")
         key = (user_name, label, today)
         if st.button("Create report", key="report_make"):
-            from src.data.report_data import collect_report_data
+            from src.data.reports.report_data import collect_report_data
             from src.viz.report_pdf import build_report_pdf
             with st.spinner("Building the report…"):
                 pdf = build_report_pdf(collect_report_data(user_name, PERIODS[label], today))
@@ -208,8 +208,8 @@ def _wahoo_ready(user_name):
 
 def _send_controls(user_name, ftp, cfg, row, sent, today):
     """Send / resend button for one built session; shows what happened."""
-    from src.data import wahoo as wh
-    from src.data import wahoo_send as ws
+    from src.data.providers import wahoo as wh
+    from src.data.providers import wahoo_send as ws
     sid = int(row['id'])
     label = "↻ Update on Wahoo" if sent else "📲 Send to Wahoo"
     if st.button(label, key=f"wahoo_send_{sid}", help="Creates (or updates) this workout in your Wahoo account "
@@ -239,7 +239,7 @@ def _built_sessions(user_name, built, ftp=None, today=None):
     if wahoo_ok:
         import datetime as _dt
         from src.data.db import get_wahoo_sent
-        from src.data import wahoo_send as ws
+        from src.data.providers import wahoo_send as ws
         sent = get_wahoo_sent(user_name)
         c1, c2 = st.columns([1, 1])
         c1.time_input("Start time on Wahoo", value=_dt.time(8, 0), key="wahoo_send_time",

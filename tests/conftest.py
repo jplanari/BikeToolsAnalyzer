@@ -79,7 +79,7 @@ def synthetic_climb_df():
 def no_real_weather_requests(monkeypatch):
     """Tests never reach the weather service: a ride that asks for weather gets 'not reachable' at once."""
     import requests
-    from src.data import weather
+    from src.data.providers import weather
 
     def unreachable(*a, **k):
         raise requests.exceptions.ConnectionError("tests are offline")

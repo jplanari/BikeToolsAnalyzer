@@ -4,8 +4,8 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import strava as sv
-from src.data.history import recompute_history, ftp_used_for_ride
+from src.data.providers import strava as sv
+from src.data.processing.history import recompute_history, ftp_used_for_ride
 from tests.test_strava import make_streams, activity, real_distances  # noqa: F401 (fixture)
 
 
@@ -87,7 +87,7 @@ def test_recompute_reports_unreadable_files(temp_db):
 
 
 def test_new_rides_are_saved_up_to_date(temp_db):
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     payload = sv.build_ride_payload(activity(3), make_streams(n=1800))
     df, dist, ele = prepare_ride("strava_3.json", payload)
     summ = summarize_ride(df, 250, 170)

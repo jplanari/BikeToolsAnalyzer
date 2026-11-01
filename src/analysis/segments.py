@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from src.analysis.power import NP, IF
-from src.data.pipeline import moving_mask
+from src.data.processing.pipeline import moving_mask
 
 MIN_NP_SAMPLES = 30          # NP uses a 30 s rolling average: with less data it is not defined
 ELE_WINDOW = 15              # samples; same smoothing the climb detector uses

@@ -20,8 +20,8 @@ if not _have_streamlit:
     pytest.skip("streamlit not installed", allow_module_level=True)
 
 from src.data import db
-from src.data import strava as sv
-from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage
+from src.data.providers import strava as sv
+from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
 from tests.test_strava import make_streams, activity
 
 APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")

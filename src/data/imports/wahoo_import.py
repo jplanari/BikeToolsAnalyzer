@@ -6,8 +6,8 @@ like an uploaded file. No Streamlit.
 import pandas as pd
 
 from src.data import db
-from src.data import wahoo as wh
-from src.data.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
+from src.data.providers import wahoo as wh
+from src.data.imports.strava_import import ImportResult, DUPLICATE_START_TOLERANCE_S, _is_near
 
 REQUEST_RESERVE = 3          # API requests kept back so the single-ride picker still works afterwards
 SYNC_MARGIN_DAYS = 3
@@ -99,7 +99,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
     skipped, so if it stops at the rate limit, running it again later resumes where it left off.
     progress: optional callback(done, total, name).
     """
-    from src.data.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # parsers import streamlit
+    from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage  # parsers import streamlit
 
     usage = usage or wh.RateUsage()
     res = ImportResult()

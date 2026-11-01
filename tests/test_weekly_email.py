@@ -1,8 +1,9 @@
 import pandas as pd
 import pytest
 
-from src.data import db, mailer
-from src.data import weekly_report as wr
+from src.data import db
+from src.data.reports import mailer
+from src.data.reports import weekly_report as wr
 
 
 @pytest.fixture
@@ -111,7 +112,7 @@ def test_send_weekly_attaches_the_pdf(temp_db, monkeypatch):
 
 
 def test_weekly_pdf_has_a_section_per_ride(temp_db):
-    from src.data import strava as sv
+    from src.data.providers import strava as sv
     from tests.test_strava import make_streams, activity
     payload = sv.build_ride_payload(activity(7, "2026-10-21T07:00:00Z"), make_streams(n=1800))
     ok, msg = db.save_ride("Ana", sv.ride_filename(7), payload,

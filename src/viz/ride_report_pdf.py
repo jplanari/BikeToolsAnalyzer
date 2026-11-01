@@ -2,7 +2,7 @@
 PDF report of one analysed ride (A4, light theme for printing), drawn with matplotlib in the style of the
 training report (src.viz.report_pdf, whose page furniture it reuses).
 
-build_ride_report_pdf(data) takes the dict from src.data.ride_report_data.collect_ride_report and returns
+build_ride_report_pdf(data) takes the dict from src.data.reports.ride_report_data.collect_ride_report and returns
 the PDF as bytes. Four pages: summary and time series; power curve and zones; route and climbs;
 aerodynamics, heat and laps. A section without data says so instead of leaving a hole.
 """

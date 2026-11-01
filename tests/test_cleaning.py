@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.cleaning import clean_channels
+from src.data.processing.cleaning import clean_channels
 from src.analysis.power import power_curve, NP
 
 
@@ -78,8 +78,8 @@ def test_a_glitch_no_longer_becomes_the_one_second_record():
 
 
 def test_pipeline_cleans_before_scoring(tmp_path):
-    from src.data import strava as sv
-    from src.data.pipeline import prepare_ride, summarize_ride
+    from src.data.providers import strava as sv
+    from src.data.processing.pipeline import prepare_ride, summarize_ride
     from tests.test_strava import make_streams, activity, real_distances  # noqa: F401
     s = make_streams(n=1800, power=220.0)
     s['watts']['data'][900] = 9000.0

@@ -1,7 +1,7 @@
 """User Corner page: profile summary and ride-history maintenance. The ride history table is render_history."""
 import streamlit as st
 import pandas as pd
-from src.data.history import recompute_history
+from src.data.processing.history import recompute_history
 from src.data.db import set_user_thresholds, set_user_w_prime, DEFAULT_FTP, DEFAULT_LTHR
 from src.viz import theme
 from src.data.cached import get_user_data, get_user_rides, count_rides_needing_update

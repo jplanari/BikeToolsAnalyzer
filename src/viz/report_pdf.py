@@ -1,7 +1,7 @@
 """
 PDF training report (A4, light theme for printing), drawn with matplotlib.
 
-build_report_pdf(data) takes the dict from src.data.report_data.collect_report_data and returns
+build_report_pdf(data) takes the dict from src.data.reports.report_data.collect_report_data and returns
 the PDF as bytes. Colours come from the Training page palette, one y-axis per chart, a legend
 whenever there is more than one series, and text in ink colours (never the series colour).
 """

@@ -2,9 +2,9 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import polar as pl
-from src.data import polar_import as pi
-from src.data import strava as sv
+from src.data.providers import polar as pl
+from src.data.imports import polar_import as pi
+from src.data.providers import strava as sv
 from tests.test_strava import (make_streams, real_distances, temp_db, FakeResponse,  # noqa: F401 (fixtures)
                                _upload_ride)
 
@@ -49,7 +49,7 @@ def fake_polar(monkeypatch):
 
     monkeypatch.setattr(pl, "list_exercises", lambda token: items)
     monkeypatch.setattr(pl, "download_fit", fake_download)
-    monkeypatch.setattr("src.data.pipeline.prepare_ride", fake_prepare)
+    monkeypatch.setattr("src.data.processing.pipeline.prepare_ride", fake_prepare)
     return calls
 
 

@@ -6,13 +6,13 @@ DataFrame and compute the summary metrics that get saved.
 import numpy as np
 import pandas as pd
 
-from src.data.gpx import (parse_gpx, compute_distance_and_ascent, resample_to_seconds,
+from src.data.parsers.gpx import (parse_gpx, compute_distance_and_ascent, resample_to_seconds,
                           compute_speed, compute_grade)
-from src.data.fit import parse_fit
-from src.data.tcx import parse_tcx
-from src.data.upload import sniff_kind
-from src.data.strava import streams_to_dataframe
-from src.data.cleaning import clean_channels
+from src.data.parsers.fit import parse_fit
+from src.data.parsers.tcx import parse_tcx
+from src.data.parsers.upload import sniff_kind
+from src.data.providers.strava import streams_to_dataframe
+from src.data.processing.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
 from src.analysis import ride_metrics as rm
 from src.analysis import durability

@@ -1,8 +1,9 @@
 """User Corner section: the weekly e-mail with last week's analytics (settings, test, send now)."""
 import streamlit as st
 
-from src.data import db, mailer
-from src.data import weekly_report as wr
+from src.data import db
+from src.data.reports import mailer
+from src.data.reports import weekly_report as wr
 
 PRESETS = {"Gmail": ("smtp.gmail.com", 587, "starttls"), "Outlook / Office 365": ("smtp.office365.com", 587, "starttls"),
            "iCloud": ("smtp.mail.me.com", 587, "starttls"), "Other": (None, None, None)}

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from src.data import db
-from src.data import thresholds as th
+from src.data.processing import thresholds as th
 
 TODAY = pd.Timestamp("2026-10-30")
 

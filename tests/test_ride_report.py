@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.pipeline import summarize_ride
-from src.data.ride_report_data import collect_ride_report
+from src.data.processing.pipeline import summarize_ride
+from src.data.reports.ride_report_data import collect_ride_report
 from src.viz.ride_report_pdf import build_ride_report_pdf
 
 SETTINGS = {'ftp': 250, 'lthr': 170, 'weight': 70, 'height': 180}

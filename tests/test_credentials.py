@@ -1,4 +1,4 @@
-from src.data import credentials as cr
+from src.data.providers import credentials as cr
 from src.data import db
 from tests.test_db import temp_db  # noqa: F401 (fixture)
 

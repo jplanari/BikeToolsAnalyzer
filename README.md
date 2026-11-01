@@ -206,7 +206,7 @@ Wahoo only accepts an **https** callback, which a local app cannot offer without
 
 **Sending planned sessions to your ELEMNT.** Sessions built from intervals on the Training page get a **📲 Send to Wahoo** button (once Wahoo is connected). It creates a workout plan (fixed-power steps with a ±3 % band, repeats for your reps, rest only between repeats) and schedules it on the session's date at the start time you choose, so it appears in the Wahoo app and on the head unit. **↻ Update on Wahoo** resends changes, **Remove from Wahoo** (or deleting the session) takes it off. Wahoo only delivers sessions from today to 6 days ahead, and quick TSS entries have no steps, so they can't be sent. This needs the `plans_read`, `plans_write` and `workouts_write` scopes; if you connected before, disconnect and connect again. Optionally set `timezone = "Europe/Madrid"` in `[wahoo]` (default: this computer's zone).
 
-Notes: Wahoo does not document its workout types, so only type 0 (outdoor cycling) is imported; add other ids to `CYCLING_WORKOUT_TYPES` in `src/data/wahoo.py` if your indoor rides are skipped. Wahoo refresh tokens are single-use and are re-saved on every refresh.
+Notes: Wahoo does not document its workout types, so only type 0 (outdoor cycling) is imported; add other ids to `CYCLING_WORKOUT_TYPES` in `src/data/providers/wahoo.py` if your indoor rides are skipped. Wahoo refresh tokens are single-use and are re-saved on every refresh.
 
 ## Connecting Polar
 

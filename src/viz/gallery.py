@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from src.data.cached import get_user_rides
-from src.data.strava_import import DUPLICATE_START_TOLERANCE_S
+from src.data.imports.strava_import import DUPLICATE_START_TOLERANCE_S
 from src.data.db import get_ride_file
 from src.viz.formatting import format_duration
 

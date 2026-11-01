@@ -8,8 +8,8 @@ import pytest
 from src.analysis import wahoo_plan as wp
 from src.analysis import workout as wo
 from src.data import db
-from src.data import wahoo as wh
-from src.data import wahoo_send as ws
+from src.data.providers import wahoo as wh
+from src.data.providers import wahoo_send as ws
 from tests.test_strava import temp_db, FakeResponse  # noqa: F401 (fixtures)
 
 CFG = wh.WahooConfig("cid", "secret", "http://localhost:8501/", timezone="Europe/Madrid")

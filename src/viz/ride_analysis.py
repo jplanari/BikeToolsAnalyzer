@@ -5,10 +5,10 @@ import numpy as np
 import hashlib
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
-from src.data.gpx import calculate_bearing
+from src.data.parsers.gpx import calculate_bearing
 from src.viz.figstyle import tidy
-from src.data.fit import get_fit_laps, get_fit_lap_spans
-from src.data.pipeline import prepare_ride, summarize_ride, ride_kind, metrics_for_storage
+from src.data.parsers.fit import get_fit_laps, get_fit_lap_spans
+from src.data.processing.pipeline import prepare_ride, summarize_ride, ride_kind, metrics_for_storage
 from src.viz.plots import (plot_elevation,
                            plot_x_time,
                            plot_power_curve,
@@ -20,12 +20,12 @@ from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
 from src.data.db import (save_ride, build_ride_metadata, get_ride_start_times, set_user_w_prime, get_ride_bike,
                          get_ride_weather, save_ride_weather)
-from src.data.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
+from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR
-from src.data.weather import load_or_fetch, weather_summary
+from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
 from src.viz.segment_analysis import render_segment_analysis
@@ -245,7 +245,7 @@ def _render_report_expander(df, summary, settings, filename, total_dist, total_a
     ride_id = hashlib.md5(f"{filename}{len(df)}".encode()).hexdigest()
     with st.expander("📄 PDF report of this ride"):
         if st.button("Create report", key="ride_report_make"):
-            from src.data.ride_report_data import collect_ride_report
+            from src.data.reports.ride_report_data import collect_ride_report
             from src.viz.ride_report_pdf import build_ride_report_pdf
             with st.spinner("Building the report…"):
                 best_curve = recent_curve = None
