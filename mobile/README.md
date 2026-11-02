@@ -43,11 +43,27 @@ The APK is built by GitHub Actions from this folder (a Capacitor wrapper around 
 - **Away from home:** do not open the port on your router. Use a VPN that joins the phone and the computer, such as **Tailscale** (then use the computer's Tailscale address), or put an https reverse proxy / tunnel (Caddy, Cloudflare Tunnel) in front and use its `https://` address. The app warns when you type a plain-http address that is not on a private network.
 - If the phone page is served from a different web origin, list it in `BIKETOOLS_API_ORIGINS` (comma separated). The Android app needs nothing.
 
+## Several riders on one server
+
+The same server can host a group: each rider creates their own account from the phone, connects Strava and/or Wahoo there, and sees only their own data.
+
+1. **Keep a computer on** (a home server or a spare machine) running the phone server (`python -m src.api`, or the desktop app's switch).
+2. **Make it reachable.** Use a VPN such as Tailscale, or a tunnel such as Cloudflare Tunnel that gives you an https address. Do not expose a plain http port to the internet: passwords are refused over unencrypted public connections.
+3. **Tell the server its public address**: `BIKETOOLS_PUBLIC_URL=https://bike.example.net`. Strava and Wahoo send riders back to `<that address>/api/v1/oauth/callback`.
+4. **Register one API application with each provider** and give the server its keys (riders never see them):
+   `BIKETOOLS_STRAVA_CLIENT_ID`, `BIKETOOLS_STRAVA_CLIENT_SECRET`, `BIKETOOLS_WAHOO_CLIENT_ID`, `BIKETOOLS_WAHOO_CLIENT_SECRET`.
+   Strava accepts one callback domain per application, so use the domain of step 3. Wahoo only accepts an https redirect, so it needs the tunnel; Strava works with any address you registered.
+5. **Invite people.** `python -m src.api invite create [--uses N] [--days D] [--label TEXT]` prints a code like `K7M2Q-9XWPA`; the same screen exists in User Corner → Invitations. `invite list` and `invite revoke <id>` manage them. Codes are stored hashed, work a limited number of times, and can expire.
+6. A new rider opens the app, taps **I have an invitation code**, chooses a rider name and password, then **Settings → Data sources → Connect Strava / Wahoo** and **Import rides**. Rides are fetched by the server in the background; progress shows on the same page.
+
+Riders can delete their own account (Settings → Delete my account), which erases their data on the server. Sign-up attempts are rate-limited per address.
+
 ## Security notes
 
 - Tokens are random (256 bit), stored hashed, scoped to one rider, revocable, and never written to the server log. Ten wrong tokens from one address lock that address out for a minute (behind a reverse proxy set `BIKETOOLS_API_TRUST_PROXY=1` so the real client address is used).
 - Passwords are optional, stored as salted scrypt hashes (never returned by any API) and checked in constant time; wrong passwords cost the same whether or not the rider exists. Ten wrong attempts from one address, or twenty for one rider within ten minutes, are refused for a while.
-- Apart from signing in, the server only answers `GET`; it cannot change or delete anything.
+- Ride data is read-only through the API. The only things a phone can change are its own account (sign-up, deletion), its Strava/Wahoo connections and the imports it starts.
+- Invitation codes are random, stored hashed, limited in uses and time; guessing them is rate-limited per address. Provider keys stay on the server and the OAuth `state` is single-use and tied to the rider who started it.
 - Over plain http, anyone on the path can read the token and your data: that is why the VPN/https advice above matters.
 
 ## Development

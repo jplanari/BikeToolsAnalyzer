@@ -6,6 +6,8 @@
     python -m src.api token revoke "<rider>" <id>
     python -m src.api password set "<rider>"        (asks for the password)
     python -m src.api password remove "<rider>"
+    python -m src.api invite create [--uses 1] [--days 7] [--label "for Marta"]
+    python -m src.api invite list | revoke <id>
 
 The database is the same one the desktop app uses (BIKETOOLS_DB)."""
 import argparse
@@ -38,6 +40,13 @@ def main(argv=None):
     pw = sub.add_parser("password", help="set or remove a rider's password").add_subparsers(dest="action", required=True)
     pw.add_parser("set").add_argument("rider")
     pw.add_parser("remove").add_argument("rider")
+    inv = sub.add_parser("invite", help="invitation codes for new riders").add_subparsers(dest="action", required=True)
+    ic = inv.add_parser("create")
+    ic.add_argument("--uses", type=int, default=1, help="how many riders can sign up with it")
+    ic.add_argument("--days", type=float, default=7, help="valid for this many days (0 = no expiry)")
+    ic.add_argument("--label", default="")
+    inv.add_parser("list")
+    inv.add_parser("revoke").add_argument("id", type=int)
     a = p.parse_args(argv)
 
     db.init_db()
@@ -53,6 +62,22 @@ def main(argv=None):
             except KeyboardInterrupt:
                 print("stopped")
         return 0
+    if a.cmd == "invite":
+        if a.action == "create":
+            code, iid = db.create_invite(a.uses, a.days or None, a.label)
+            print(f"Invitation #{iid}, {a.uses} use(s), {'no expiry' if not a.days else f'{a.days:g} day(s)'}. "
+                  f"Give it to the person now; it is not shown again:\n\n{code}\n")
+            return 0
+        if a.action == "list":
+            rows = db.list_invites()
+            for r in rows:
+                print(f"#{r['id']}  {r['label'] or '-':<20} {r['uses_left']} use(s) left  expires {_when(r['expires_at']) if r['expires_at'] else 'never'}")
+            if not rows:
+                print("No valid invitations.")
+            return 0
+        ok = db.revoke_invite(a.id)
+        print("Revoked." if ok else "No such invitation.")
+        return 0 if ok else 1
     if a.cmd == "password":
         if a.action == "remove":
             ok, msg = db.clear_user_password(a.rider, force=True)

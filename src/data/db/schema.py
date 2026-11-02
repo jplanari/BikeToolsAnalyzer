@@ -347,6 +347,16 @@ def migrate_db():
             )
         ''')
         c.execute('''
+            CREATE TABLE IF NOT EXISTS invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code_hash TEXT NOT NULL UNIQUE,
+                uses_left INTEGER NOT NULL,
+                expires_at INTEGER,
+                label TEXT,
+                created_at INTEGER NOT NULL
+            )
+        ''')
+        c.execute('''
             CREATE TABLE IF NOT EXISTS api_tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,

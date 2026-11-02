@@ -163,8 +163,9 @@ def render_user_corner(user_name):
     render_weekly_email(user_name)
     st.markdown("---")
 
-    from src.viz.phone_app import render_phone_app
+    from src.viz.phone_app import render_phone_app, render_invitations
     render_phone_app(user_name)
+    render_invitations()
     st.markdown("---")
 
     st.info(t("Charts and analytics are on the **Training** page, including your critical-power model and the "

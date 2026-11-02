@@ -86,3 +86,45 @@ export async function login(server, name, password) {
     throw new ApiError('network');
   } finally { clearTimeout(timer); }
 }
+
+async function post(url, body, token, timeoutMs = 20000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const r = await fetch(url, { method: 'POST', signal: ctrl.signal, headers, body: JSON.stringify(body || {}) });
+    if (r.status === 429) throw new ApiError('throttled', 429);
+    if (r.status === 401) throw new ApiError(token ? 'auth' : 'login', 401);
+    if (!r.ok) {
+      let detail = '';
+      try { detail = (await r.json()).error || ''; } catch { /* no body */ }
+      const e = new ApiError(r.status === 403 ? 'forbidden' : r.status === 409 ? 'conflict' : r.status === 400 ? 'invalid' : 'http', r.status);
+      e.detail = detail;
+      throw e;
+    }
+    return await r.json();
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw new ApiError('network');
+  } finally { clearTimeout(timer); }
+}
+
+/** Creates a rider with an invitation code; the server answers with a token for this phone. */
+export function register(server, name, password, invite) {
+  const base = baseUrl(server);
+  if (!base) throw new ApiError('network');
+  return post(base + '/api/v1/register', { name, password, invite, label: 'Phone app' }, null, 15000);
+}
+
+/** An action for the signed-in rider (connect a provider, import, delete the account). */
+export function act(path, body) {
+  const c = config();
+  return post(baseUrl(c.server) + '/api/v1' + path, body, c.token, 20000);
+}
+
+/** Like api(), but never from the saved copy: connection status must be live. */
+export async function live(path) {
+  const c = config();
+  return get(baseUrl(c.server) + '/api/v1' + path, c.token, 12000);
+}

@@ -1,6 +1,7 @@
-import { baseUrl, config, connect, login, saveConfig, signOut } from './api.js';
+import { act, baseUrl, config, connect, login, register, saveConfig, signOut } from './api.js';
 import { esc } from './fmt.js';
 import { LANGUAGES, detect, language, setLanguage, t } from './i18n.js';
+import { sourcesView } from './sources.js';
 import { errorMessage, powerView, rideView, ridesView, trainingView } from './views.js';
 
 const $ = (id) => document.getElementById(id);
@@ -63,6 +64,13 @@ function connectView(prefill = {}) {
         <label for="password">${esc(t('Password'))}</label>
         <input id="password" type="password" autocomplete="current-password">
       </div>
+      <div id="rg-fields">
+        <label for="invite">${esc(t('Invitation code'))}</label>
+        <input id="invite" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="ABCDE-FGHJK">
+        <label for="password2">${esc(t('Choose a password'))}</label>
+        <input id="password2" type="password" autocomplete="new-password">
+        <p class="note">${esc(t('At least 8 characters. The name above will be your rider name.'))}</p>
+      </div>
       <div id="tk-fields">
         <label for="token">${esc(t('Access token'))}</label>
         <input id="token" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bt_…" value="${esc(prefill.token || '')}">
@@ -71,19 +79,29 @@ function connectView(prefill = {}) {
       <p class="error" id="block" hidden>${esc(t('Passwords are not sent over an unencrypted connection outside a private network. Use a VPN such as Tailscale or an https address.'))}</p>
       <button class="btn" id="go">${esc(t('Connect'))}</button>
       <button class="btn secondary" id="swap" type="button"></button>
+      <button class="btn secondary" id="new" type="button"></button>
     </form>
     <p class="note" id="warn" hidden>${esc(t('This address is not encrypted (http) and is not on a private network. Anyone on the way could read your data and token. Prefer a VPN such as Tailscale or an https address.'))}</p>`;
   const refresh = () => {
-    $('pw-fields').hidden = mode !== 'password';
+    $('pw-fields').hidden = mode === 'token';
+    $('password').closest('div').querySelector('label[for=password]').hidden = mode === 'register';
+    $('password').hidden = mode === 'register';
+    $('rg-fields').hidden = mode !== 'register';
+    $('go').textContent = mode === 'register' ? t('Create account') : t('Connect');
+    $('new').textContent = mode === 'register' ? t('I already have an account') : t('I have an invitation code');
+    $('new').hidden = mode === 'token';
     $('tk-fields').hidden = mode !== 'token';
+    $('swap').hidden = mode === 'register';
     $('swap').textContent = mode === 'password' ? t('Use an access token instead') : t('Sign in with a password instead');
     const risky = unencryptedAndPublic($('server').value);
-    $('warn').hidden = !risky || mode === 'password';
-    $('block').hidden = !(risky && mode === 'password');
-    $('go').disabled = risky && mode === 'password';
+    const secret = mode !== 'token';
+    $('warn').hidden = !risky || secret;
+    $('block').hidden = !(risky && secret);
+    $('go').disabled = risky && secret;
   };
   $('server').addEventListener('input', refresh);
   $('swap').addEventListener('click', () => { mode = mode === 'password' ? 'token' : 'password'; refresh(); });
+  $('new').addEventListener('click', () => { mode = mode === 'register' ? 'password' : 'register'; refresh(); });
   refresh();
   $('f').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -91,7 +109,9 @@ function connectView(prefill = {}) {
     err.hidden = true; btn.disabled = true; btn.textContent = t('Connecting…');
     try {
       let token, me;
-      if (mode === 'password') {
+      if (mode === 'register') {
+        ({ token, me } = await register($('server').value, $('name').value.trim(), $('password2').value, $('invite').value.trim()));
+      } else if (mode === 'password') {
         ({ token, me } = await login($('server').value, $('name').value.trim(), $('password').value));
       } else {
         token = $('token').value.trim();
@@ -102,7 +122,10 @@ function connectView(prefill = {}) {
       location.hash = '#/rides';
       route();
     } catch (ex) {
-      err.textContent = ex.kind === 'auth' ? t('That token was not accepted.') : ex.kind === 'login' ? t('Wrong name or password.') : errorMessage(ex);
+      err.textContent = ex.kind === 'auth' ? t('That token was not accepted.') : ex.kind === 'login' ? t('Wrong name or password.')
+        : ex.kind === 'forbidden' ? t('That invitation code is not valid.')
+        : ex.kind === 'conflict' ? t('That name is already taken.')
+        : ex.kind === 'invalid' ? t('Check the name (2 or more letters) and the password (at least 8 characters).') : errorMessage(ex);
       err.hidden = false; btn.textContent = t('Connect'); refresh();
     }
   });
@@ -115,10 +138,23 @@ function settingsView(ctx) {
     <div class="card"><div class="muted">${esc(t('Server address'))}</div><div style="word-break:break-all">${esc(c.server || location.origin)}</div></div>
     <label for="lang">${esc(t('Language'))}</label>
     <select id="lang">${Object.entries(LANGUAGES).map(([k, n]) => `<option value="${k}" ${k === language() ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+    <a class="btn" href="#/sources">${esc(t('Data sources'))}</a>
     <button class="btn secondary" id="refresh">${esc(t('Check connection'))}</button>
     <p class="note" id="status" role="status"></p>
     <button class="btn secondary" id="out">${esc(t('Disconnect this phone'))}</button>
-    <p class="note">${esc(t('The phone app only reads your data. Uploading, editing and logging what you ate are done in the desktop app.'))}</p>`;
+    <p class="note">${esc(t('Uploading rides, editing them and logging what you ate are done in the desktop app. Here you can connect Strava or Wahoo to bring rides in.'))}</p>
+    <details><summary>${esc(t('Delete my account'))}</summary>
+      <p class="note">${esc(t('This erases your rides and everything else stored for you on the server. It cannot be undone.'))}</p>
+      <label for="delpw">${esc(t('Password'))}</label>
+      <input id="delpw" type="password" autocomplete="current-password">
+      <p class="error" id="delerr" role="alert" hidden></p>
+      <button class="btn secondary" id="del">${esc(t('Delete my account'))}</button>
+    </details>`;
+  $('del').addEventListener('click', async () => {
+    const e = $('delerr'); e.hidden = true;
+    try { await act('/account/delete', { password: $('delpw').value }); signOut(); location.hash = '#/connect'; }
+    catch (ex) { e.textContent = ex.kind === 'forbidden' ? t('Wrong password.') : errorMessage(ex); e.hidden = false; }
+  });
   $('lang').addEventListener('change', (e) => { setLanguage(e.target.value, true); route(); });
   $('refresh').addEventListener('click', async () => {
     const s = $('status'); s.textContent = '…';
@@ -143,6 +179,7 @@ function route() {
   if (!config().token) { location.hash = '#/connect'; return; }
   window.scrollTo(0, 0);
   if (page === 'settings') return settingsView(ctx);
+  if (page === 'sources') { drawTabs(null); return sourcesView(view, ctx); }
   const tab = ['rides', 'training', 'power'].includes(page) ? page : (page === 'ride' ? 'rides' : 'rides');
   drawTabs(page === 'ride' ? null : tab);
   if (page === 'ride' && /^\d+$/.test(arg || '')) return rideView(view, ctx, arg);

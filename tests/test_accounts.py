@@ -128,7 +128,7 @@ def test_login_rejects_bad_bodies_and_other_posts_stay_refused(riders):
     assert post(c, "/api/v1/login", None, raw=b"x" * 5000)["code"] == 400
     assert c.get("/api/v1/login", method="POST", headers={"Content-Length": "0"}, body=b"")["code"] == 400
     assert c.get("/api/v1/rides", method="POST")["code"] == 405
-    assert c.get("/api/v1/login")["code"] == 404                                  # GET: nothing to read there
+    assert c.get("/api/v1/login")["code"] == 405                                  # GET: nothing to read there
 
 
 def test_cli_sets_and_removes_a_password(riders, monkeypatch):

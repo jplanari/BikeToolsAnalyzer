@@ -114,3 +114,34 @@ def test_password_sign_in(page, server, monkeypatch):
     page.click("#go")
     page.wait_for_selector(".ride")
     assert page.locator(".ride").count() == 4
+
+
+def test_sign_up_with_an_invitation_and_the_data_sources_page(page, server, monkeypatch):
+    url, _ = server
+    monkeypatch.setattr(db.passwords, "COST", {'n': 2 ** 10, 'r': 8, 'p': 1})
+    monkeypatch.setenv("BIKETOOLS_PUBLIC_URL", url)
+    monkeypatch.setenv("BIKETOOLS_STRAVA_CLIENT_ID", "cid")
+    monkeypatch.setenv("BIKETOOLS_STRAVA_CLIENT_SECRET", "sec")
+    code, _ = db.create_invite()
+    page.goto(f"{url}/#/connect")
+    page.click("#new")
+    page.fill("#name", "Newcomer")
+    page.fill("#invite", "ZZZZZ-ZZZZZ")
+    page.fill("#password2", "a long password")
+    page.click("#go")
+    page.wait_for_selector("#err:not([hidden])")
+    assert "invitation" in page.inner_text("#err").lower()
+    page.fill("#invite", code)
+    page.click("#go")
+    page.wait_for_selector(".empty")                                    # a new rider has no rides yet
+    assert db.get_user_data("Newcomer")
+    page.goto(f"{url}/#/sources")
+    page.wait_for_selector("[data-act=start][data-p=strava]")
+    assert page.locator("[data-p=wahoo]").count() == 0                  # Wahoo is not set up on this server
+    assert "not set up for Wahoo" in page.inner_text("body")
+    db.save_strava_auth("Newcomer", {"athlete_id": 1, "athlete_name": "N", "access_token": "A", "refresh_token": "R", "expires_at": 4_000_000_000})
+    page.reload()
+    page.wait_for_selector("[data-act=import][data-p=strava]")
+    page.click("[data-act=disconnect][data-p=strava]")
+    page.wait_for_selector("[data-act=start][data-p=strava]")
+    assert [e for e in page.errors if "403" not in e] == []             # the 403 is the wrong code tried on purpose

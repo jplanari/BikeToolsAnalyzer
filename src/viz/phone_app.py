@@ -94,3 +94,33 @@ def render_phone_app(user_name):
         if st.button(t("Done, hide the token"), key="phone_hide"):
             st.session_state.pop(NEW_TOKEN_KEY, None)
             st.rerun()
+
+
+def render_invitations():
+    """Codes new riders type in the phone app to create their own account on this server."""
+    st.subheader(t("✉️ Invitations"))
+    st.caption(t("A new rider needs an invitation code to create an account from the phone app. Each code works a "
+               "limited number of times and expires."))
+    for inv in db.list_invites():
+        c1, c2 = st.columns([4, 1])
+        expires = time.strftime("%Y-%m-%d", time.localtime(inv['expires_at'])) if inv['expires_at'] else t("never")
+        c1.write(t("**{label}** · {n} use(s) left · expires {when}", label=inv['label'] or t("Invitation"),
+                   n=inv['uses_left'], when=expires))
+        if c2.button(t("Revoke"), key=f"invite_revoke_{inv['id']}"):
+            db.revoke_invite(inv['id'])
+            st.rerun()
+    c1, c2, c3 = st.columns(3)
+    label = c1.text_input(t("For whom (optional)"), key="invite_label", max_chars=60)
+    uses = c2.number_input(t("Uses"), min_value=1, max_value=100, value=1, key="invite_uses")
+    days = c3.number_input(t("Valid for (days)"), min_value=1, max_value=365, value=7, key="invite_days")
+    if st.button(t("Create invitation"), key="invite_create"):
+        code, _ = db.create_invite(int(uses), int(days), label)
+        st.session_state["new_invite"] = code
+        st.rerun()
+    code = st.session_state.get("new_invite")
+    if code:
+        st.success(t("Give this code to the person now: it is not shown again."))
+        st.code(code, language=None)
+        if st.button(t("Done, hide the code"), key="invite_hide"):
+            st.session_state.pop("new_invite", None)
+            st.rerun()

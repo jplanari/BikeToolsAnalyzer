@@ -6,6 +6,8 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 
 A rider can have an optional password (User Corner → 🔒 Password, or when creating the profile). The rider then stays closed in the desktop app until it is typed in, and the phone app signs in with it. Passwords are salted scrypt hashes and wrong guesses are rate-limited. This gates the app's screens, not the files: use disk encryption if others can read your computer's files.
 
+A server can also host several riders: they sign up from the phone with an invitation code, connect Strava or Wahoo there and read their own data remotely. See [mobile/README.md](mobile/README.md#several-riders-on-one-server).
+
 ## Desktop app
 
 A standalone version with its own window (no terminal, no Python install) can be built for Windows, macOS and Linux: see [desktop/README.md](desktop/README.md). Your data is kept in a per-user folder, separate from the program.
