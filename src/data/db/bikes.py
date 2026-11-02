@@ -39,13 +39,16 @@ def save_bike(user_name, name, parts, make_default=False):
     return True, t("Bike saved.")
 
 
-def update_bike(bike_id, name, parts):
+def update_bike(user_name, bike_id, name, parts):
     if not (name or "").strip():
         return False, t("Give the bike a name.")
     try:
         with connect() as conn:
             sets = ', '.join(f"{c} = ?" for c in ['name'] + _BIKE_FIELDS)
-            conn.execute(f"UPDATE bikes SET {sets} WHERE id = ?", [name.strip()] + _bike_values(parts) + [bike_id])
+            done = conn.execute(f"UPDATE bikes SET {sets} WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)",
+                                [name.strip()] + _bike_values(parts) + [bike_id, user_name]).rowcount
+            if not done:
+                return False, t("Bike not found.")
         return True, t("Bike updated.")
     except integrity_errors():
         return False, t("You already have a bike with that name.")
@@ -63,10 +66,12 @@ def get_bikes(user_name):
     return [dict(r) for r in rows]
 
 
-def delete_bike(bike_id):
+def delete_bike(user_name, bike_id):
     """Removes the bike; rides done on it go back to the generic bike. The default moves to another bike if any."""
     with connect() as conn:
-        row = conn.execute("SELECT user_id, is_default FROM bikes WHERE id = ?", (bike_id,)).fetchone()
+        row = conn.execute("SELECT user_id, is_default FROM bikes WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)", (bike_id, user_name)).fetchone()
+        if row is None:
+            return                                                   # not this rider's bike: nothing happens
         conn.execute("UPDATE rides SET bike_id = NULL WHERE bike_id = ?", (bike_id,))
         conn.execute("DELETE FROM bikes WHERE id = ?", (bike_id,))
         if row and row[1]:
@@ -97,7 +102,10 @@ def get_ride_bike(user_name, file_content):
     return (row[0], row[1]) if row else None
 
 
-def set_ride_bike(ride_id, bike_id):
-    """Records the bike a saved ride was done on: a bike id, 0 for the generic bike, None for "not chosen"."""
+def set_ride_bike(user_name, ride_id, bike_id):
+    """Records the bike a saved ride was done on: a bike id, 0 for the generic bike, None for "not chosen".
+    Both the ride and the bike must be the rider's own; otherwise nothing changes and False is returned."""
     with connect() as conn:
-        conn.execute("UPDATE rides SET bike_id = ? WHERE id = ?", (bike_id, ride_id))
+        if bike_id and conn.execute("SELECT 1 FROM bikes WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)", (bike_id, user_name)).fetchone() is None:
+            return False
+        return conn.execute("UPDATE rides SET bike_id = ? WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)", (bike_id, ride_id, user_name)).rowcount == 1

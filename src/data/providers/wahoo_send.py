@@ -98,7 +98,7 @@ def send_session(cfg, user_name, session, ftp, local_time, outdoor=True, usage=N
     if not prev:
         workout_id = wh.schedule_workout(token, name, ext_id, starts, minutes, plan_id, usage=usage)['id']
 
-    db.save_wahoo_sent(session['id'], plan_id, workout_id, starts, stamp)
+    db.save_wahoo_sent(user_name, session['id'], plan_id, workout_id, starts, stamp)
     return {'plan_id': plan_id, 'workout_id': workout_id, 'starts': starts, 'updated': prev is not None}
 
 
@@ -110,5 +110,5 @@ def remove_session(cfg, user_name, session_id, usage=None):
     token = get_valid_auth(cfg, user_name)['access_token']
     wh.delete_workout(token, prev['workout_id'], usage=usage)
     wh.delete_plan(token, prev['plan_id'], usage=usage)
-    db.delete_wahoo_sent(session_id)
+    db.delete_wahoo_sent(user_name, session_id)
     return True

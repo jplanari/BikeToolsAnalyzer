@@ -40,7 +40,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
             progress(i, len(rows))
         name = row['filename'] or f"ride {row['id']}"
         try:
-            _, content = db.get_ride_file(row['id'])    # one file in memory at a time
+            _, content = db.get_ride_file(user_name, row['id'])    # one file in memory at a time
             if content is None:
                 raise ValueError(t("original file not stored"))
             df, dist_m, ele_m = prepare_ride(row['filename'] or "", content)
@@ -53,7 +53,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
                                           metrics=metrics_for_storage(summ))
             if row.get('date_time'):
                 meta['date'] = row['date_time']  # keep the stored start time
-            db.update_ride_metrics(row['id'], meta, summ['power_curve'])
+            db.update_ride_metrics(user_name, row['id'], meta, summ['power_curve'])
             updated += 1
         except Exception as e:  # unreadable file etc.: report and keep going
             failed.append(f"{name}: {e}")

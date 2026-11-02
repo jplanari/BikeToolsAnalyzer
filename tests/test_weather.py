@@ -204,15 +204,15 @@ def test_ride_weather_roundtrip_and_cascade(path):
         uid = conn.execute("SELECT id FROM users WHERE name='ann'").fetchone()[0]
         conn.execute("INSERT INTO rides (user_id, filename, file_hash) VALUES (?, 'a.gpx', 'h')", (uid,))
         rid = conn.execute("SELECT id FROM rides").fetchone()[0]
-    assert db.get_ride_weather(rid) is None
+    assert db.get_ride_weather("ann", rid) is None
     payload = {'source': 'open-meteo', 'points': [{'start': 0, 'end': 5, 'rows': _rows()}]}
-    db.save_ride_weather(rid, payload)
-    assert db.get_ride_weather(rid) == payload
-    db.save_ride_weather(rid, {**payload, 'source': 'other'})
-    assert db.get_ride_weather(rid)['source'] == 'other'
+    db.save_ride_weather("ann", rid, payload)
+    assert db.get_ride_weather("ann", rid) == payload
+    db.save_ride_weather("ann", rid, {**payload, 'source': 'other'})
+    assert db.get_ride_weather("ann", rid)['source'] == 'other'
     with db.connect() as conn:
         conn.execute("DELETE FROM rides WHERE id = ?", (rid,))
-    assert db.get_ride_weather(rid) is None
+    assert db.get_ride_weather("ann", rid) is None
 
 
 def test_stored_weather_needs_no_network(monkeypatch):
@@ -233,9 +233,9 @@ def test_weekly_report_ride_gets_stored_weather(path, monkeypatch):
         uid = conn.execute("SELECT id FROM users WHERE name='ann'").fetchone()[0]
         conn.execute("INSERT INTO rides (user_id, filename, file_hash) VALUES (?, 'a.gpx', 'h')", (uid,))
         rid = conn.execute("SELECT id FROM rides").fetchone()[0]
-    db.save_ride_weather(rid, {'source': 'open-meteo',
+    db.save_ride_weather("ann", rid, {'source': 'open-meteo',
                                'points': [{'start': 0, 'end': 60, 'elevation': 100.0, 'rows': _rows()}]})
-    out = weekly_report._with_weather(_ride(60), rid)
+    out = weekly_report._with_weather(_ride(60), "ann", rid)
     assert out['wind_speed'].iloc[0] == pytest.approx(5.0) and 'bearing' in out.columns
     # no stored weather and no network: the ride is still reported, without wind
-    assert 'wind_speed' not in weekly_report._with_weather(_ride(60), rid + 99).columns
+    assert 'wind_speed' not in weekly_report._with_weather(_ride(60), "ann", rid + 99).columns

@@ -19,34 +19,34 @@ def ride_id_of(user="Rider", index=0):
 
 def test_fuel_is_stored_cleared_and_validated(seeded):
     rid = ride_id_of()
-    assert db.get_ride_fuel(rid) == (None, None)                   # nothing logged yet
-    assert db.set_ride_fuel(rid, 240, 1500) == (True, "")
-    assert db.get_ride_fuel(rid) == (240.0, 1500.0)
-    assert db.set_ride_fuel(rid, 0, None)[0] and db.get_ride_fuel(rid) == (0.0, None)   # 0 is "nothing", None "not logged"
-    assert db.set_ride_fuel(rid, float('nan'), float('nan'))[0] and db.get_ride_fuel(rid) == (None, None)
+    assert db.get_ride_fuel("Rider", rid) == (None, None)                   # nothing logged yet
+    assert db.set_ride_fuel("Rider", rid, 240, 1500) == (True, "")
+    assert db.get_ride_fuel("Rider", rid) == (240.0, 1500.0)
+    assert db.set_ride_fuel("Rider", rid, 0, None)[0] and db.get_ride_fuel("Rider", rid) == (0.0, None)   # 0 is "nothing", None "not logged"
+    assert db.set_ride_fuel("Rider", rid, float('nan'), float('nan'))[0] and db.get_ride_fuel("Rider", rid) == (None, None)
     for bad in ((-5, 100), (100, -1), (99999, 0), (0, 10 ** 6), ("abc", 0)):
-        ok, msg = db.set_ride_fuel(rid, *bad)
+        ok, msg = db.set_ride_fuel("Rider", rid, *bad)
         assert not ok and msg
-    assert db.get_ride_fuel(rid) == (None, None)                   # a refused entry changes nothing
-    assert db.set_ride_fuel(10 ** 6, 10, 10) == (False, "ride not found")
+    assert db.get_ride_fuel("Rider", rid) == (None, None)                   # a refused entry changes nothing
+    assert db.set_ride_fuel("Rider", 10 ** 6, 10, 10) == (False, "ride not found")
 
 
 def test_logged_fuel_is_in_the_stats_and_survives_a_metrics_update(seeded):
     rid = ride_id_of()
-    db.set_ride_fuel(rid, 180, 900)
+    db.set_ride_fuel("Rider", rid, 180, 900)
     stats = db.get_ride_stats("Rider", seeded - pd.Timedelta(days=10), seeded)
     row = stats[stats['ride_id'] == rid].iloc[0]
     assert row['carb_eaten_g'] == 180 and row['fluid_ml'] == 900 and row['if_factor'] > 0 and row['filename']
     assert stats['carb_eaten_g'].notna().sum() == 1
     # "Update ride history" recomputes the metrics from the file; the rider's log is not a metric
-    filename, content = db.get_ride_file(rid)
+    filename, content = db.get_ride_file("Rider", rid)
     from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     df, dist, ele = prepare_ride(filename, content)
     s = summarize_ride(df, 250, 170)
     meta = db.build_ride_metadata(df, dist, ele, s['avg_speed_kph'], s['norm_power'], s['tss'], s['if'],
                                   filename=filename, metrics=metrics_for_storage(s))
-    db.update_ride_metrics(rid, meta, s['power_curve'])
-    assert db.get_ride_fuel(rid) == (180.0, 900.0)
+    db.update_ride_metrics("Rider", rid, meta, s['power_curve'])
+    assert db.get_ride_fuel("Rider", rid) == (180.0, 900.0)
 
 
 # --- the numbers ------------------------------------------------------------------------------------------------
@@ -167,8 +167,8 @@ def test_ride_log_form_saves_and_shows_the_result(seeded, monkeypatch):
     st = FakeSt(number_input=lambda *a, **k: next(inputs), form_submit_button=True)
     monkeypatch.setattr(fuel, "st", st)
     summary = {'kj': 2000.0, 'carb_g': 360.0, 'moving_time_s': 3 * 3600, 'if': 0.7}
-    fuel.render_fuel_log(summary, 70.0, rid)
-    assert db.get_ride_fuel(rid) == (240.0, 1500.0)
+    fuel.render_fuel_log(summary, 70.0, rid, "Rider")
+    assert db.get_ride_fuel("Rider", rid) == (240.0, 1500.0)
     m = metrics(st)
     assert m["Intake rate"] == "80 g/h" and m["Burned carbohydrate replaced"] == "67%" and m["Fluid"] == "500 ml/h"
     assert "Within the guide" in texts(st)
@@ -179,11 +179,11 @@ def test_ride_log_form_reports_a_refused_value_and_shows_nothing_when_empty(seed
     rid = ride_id_of()
     st = FakeSt(number_input=lambda *a, **k: None, form_submit_button=True)
     monkeypatch.setattr(fuel, "st", st)
-    fuel.render_fuel_log({'kj': 1000.0, 'carb_g': 100.0, 'moving_time_s': 7200}, 70.0, rid)
-    assert not metrics(st) and db.get_ride_fuel(rid) == (None, None)
+    fuel.render_fuel_log({'kj': 1000.0, 'carb_g': 100.0, 'moving_time_s': 7200}, 70.0, rid, "Rider")
+    assert not metrics(st) and db.get_ride_fuel("Rider", rid) == (None, None)
     st = FakeSt(number_input=lambda *a, **k: -4.0, form_submit_button=True)
     monkeypatch.setattr(fuel, "st", st)
-    fuel.render_fuel_log({'kj': 1000.0, 'carb_g': 100.0, 'moving_time_s': 7200}, 70.0, rid)
+    fuel.render_fuel_log({'kj': 1000.0, 'carb_g': 100.0, 'moving_time_s': 7200}, 70.0, rid, "Rider")
     assert any(n == "error" for n, a, k in st.shown)
 
 
@@ -212,10 +212,10 @@ def test_training_log_table_saves_the_changed_rows(seeded, monkeypatch):
 
     st = FakeSt(data_editor=edit, button=True)
     monkeypatch.setattr(tpg, "st", st)
-    tpg._intake_editor(stats)
+    tpg._intake_editor("Rider", stats)
     rides = stats.sort_values('date', ascending=False)
     first, second = int(rides['ride_id'].iloc[0]), int(rides['ride_id'].iloc[1])
-    assert db.get_ride_fuel(first) == (150.0, None) and db.get_ride_fuel(second) == (None, 800.0)
+    assert db.get_ride_fuel("Rider", first) == (150.0, None) and db.get_ride_fuel("Rider", second) == (None, 800.0)
     assert any(n == "rerun" for n, a, k in st.shown)
 
 
@@ -224,9 +224,9 @@ def test_training_log_table_does_nothing_without_changes(seeded, monkeypatch):
     stats = db.get_ride_stats("Rider", seeded - pd.Timedelta(days=10), seeded).assign(moving_s=2 * 3600)
     st = FakeSt(data_editor=lambda frame, **k: frame, button=True)
     monkeypatch.setattr(tpg, "st", st)
-    tpg._intake_editor(stats)
+    tpg._intake_editor("Rider", stats)
     assert not any(n in ("button", "rerun") for n, a, k in st.shown)
-    assert all(db.get_ride_fuel(r['id']) == (None, None) for r in db.get_user_rides("Rider"))
+    assert all(db.get_ride_fuel("Rider", r['id']) == (None, None) for r in db.get_user_rides("Rider"))
 
 
 def test_intake_section_shows_totals_chart_and_the_fade_note(monkeypatch):
@@ -257,5 +257,5 @@ def test_short_rides_are_not_offered_for_logging(seeded, monkeypatch):
     stats = db.get_ride_stats("Rider", seeded - pd.Timedelta(days=10), seeded)        # 40 minutes each
     st = FakeSt(data_editor=lambda frame, **k: frame)
     monkeypatch.setattr(tpg, "st", st)
-    tpg._intake_editor(stats)
+    tpg._intake_editor("Rider", stats)
     assert not any(n == "data_editor" for n, a, k in st.shown)

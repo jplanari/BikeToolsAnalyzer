@@ -273,7 +273,7 @@ def prepare_user_rides(user_name, since=None, fetch=False, progress=False):
     for n, r in enumerate(rides, 1):
         if progress:
             print(f"ride {n}/{len(rides)}", file=sys.stderr, flush=True)
-        filename, content = db.get_ride_file(r['id'])
+        filename, content = db.get_ride_file(user_name, r['id'])
         if content is None:
             skip("original file not stored")
             continue
@@ -286,11 +286,11 @@ def prepare_user_rides(user_name, since=None, fetch=False, progress=False):
             skip("no power or speed")
             continue
         df['bearing'] = calculate_bearing(df)
-        stored = db.get_ride_weather(r['id'])
+        stored = db.get_ride_weather(user_name, r['id'])
         if stored is None and fetch:
             df, stored, _ = weather.load_or_fetch(df)
             if stored is not None:
-                db.save_ride_weather(r['id'], stored)
+                db.save_ride_weather(user_name, r['id'], stored)
         elif stored is not None:
             df = weather.apply_weather(df, stored)
         else:

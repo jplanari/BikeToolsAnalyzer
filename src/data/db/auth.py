@@ -192,17 +192,22 @@ def get_wahoo_sent(user_name):
                                WHERE p.user_id = ?""", (user['id'],)).fetchall()
     return {r[0]: {'plan_id': r[1], 'workout_id': r[2], 'starts': r[3], 'sent_at': r[4]} for r in rows}
 
-def save_wahoo_sent(session_id, plan_id, workout_id, starts, sent_at):
+def save_wahoo_sent(user_name, session_id, plan_id, workout_id, starts, sent_at):
     with connect() as conn:
+        if conn.execute("SELECT 1 FROM planned_sessions WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)",
+                        (int(session_id), user_name)).fetchone() is None:
+            return
         conn.execute("""INSERT INTO wahoo_sent (session_id, plan_id, workout_id, starts, sent_at)
                         VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(session_id) DO UPDATE SET plan_id = excluded.plan_id,
                             workout_id = excluded.workout_id, starts = excluded.starts, sent_at = excluded.sent_at""",
                      (int(session_id), int(plan_id), int(workout_id), starts, sent_at))
 
-def delete_wahoo_sent(session_id):
+def delete_wahoo_sent(user_name, session_id):
     with connect() as conn:
-        conn.execute("DELETE FROM wahoo_sent WHERE session_id = ?", (int(session_id),))
+        conn.execute("""DELETE FROM wahoo_sent WHERE session_id = ? AND session_id IN
+                        (SELECT id FROM planned_sessions WHERE user_id = (SELECT id FROM users WHERE name = ?))""",
+                     (int(session_id), user_name))
 
 def wahoo_id_from_filename(filename):
     """'wahoo_123.fit' -> 123 (rides imported through the Wahoo Cloud API)."""

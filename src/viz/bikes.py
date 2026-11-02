@@ -42,7 +42,7 @@ def _bike_form(user_name, bike=None):
                                        max_value=bk.CRR_RANGE[1], step=0.0005, format="%.4f", help=tr(CRR_HELP),
                                        key=f"crr_{tag}")
         if st.form_submit_button(t("Save bike") if bike else t("Add bike"), type="primary"):
-            ok, msg = db.update_bike(bike['id'], name, parts) if bike else db.save_bike(user_name, name, parts)
+            ok, msg = db.update_bike(user_name, bike['id'], name, parts) if bike else db.save_bike(user_name, name, parts)
             if ok:
                 st.rerun()
             else:
@@ -77,7 +77,7 @@ def render_bikes(user_name):
             with b.popover(t("Delete bike")):
                 st.warning(t("Rides done on it go back to your default bike. This cannot be undone."))
                 if st.button(t('Yes, delete {name}', name=bike['name']), type="primary", key=f"bike_delete_{bike['id']}"):
-                    db.delete_bike(bike['id'])
+                    db.delete_bike(user_name, bike['id'])
                     st.rerun()
     with st.expander(t("➕ Add a bike"), expanded=not bikes):
         _bike_form(user_name)
@@ -108,5 +108,5 @@ def choose_ride_bike(user_name, file_bytes):
                           help=t("Sets the bike's weight and the tyres' Crr in the power balance. CdA is computed "
                                "from the ride, not taken from the bike."))
     if saved and saved_id != chosen:
-        db.set_ride_bike(saved[0], chosen)
+        db.set_ride_bike(user_name, saved[0], chosen)
     return by_id.get(chosen), chosen

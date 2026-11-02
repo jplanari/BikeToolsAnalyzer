@@ -35,9 +35,9 @@ def test_save_list_update_delete(temp_db):
     assert not db.save_bike("Ana", "  ", PARTS)[0]
     (bike,) = db.get_bikes("Ana")
     assert bike['name'] == "Road" and bike['is_default'] == 1 and bike['crr'] == 0.0035
-    assert db.update_bike(bike['id'], "Road 2", {**PARTS, 'tyres_kg': 0.7})[0]
+    assert db.update_bike("Ana", bike['id'], "Road 2", {**PARTS, 'tyres_kg': 0.7})[0]
     assert db.get_bikes("Ana")[0]['tyres_kg'] == 0.7
-    db.delete_bike(bike['id'])
+    db.delete_bike("Ana", bike['id'])
     assert db.get_bikes("Ana") == []
 
 
@@ -49,7 +49,7 @@ def test_default_bike_moves_with_set_and_delete(temp_db):
     assert a['is_default'] and not b['is_default']                   # the first bike is the default
     db.set_default_bike("Ana", b['id'])
     assert db.get_bikes("Ana")[0]['name'] == "B"                     # default first
-    db.delete_bike(b['id'])
+    db.delete_bike("Ana", b['id'])
     assert db.get_bikes("Ana")[0]['name'] == "A" and db.get_bikes("Ana")[0]['is_default']
 
 
@@ -74,10 +74,10 @@ def test_a_ride_remembers_its_bike_and_loses_it_when_the_bike_is_deleted(temp_db
     assert _save("Ana", b"ride-1", bike_id)[0]
     ride_id, saved_bike = db.get_ride_bike("Ana", b"ride-1")
     assert saved_bike == bike_id
-    db.set_ride_bike(ride_id, None)
+    db.set_ride_bike("Ana", ride_id, None)
     assert db.get_ride_bike("Ana", b"ride-1")[1] is None
-    db.set_ride_bike(ride_id, bike_id)
-    db.delete_bike(bike_id)
+    db.set_ride_bike("Ana", ride_id, bike_id)
+    db.delete_bike("Ana", bike_id)
     assert db.get_ride_bike("Ana", b"ride-1")[1] is None
     assert db.get_ride_bike("Ana", b"never-saved") is None
 
@@ -88,5 +88,5 @@ def test_recomputing_a_ride_keeps_its_bike(temp_db):
     bike_id = db.get_bikes("Ana")[0]['id']
     _save("Ana", b"ride-1", bike_id)
     ride_id, _ = db.get_ride_bike("Ana", b"ride-1")
-    db.update_ride_metrics(ride_id, {'date': "2026-10-01T08:00:00Z", 'dist': 31}, {60: 260.0})
+    db.update_ride_metrics("Ana", ride_id, {'date': "2026-10-01T08:00:00Z", 'dist': 31}, {60: 260.0})
     assert db.get_ride_bike("Ana", b"ride-1")[1] == bike_id
