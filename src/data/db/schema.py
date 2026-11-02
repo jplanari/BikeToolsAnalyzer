@@ -267,6 +267,33 @@ def migrate_db():
         ''')
         _add_column(c, 'users', 'crank_mm', 'REAL DEFAULT 172.5')
         _add_column(c, 'planned_sessions', 'blocks', 'TEXT')
+        # Accounts (src/data/db/accounts.py): a rider can have an e-mail and password to sign in to a shared server.
+        # Riders without them (the desktop app) work exactly as before.
+        _add_column(c, 'users', 'email', 'TEXT')
+        _add_column(c, 'users', 'email_verified_at', 'BIGINT')
+        _add_column(c, 'users', 'password_hash', 'TEXT')                # scrypt$..., NULL = no password
+        _add_column(c, 'users', 'created_at', 'BIGINT')
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (lower(email)) WHERE email IS NOT NULL")
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS account_tokens (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                purpose TEXT NOT NULL,            -- 'verify' or 'reset'
+                expires_at BIGINT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at BIGINT NOT NULL,
+                expires_at BIGINT NOT NULL,
+                last_seen BIGINT NOT NULL,
+                label TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
         # Rides the rider deleted that came from Strava / Wahoo / Polar: remembered by file name, so the next sync
         # does not bring them back (a file the rider uploaded themselves is not remembered: they can upload it again).
         c.execute('''

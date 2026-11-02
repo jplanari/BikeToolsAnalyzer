@@ -16,8 +16,8 @@ from .planning import (add_structured_session, delete_planned_session, get_plann
 from .bikes import (_BIKE_FIELDS, _BIKE_PARTS, _bike_values, delete_bike, get_bikes, get_ride_bike, save_bike, set_default_bike, set_ride_bike, update_bike)
 from .ride_weather import (get_ride_weather, save_ride_weather)
 from .schema import (MIGRATIONS, _has_rides, _init_db, _init_lock, _initialised, _migration_per_user_file_hash, _migration_query_indexes, _migration_ride_weather, _migration_utc_dates, init_db, migrate_db, run_migrations, schema_version)
-from . import core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema
-_SUBMODULES = (core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema)
+from . import accounts, core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema
+_SUBMODULES = (accounts, core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema)
 
 
 class _DbModule(types.ModuleType):

@@ -105,7 +105,10 @@ def get_user_data(name):
         c.execute("SELECT * FROM users WHERE name = ?", (name,))
         row = c.fetchone()
     if row:
-        return dict(row)
+        data = dict(row)
+        data['has_password'] = bool(data.pop('password_hash', None))       # the hash itself never leaves accounts.py
+        data.pop('email_verified_at', None)
+        return data
     return None
 
 def delete_user(name):
