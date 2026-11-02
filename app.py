@@ -3,6 +3,7 @@ from src.data.db import init_db
 from src.viz.dashboard import (render_sidebar, process_and_display_analysis, render_history,
                                render_user_corner, handle_strava_callback)
 from src.viz.training_page import render_training_page
+from src.viz.references_page import render_references
 from src.viz import theme
 from src.viz.gallery import render_gallery
 from src.i18n import t
@@ -55,3 +56,6 @@ elif app_mode == "Training":
 elif app_mode == "User Corner":
     render_user_corner(selected_user)
     render_history(selected_user)
+
+elif app_mode == "References":
+    render_references()

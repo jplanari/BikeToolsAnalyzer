@@ -41,6 +41,7 @@ A standalone version with its own window (no terminal, no Python install) can be
 - Power ↔ Cadence: heatmap, cadence by power zone, Coggan quadrant analysis around your own median cadence (set your crank length there), weekly median cadence.
 - Left / right balance (dual-sided power meters that record it in FIT files, such as pedals or a crank-arm meter on each side): the split of the work between the legs, time within 48–52 %, balance by power, power zone and cadence, drift between the start and the end of each ride, a weekly trend, and torque effectiveness / pedal smoothness when recorded. It also appears in the ride summary and as a Time series channel, and gets its own page in the weekly PDF. Strava rides have no balance data; run **Update ride history** to add it to FIT rides saved before.
 - Energy and fuel (estimated from power, nothing to log): energy burned per ride (kcal is about kJ), the carbohydrate and fat behind it from a typical fuel-mix curve, a carbohydrate guide in g/h for the ride's length and intensity, and how much of a full glycogen store the ride would use. A **Fuel** section on the Training page shows weekly or monthly energy and carbohydrate, and the weekly e-mail mentions the week's total. Estimates and guidance, not dietary advice; run **Update ride history** to add the carbohydrate figures to rides saved before.
+- References: a **References** page in the app lists the literature behind every model (training load, critical power and W′, durability, aerodynamics, heat balance, energy and fuel, left / right balance) and says what in the app relies on each source. The list lives in `src/references.py` (`python -m src.references` prints it as Markdown). When you add a model, constant or threshold, add its source there; a test keeps the numbers the page quotes in step with the code.
 - Recovery & efficiency: heart-rate recovery 60 s after hard efforts, efficiency factor and aerobic decoupling on steady endurance rides.
 - Computed from compact per-ride histograms stored at save time; older rides get them via **Update ride history**.
 
@@ -124,6 +125,7 @@ BikeToolsAnalyzer/
     │   ├── wahoo.py          # Wahoo Cloud API client (OAuth, workouts, FIT download)
     │   ├── wahoo_import.py   # Wahoo single-ride, history and sync
     │   └── weather.py
+    ├── references.py       # the literature behind each model, shown on the References page
     ├── physics/            # Core Science Logic
     │   ├── aerodyn.py
     │   └── thermal.py
@@ -132,6 +134,7 @@ BikeToolsAnalyzer/
         ├── sidebar.py          # navigation, user profile, import, Strava connection
         ├── ride_analysis.py    # Analyze Upload page
         ├── user_corner.py      # User Corner: profile summary and ride-history update
+        ├── references_page.py  # References page
         ├── climb_estimator.py  # per-climb what-if estimator (weight, CdA, Crr, power)
         ├── deeper_analytics.py # Training page section: power-HR, power-cadence, recovery/efficiency
         ├── report_pdf.py       # PDF training report (matplotlib)

@@ -60,7 +60,7 @@ def render_sidebar():
     user_height = 175
     user_w_prime = 20000.0
 
-    pages = [mark("Analyze Upload"), mark("Training"), mark("User Corner")]
+    pages = [mark("Analyze Upload"), mark("Training"), mark("User Corner"), mark("References")]
     app_mode = st.radio(t("Go to"), pages, horizontal=True, key="nav_top", label_visibility="collapsed", format_func=tr)
 
     st.sidebar.markdown("---")
