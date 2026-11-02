@@ -345,6 +345,18 @@ def migrate_db():
                 created_at INTEGER NOT NULL
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                label TEXT,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
 
 
 _init_lock = threading.Lock()

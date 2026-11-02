@@ -15,9 +15,10 @@ from .weekly import (claim_weekly_email, delete_smtp_settings, finish_weekly_ema
 from .planning import (add_structured_session, delete_planned_session, get_planned_sessions, replace_planned_sessions)
 from .bikes import (_BIKE_FIELDS, _BIKE_PARTS, _bike_values, delete_bike, get_bikes, get_ride_bike, save_bike, set_default_bike, set_ride_bike, update_bike)
 from .ride_weather import (get_ride_weather, save_ride_weather)
+from .tokens import (TOKEN_PREFIX, create_api_token, hash_token, list_api_tokens, lookup_api_token, revoke_api_token)
 from .schema import (MIGRATIONS, _has_rides, _init_db, _init_lock, _initialised, _migration_per_user_file_hash, _migration_query_indexes, _migration_ride_weather, _migration_utc_dates, init_db, migrate_db, run_migrations, schema_version)
-from . import core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema
-_SUBMODULES = (core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, schema)
+from . import core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, tokens, schema
+_SUBMODULES = (core, users, rides, stats, auth, weekly, planning, bikes, ride_weather, tokens, schema)
 
 
 class _DbModule(types.ModuleType):
