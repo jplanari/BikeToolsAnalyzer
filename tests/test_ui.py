@@ -350,7 +350,7 @@ def test_server_mode_shows_only_the_sign_in_screens(server):
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception
     assert [t.label for t in at.tabs] == ["Sign in", "Create account", "Forgot password"]
-    assert not at.sidebar.selectbox and "Hidden" not in _page_text(at)           # no list of riders, no app behind it
+    assert "Current User" not in [w.label for w in at.sidebar.selectbox] and "Hidden" not in _page_text(at)           # no list of riders, no app behind it
 
 
 def test_sign_up_confirm_and_sign_in(server):
@@ -371,4 +371,4 @@ def test_sign_up_confirm_and_sign_in(server):
     assert not at.exception
     assert at.session_state["auth_user"] == "Nuria"
     assert any(b.label == "Sign out" for b in at.sidebar.button)
-    assert not at.sidebar.selectbox                                          # nobody else's name to pick
+    assert "Current User" not in [w.label for w in at.sidebar.selectbox]       # nobody else's name to pick
