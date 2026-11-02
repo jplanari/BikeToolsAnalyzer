@@ -157,7 +157,7 @@ def ride(user_name, ride_id):
         'if': _num(row.get('if_factor'), 2), 'tss': _int(row.get('tss')), 'tss_source': row.get('tss_source'),
         'vi': _num(row.get('vi'), 2), 'ef': _num(row.get('ef'), 2), 'decoupling_pct': _num(row.get('decoupling_pct'), 1),
         'avg_hr': _int(row.get('avg_hr')), 'kj': _int(row.get('kj')),
-        'ftp': _int(row.get('ftp_at_ride')) or _int(user.get('ftp')),
+        'ftp': _int(row.get('ftp_at_ride')) or _int(user.get('ftp')), 'weight_kg': _num(user.get('weight'), 1),
         'zones': {'power': _zones(rid, 'power'), 'hr': _zones(rid, 'hr')},
         'power_curve': _ride_curve(rid),
         'energy': _energy(row, _num(user.get('weight'))),
