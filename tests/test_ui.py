@@ -341,7 +341,7 @@ def server(empty_db, monkeypatch):
     return mails
 
 
-def _texts(at):
+def _page_text(at):
     return " ".join(str(x.value) for x in list(at.markdown) + list(at.error) + list(at.success) + list(at.info))
 
 
@@ -350,7 +350,7 @@ def test_server_mode_shows_only_the_sign_in_screens(server):
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception
     assert [t.label for t in at.tabs] == ["Sign in", "Create account", "Forgot password"]
-    assert not at.sidebar.selectbox and "Hidden" not in _texts(at)           # no list of riders, no app behind it
+    assert not at.sidebar.selectbox and "Hidden" not in _page_text(at)           # no list of riders, no app behind it
 
 
 def test_sign_up_confirm_and_sign_in(server):
