@@ -297,7 +297,7 @@ def migrate_db():
                 athlete_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
-                expires_at INTEGER NOT NULL,
+                expires_at BIGINT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
@@ -308,7 +308,7 @@ def migrate_db():
                 wahoo_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
-                expires_at INTEGER NOT NULL,
+                expires_at BIGINT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
