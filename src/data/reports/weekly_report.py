@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.data import db
 from src.data.reports import mailer
+from src.analysis import nutrition as nut
 from src.i18n import current_language, t, tn, use_language
 
 MAX_RIDES = 14                     # ride sections per report: keeps the PDF and the build time bounded
@@ -137,7 +138,9 @@ def build_weekly_pdf(user_name, monday=None, sunday=None, today=None):
     summary = {'rides': len(rides), 'distance_km': sum(r.get('distance_km') or 0 for r in rides),
                'ascent_m': sum(r.get('elevation_m') or 0 for r in rides),
                'hours': sum(r.get('moving_s') or 0 for r in rides) / 3600.0,
-               'tss': sum(r.get('tss') or 0 for r in rides), 'pages': len(figures), 'failures': failures}
+               'tss': sum(r.get('tss') or 0 for r in rides),
+               'kcal': sum(nut.kcal_from_kj(r.get('kj')) or 0 for r in rides),
+               'carb_g': sum(r.get('carb_g') or 0 for r in rides), 'pages': len(figures), 'failures': failures}
     return pdf, summary
 
 
@@ -147,6 +150,10 @@ def body_text(user_name, monday, sunday, summary):
         stats = tn("{n} ride, {km:.0f} km, {m:.0f} m of climbing, {h:.1f} h moving time, {tss:.0f} TSS.",
                    "{n} rides, {km:.0f} km, {m:.0f} m of climbing, {h:.1f} h moving time, {tss:.0f} TSS.",
                    s['rides'], km=s['distance_km'], m=s['ascent_m'], h=s['hours'], tss=s['tss'])
+        if s.get('kcal'):
+            stats += " " + (t("About {kcal:,.0f} kcal burned on the bike, of which roughly {carb:,.0f} g carbohydrate.",
+                              kcal=s['kcal'], carb=s['carb_g']) if s.get('carb_g') else
+                            t("About {kcal:,.0f} kcal burned on the bike.", kcal=s['kcal']))
     else:
         stats = t("No rides this week.")
     return t("Hi {user_name},\n\nYour week {monday:%d %b} – {sunday:%d %b %Y}: {stats}\n\n"

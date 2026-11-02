@@ -53,7 +53,7 @@ def _iso_timestamp(ts):
 # 4: power after 1/2/3 MJ of work (durability); zone times on moving time only
 # 5: decoupling ignores coasting (0 W) seconds
 # 6: impossible sensor readings (power spikes, HR dropouts) removed before scoring
-METRICS_VERSION = 7              # 7: left/right balance (needs the original file, so older rides get it on update)
+METRICS_VERSION = 8              # 8: carbohydrate burned (energy and fuel); 7: left/right balance (both need the original file, so older rides get them on update)
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -183,12 +183,13 @@ def _metrics_fields(metrics):
         'bal_last_pct': _opt_float(metrics.get('bal_last_pct')),
         'bal_s': _opt_int(metrics.get('bal_s')),
         **{k: _opt_float(metrics.get(k)) for k in ('te_l', 'te_r', 'ps_l', 'ps_r')},
+        'carb_g': _opt_float(metrics.get('carb_g')),
         'metrics_version': METRICS_VERSION,
     }
 
 _METRIC_COLUMNS = ['duration_s', 'moving_s', 'kj', 'ftp_at_ride', 'lthr_at_ride', 'vi', 'ef',
                    'decoupling_pct', 'tss_source', 'hrr60_bpm', 'hrr_efforts', 'hr20_bpm', 'metrics_version',
-                   'bal_right_pct', 'bal_first_pct', 'bal_last_pct', 'bal_s', 'te_l', 'te_r', 'ps_l', 'ps_r']
+                   'bal_right_pct', 'bal_first_pct', 'bal_last_pct', 'bal_s', 'te_l', 'te_r', 'ps_l', 'ps_r', 'carb_g']
 
 def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     """Power records and zone times for one ride (caller deletes old ones)."""
@@ -268,7 +269,7 @@ def get_user_rides(user_name):
         c = conn.cursor()
         c.execute('''
             SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss,
-                   moving_s, tss_source, vi, ef, decoupling_pct, kj, metrics_version
+                   moving_s, tss_source, vi, ef, decoupling_pct, kj, carb_g, metrics_version
             FROM rides 
             WHERE user_id = ? 
             ORDER BY date_time DESC

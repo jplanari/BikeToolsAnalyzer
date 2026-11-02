@@ -34,6 +34,7 @@ from src.viz.bikes import choose_ride_bike
 from src.analysis.bikes import bike_physics, label as bike_label
 from src.viz import timeseries as ts
 from src.analysis import balance as bal
+from src.viz.fuel import render_fuel_summary
 from src.viz.save_file import file_button
 from src.i18n import t, mark, tr
 from src.i18n import session as i18n_session
@@ -163,7 +164,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     section = section_picker(sections, key=f"ride_section_{ride_id}")
 
     if section == "📊 Summary":
-        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs)
+        _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=settings.get('weight'))
         _render_report_expander(df, summary, settings, filename, total_dist, total_ascent, climbs, laps_df, user_name)
     elif section == "📈 Time series":
         _render_time_series(df)
@@ -178,7 +179,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
         render_segment_analysis(df, settings, lap_spans, climbs, ride_id=ride_id)
 
 
-def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs):
+def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, climbs, weight=None):
     duration_s = summary['duration_s']
     avg_speed = summary['avg_speed_kph']
     avg_power = summary['avg_power']
@@ -225,6 +226,9 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
               help=t("Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals."))
     
+    if summary.get('carb_g') is not None:
+        render_fuel_summary(summary, weight)
+
     if summary.get('bal_right_pct') is not None:
         _render_balance_summary(summary)
 

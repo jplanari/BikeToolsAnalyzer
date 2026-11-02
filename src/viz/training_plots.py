@@ -121,6 +121,24 @@ def plot_volume(vol, metric, label, mode='light'):
     return _layout(fig, None, label, pal, legend=False, hovermode='closest')
 
 
+def plot_energy(per, label, mode='light'):
+    """Energy burned per period, split into what came from carbohydrate and from fat (kcal), as stacked bars;
+    rides without a carbohydrate estimate count as 'not split'."""
+    pal = palette(mode)
+    fig = go.Figure()
+    if per is None or per.empty:
+        return fig
+    carb_kcal = per['carb_g'] * 4.0
+    fat_kcal = per['fat_g'] * 9.0
+    rest = (per['kcal'] - carb_kcal - fat_kcal).clip(lower=0)
+    for name, vals, colour in ((t('Carbohydrate'), carb_kcal, pal['series'][0]), (t('Fat'), fat_kcal, pal['series'][1]),
+                               (t('Not split'), rest, pal['muted'])):
+        if vals.sum() > 0:
+            fig.add_trace(go.Bar(x=per.index, y=vals, name=name, marker_color=colour,
+                                 hovertemplate='%{y:,.0f} kcal<extra>' + name + '</extra>'))
+    return _layout(fig, None, label, pal, hovermode='x unified', barmode='stack')
+
+
 # --- Power profile -----------------------------------------------------------
 
 _TICKS = dict(tickvals=[1, 5, 15, 60, 300, 1200, 3600, 18000],

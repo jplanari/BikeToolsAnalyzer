@@ -172,6 +172,8 @@ def migrate_db():
                          ("bal_s", "INTEGER"), ("te_l", "REAL"), ("te_r", "REAL"), ("ps_l", "REAL"),
                          ("ps_r", "REAL")]:
             _add_column(c, 'rides', col, typ)
+        # Carbohydrate burned in the ride (g), estimated from power (src/analysis/nutrition.py); NULL = no power
+        _add_column(c, 'rides', 'carb_g', 'REAL')
         c.execute('''
             CREATE TABLE IF NOT EXISTS bikes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
