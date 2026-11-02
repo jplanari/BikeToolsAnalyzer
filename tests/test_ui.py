@@ -298,6 +298,9 @@ def test_gallery_opens_a_saved_ride_and_draws_only_the_chosen_section(seeded_db,
     section.set_value("⚡ Power").run()
     _no_errors(at)
     assert "Power Curve" in _texts(at.subheader) and at.get("plotly_chart")
+    # look the radio up again: a handle from an earlier run re-reads that run's widgets, such as the fuel log form
+    # of the Summary, whose state is gone once another section is drawn
+    section = next(r for r in at.radio if r.label == "Section")
     section.set_value("📈 Time series").run()
     _no_errors(at)
     assert at.get("plotly_chart") and "Channels under the elevation profile" in [m.label for m in at.multiselect]
