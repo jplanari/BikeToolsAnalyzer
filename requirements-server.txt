@@ -1,0 +1,2 @@
+# Extra requirement for a shared server on PostgreSQL (BIKETOOLS_DATABASE_URL=postgresql://...). The desktop app does not need it.
+psycopg[binary]>=3.1,<4

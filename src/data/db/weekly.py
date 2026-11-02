@@ -1,7 +1,7 @@
 """SMTP account and the weekly e-mail subscriptions."""
 from src.data import secrets_store as _sec
 import pandas as pd
-import sqlite3
+from .dialect import Row, integrity_errors, operational_errors
 from .auth import _decrypt_fields
 from .core import connect
 from .users import get_user_data
@@ -19,7 +19,7 @@ def save_smtp_settings(host, port, security, username, password, sender):
 
 def get_smtp_settings():
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM smtp_settings WHERE id = 1").fetchone()
     return _decrypt_fields(row, ('password',))
 
@@ -42,7 +42,7 @@ def get_weekly_email(user_name):
     if not user:
         return None
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM weekly_email WHERE user_id = ?", (user['id'],)).fetchone()
     return dict(row) if row else None
 

@@ -3,7 +3,8 @@ from src.data import secrets_store as _sec
 import pandas as pd
 import re
 import secrets
-import sqlite3
+from .dialect import Row, integrity_errors, operational_errors
+from . import dialect
 import time
 from .core import connect
 from .users import get_user_data
@@ -52,7 +53,7 @@ def encrypt_plaintext_secrets():
     with connect() as conn:
         pending = []
         for table, key, cols in _SECRET_COLUMNS:
-            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+            if not dialect.table_exists(conn, table):
                 continue
             for row in conn.execute(f"SELECT {key}, {', '.join(cols)} FROM {table}").fetchall():
                 pending += [(table, key, row[0], col, value) for col, value in zip(cols, row[1:])
@@ -68,7 +69,7 @@ def get_strava_auth(user_name):
     if not user:
         return None
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM strava_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return _decrypt_fields(row, ('access_token', 'refresh_token'))
 
@@ -104,7 +105,7 @@ def get_wahoo_auth(user_name):
     if not user:
         return None
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM wahoo_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return _decrypt_fields(row, ('access_token', 'refresh_token'))
 
@@ -128,7 +129,7 @@ def save_app_credentials(provider, client_id, client_secret, redirect_uri=None, 
 
 def get_app_credentials(provider):
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM app_credentials WHERE provider = ?", (provider,)).fetchone()
     return _decrypt_fields(row, ('client_secret',))
 
@@ -154,7 +155,7 @@ def get_polar_auth(user_name):
     if not user:
         return None
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         row = conn.execute("SELECT * FROM polar_auth WHERE user_id = ?", (user['id'],)).fetchone()
     return _decrypt_fields(row, ('access_token',))
 
