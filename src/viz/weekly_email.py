@@ -4,6 +4,7 @@ import streamlit as st
 from src.data import db
 from src.data.reports import mailer
 from src.data.reports import weekly_report as wr
+from src import serverconf
 from src.i18n import mark, t, tr
 
 PRESETS = {"Gmail": ("smtp.gmail.com", 587, "starttls"), "Outlook / Office 365": ("smtp.office365.com", 587, "starttls"),
@@ -11,6 +12,8 @@ PRESETS = {"Gmail": ("smtp.gmail.com", 587, "starttls"), "Outlook / Office 365":
 
 
 def _server_form():
+    if serverconf.server_mode():                  # the server's mail account is set by whoever runs it
+        return
     smtp = db.get_smtp_settings()
     with st.expander(t("Mail server") + (" ✅" if smtp else t(" (needed first)")), expanded=not smtp):
         st.caption(t("The app sends the e-mail through an account you own. Gmail, Outlook and iCloud need an "

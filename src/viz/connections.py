@@ -3,6 +3,7 @@ import streamlit as st
 
 from src.data.providers import credentials as cr
 from src.data import db
+from src import serverconf
 from src.i18n import t, tr
 
 
@@ -16,7 +17,8 @@ def _secrets_section(provider):
 
 def get_credentials(provider):
     """What the app uses for this provider (see src.data.providers.credentials.resolve), or None when not set up."""
-    return cr.resolve(provider, db.get_app_credentials(provider), _secrets_section(provider))
+    saved = None if serverconf.server_mode() else db.get_app_credentials(provider)     # on a server: secrets only
+    return cr.resolve(provider, saved, _secrets_section(provider))
 
 
 def credentials_form(provider, where="sidebar"):
@@ -49,6 +51,9 @@ def credentials_form(provider, where="sidebar"):
 def setup_box(provider):
     """Shown in the sidebar when a provider has no credentials yet."""
     label = cr.PROVIDERS[provider]["label"]
+    if serverconf.server_mode():                  # riders never see or enter the server's API credentials
+        st.sidebar.info(t("{label} is not available on this server.", label=label))
+        return
     st.sidebar.warning(t("{label} isn't set up yet. Register an app with {label} and enter its credentials below (one "
                             'time).', label=label))
     with st.sidebar.expander(t('Set up {label}', label=label), expanded=True):
@@ -57,6 +62,8 @@ def setup_box(provider):
 
 def render_connections():
     """User Corner: where each provider's credentials come from, and a way to change or remove them."""
+    if serverconf.server_mode():
+        return
     st.subheader(t("🔌 Connections"))
     st.caption(t("The API app each service needs (a client ID and secret you get when you register one). They are "
                "saved on this computer, in the app's database."))

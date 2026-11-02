@@ -16,6 +16,7 @@ from src.data.db import (save_user,
                          create_oauth_state,
                          consume_oauth_state,
                          data_stamp)
+from src import serverconf
 from src.viz import theme
 from src.i18n import t, mark, session as i18n_session, tr
 from src.viz.connections import get_credentials, setup_box
@@ -35,6 +36,15 @@ from src.data.imports.strava_import import (list_recent_rides,
                                     sync_new_rides)
 
 
+def _oauth_rider(state):
+    """The rider an OAuth round trip was started for. On a server it must be the one signed in now: a link opened in
+    another account's browser must not attach someone's Strava to a different rider."""
+    name = consume_oauth_state(state)
+    if name and serverconf.server_mode() and name != st.session_state.get("auth_user"):
+        return None
+    return name
+
+
 def _follow_the_data(user_name):
     """FTP / LTHR left empty are re-estimated from the rider's rides (old rides get their HR peak once)."""
     user = get_user_data(user_name)
@@ -49,6 +59,39 @@ def _follow_the_data(user_name):
                 st.session_state[f"hr20_done_{user_name}"] = True     # nothing left to read: stop looking
     refresh_auto_thresholds(user_name)
     st.session_state[stamp_key] = data_stamp()
+
+
+def _delete_user_popover(selected_user_name):
+    with st.popover(t("Delete user")):
+        st.warning(t('This removes **{selected_user_name}** with all their rides, records and plans. It cannot be '
+                     'undone.', selected_user_name=selected_user_name))
+        if st.button(t('Yes, delete {selected_user_name}', selected_user_name=selected_user_name), type="primary",
+                     key="confirm_delete_user"):
+            delete_user(selected_user_name)
+            st.rerun()
+
+
+def _create_user_form():
+    with st.form("user_form"):
+        new_name = st.text_input(t("Name"))
+        new_ftp = st.number_input(t("FTP (Watts) · optional"), value=None, min_value=1, step=5,
+                                  placeholder=t("estimated from your rides"), help=theme.ftp_help())
+        new_lthr = st.number_input(t("LTHR (bpm) · optional"), value=None, min_value=1, step=1,
+                                   placeholder=t("estimated from your rides"), help=theme.lthr_help())
+        new_wprime = st.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5,
+                                     placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.w_prime_help())
+        new_weight = st.number_input(t("Weight (kg)"), value=70.0)
+        new_height = st.number_input(t("Height (cm)"), value=175)
+        submitted = st.form_submit_button(t("Save User"))
+        if submitted and new_name:
+            success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
+                                      int(new_lthr) if new_lthr else None, new_weight, new_height,
+                                      theme.w_prime_from_kj(new_wprime))
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
 
 
 def render_sidebar():
@@ -67,14 +110,23 @@ def render_sidebar():
     st.sidebar.header(t("👤 User Profile"))
 
     # User Management
-    tab_select, tab_create = st.sidebar.tabs([t("Select User"), t("Create/Edit")])
-    
+    server = serverconf.server_mode()
+    if server:                                   # one rider per account: no list of riders, no creating or deleting here
+        from src.viz import auth_gate
+        tab_select, tab_create = st.sidebar.container(), None
+    else:
+        tab_select, tab_create = st.sidebar.tabs([t("Select User"), t("Create/Edit")])
+
     selected_user_name = None
-    
+
     with tab_select:
-        users = get_all_users()
+        users = [st.session_state["auth_user"]] if server else get_all_users()
+        if server:
+            selected_user_name = users[0]
+            auth_gate.account_box(selected_user_name)
         if users:
-            selected_user_name = st.selectbox(t("Current User"), users, key="current_user")
+            if not server:
+                selected_user_name = st.selectbox(t("Current User"), users, key="current_user")
             if selected_user_name:
                 _follow_the_data(selected_user_name)
                 u_data = get_user_data(selected_user_name)
@@ -88,36 +140,14 @@ def render_sidebar():
                     user_w_prime = u_data.get('w_prime') or user_w_prime
 
 
-            with st.popover(t("Delete user")):
-                st.warning(t('This removes **{selected_user_name}** with all their rides, records and plans. It cannot be '
-                                'undone.', selected_user_name=selected_user_name))
-                if st.button(t('Yes, delete {selected_user_name}', selected_user_name=selected_user_name), type="primary", key="confirm_delete_user"):
-                    delete_user(selected_user_name)
-                    st.rerun()
+            if not server:
+                _delete_user_popover(selected_user_name)
         else:
             st.info(t("No users found. Create one!"))
 
-    with tab_create:
-        with st.form("user_form"):
-            new_name = st.text_input(t("Name"))
-            new_ftp = st.number_input(t("FTP (Watts) · optional"), value=None, min_value=1, step=5,
-                                      placeholder=t("estimated from your rides"), help=theme.ftp_help())
-            new_lthr = st.number_input(t("LTHR (bpm) · optional"), value=None, min_value=1, step=1,
-                                       placeholder=t("estimated from your rides"), help=theme.lthr_help())
-            new_wprime = st.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5,
-                                         placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.w_prime_help())
-            new_weight = st.number_input(t("Weight (kg)"), value=70.0)
-            new_height = st.number_input(t("Height (cm)"), value=175)
-            submitted = st.form_submit_button(t("Save User"))
-            if submitted and new_name:
-                success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
-                                          int(new_lthr) if new_lthr else None, new_weight, new_height,
-                                          theme.w_prime_from_kj(new_wprime))
-                if success:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
+    if tab_create is not None:
+        with tab_create:
+            _create_user_form()
 
     i18n_session.picker(selected_user_name)
 
@@ -191,7 +221,7 @@ def handle_strava_callback():
     if state.startswith(POLAR_STATE_PREFIX):
         return _finish_polar_callback(state[len(POLAR_STATE_PREFIX):], code, error)
 
-    user_name = consume_oauth_state(state)
+    user_name = _oauth_rider(state)
     if not user_name:
         st.error(t("Strava connection failed: the request expired or did not come from this app. Please try again."))
         return
@@ -228,7 +258,7 @@ def _wahoo_config():
 
 
 def _finish_wahoo_callback(state, code, error):
-    user_name = consume_oauth_state(state)
+    user_name = _oauth_rider(state)
     if not user_name:
         st.error(t("Wahoo connection failed: the request expired or did not come from this app. Please try again."))
         return
@@ -259,7 +289,7 @@ def _polar_config():
 
 
 def _finish_polar_callback(state, code, error):
-    user_name = consume_oauth_state(state)
+    user_name = _oauth_rider(state)
     if not user_name:
         st.error(t("Polar connection failed: the request expired or did not come from this app. Please try again."))
         return
