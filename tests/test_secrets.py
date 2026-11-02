@@ -44,6 +44,7 @@ def test_key_file_is_private_and_reused(temp_db):
     assert key.read_bytes() == first
 
 
+@pytest.mark.sqlite_only
 def test_tokens_are_encrypted_in_the_file_and_plain_through_the_api(temp_db):
     auth = {'athlete_id': 1, 'athlete_name': 'A', 'access_token': 'AT', 'refresh_token': 'RT', 'expires_at': 99}
     db.save_strava_auth("Ana", auth)
@@ -57,6 +58,7 @@ def test_tokens_are_encrypted_in_the_file_and_plain_through_the_api(temp_db):
     assert db.get_polar_auth("Ana")['access_token'] == 'PT'
 
 
+@pytest.mark.sqlite_only
 def test_smtp_password_is_encrypted(temp_db):
     if not hasattr(db, "save_smtp_settings"):
         pytest.skip("weekly e-mail not in this build")
@@ -65,6 +67,7 @@ def test_smtp_password_is_encrypted(temp_db):
     assert db.get_smtp_settings()['password'] == "pw"
 
 
+@pytest.mark.sqlite_only
 def test_existing_plain_secrets_are_encrypted_on_start(temp_db):
     conn = sqlite3.connect(temp_db)
     uid = conn.execute("SELECT id FROM users").fetchone()[0]

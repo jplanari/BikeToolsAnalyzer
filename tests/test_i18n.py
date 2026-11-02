@@ -132,6 +132,7 @@ def test_the_riders_language_is_saved_and_unknown_ones_are_dropped(tmp_path, mon
     assert db.get_user_data("Ana")['language'] is None
 
 
+@pytest.mark.sqlite_only
 def test_an_old_database_gains_the_language_column(tmp_path, monkeypatch):
     import sqlite3
     from src.data import db

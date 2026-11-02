@@ -29,6 +29,7 @@ def test_parse_dates_empty():
     assert db._parse_dates(pd.Series([None, None])).isna().all()
 
 
+@pytest.mark.sqlite_only
 def test_indexes_created(temp_db):
     import sqlite3
     names = {r[0] for r in sqlite3.connect(db.DB_FILE).execute(

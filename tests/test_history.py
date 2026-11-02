@@ -39,6 +39,7 @@ def test_ftp_used_for_ride():
     assert ftp_used_for_ride({'norm_power': 0, 'if_factor': 0}, 300) == 300
 
 
+@pytest.mark.sqlite_only
 def test_recompute_backfills_metrics_and_keeps_original_ftp(temp_db):
     # Saved when FTP was 250: NP 200, IF 0.8 (and, pre-Phase-0, no date)
     _legacy_ride(1, {'np': 200, 'if': 0.8, 'tss': 64})
@@ -66,6 +67,7 @@ def test_recompute_backfills_metrics_and_keeps_original_ftp(temp_db):
     assert zones == {'Z1': 0, 'Z2': 0, 'Z3': 3599, 'Z4': 0, 'Z5': 0, 'Z6': 0, 'Z7': 0}
 
 
+@pytest.mark.sqlite_only
 def test_recompute_gives_hr_tss_to_rides_without_power(temp_db):
     s = make_streams(n=3600, hr=170.0)
     del s["watts"]
@@ -86,6 +88,7 @@ def test_recompute_reports_unreadable_files(temp_db):
     assert db.count_rides_needing_update("Rider") == 1
 
 
+@pytest.mark.sqlite_only
 def test_new_rides_are_saved_up_to_date(temp_db):
     from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage
     payload = sv.build_ride_payload(activity(3), make_streams(n=1800))
@@ -101,6 +104,7 @@ def test_new_rides_are_saved_up_to_date(temp_db):
     assert sum(db.get_ride_zones([r['id']], 'hr').values()) == r['moving_s'] == 1799
 
 
+@pytest.mark.sqlite_only
 def test_recompute_backs_up_the_database_first(temp_db):
     import glob
     _legacy_ride(1, {'np': 200, 'if': 0.8, 'tss': 64})

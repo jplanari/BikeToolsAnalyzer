@@ -175,7 +175,7 @@ def migrate_db():
         for col in ("ftp_auto", "lthr_auto"):
             _add_column(c, 'users', col, 'INTEGER DEFAULT 0')
 
-        _add_column(c, 'rides', 'strava_activity_id', 'INTEGER')
+        _add_column(c, 'rides', 'strava_activity_id', 'BIGINT')
         # Phase 1 per-ride metrics. metrics_version marks rides whose stored
         # metrics predate the current calculation (0 = legacy) so they can be
         # recomputed from their stored files.
@@ -293,7 +293,7 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS strava_auth (
                 user_id INTEGER PRIMARY KEY,
-                athlete_id INTEGER,
+                athlete_id BIGINT,
                 athlete_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
@@ -304,7 +304,7 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS wahoo_auth (
                 user_id INTEGER PRIMARY KEY,
-                wahoo_user_id INTEGER,
+                wahoo_user_id BIGINT,
                 wahoo_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
@@ -354,8 +354,8 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS wahoo_sent (
                 session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
-                plan_id INTEGER NOT NULL,
-                workout_id INTEGER NOT NULL,
+                plan_id BIGINT NOT NULL,
+                workout_id BIGINT NOT NULL,
                 starts TEXT NOT NULL,                -- UTC ISO sent to Wahoo
                 sent_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
