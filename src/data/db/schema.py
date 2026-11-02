@@ -267,6 +267,17 @@ def migrate_db():
         ''')
         _add_column(c, 'users', 'crank_mm', 'REAL DEFAULT 172.5')
         _add_column(c, 'planned_sessions', 'blocks', 'TEXT')
+        # Rides the rider deleted that came from Strava / Wahoo / Polar: remembered by file name, so the next sync
+        # does not bring them back (a file the rider uploaded themselves is not remembered: they can upload it again).
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS deleted_rides (
+                user_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                deleted_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, filename),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
 
         # One copy of each Strava activity per rider (NULLs, i.e. uploads, are exempt)
         c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_rides_user_strava
