@@ -89,7 +89,7 @@ def _card(r, user_name):
         st.markdown(f"{_num(r.get('distance_km'), '.1f', ' km')} · ↑ {_num(r.get('elevation_m'), '.0f', ' m')} · {duration}")
         st.caption(f"NP {_num(r.get('norm_power'), '.0f', ' W')} · TSS {_num(r.get('tss'), '.0f')}")
         if st.button(t("Open ride"), key=f"open_ride_{r['id']}", use_container_width=True):
-            name, content = get_ride_file(int(r["id"]))
+            name, content = get_ride_file(user_name, int(r["id"]))
             if content is None:
                 st.error(t("The stored file for this ride is missing."))
             else:

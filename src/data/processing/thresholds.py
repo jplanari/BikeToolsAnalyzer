@@ -72,12 +72,12 @@ def backfill_hr20(user_name, limit=25):
     for ride_id, filename in rows:
         peak = 0.0
         try:
-            _, content = db.get_ride_file(ride_id)
+            _, content = db.get_ride_file(user_name, ride_id)
             if content is not None:
                 df, _, _ = prepare_ride(filename or "", content)
                 if 'hr' in df.columns:
                     peak = float(estimate_hr_threshold(df['hr'])[1] or 0.0)
         except Exception:
             peak = 0.0
-        db.set_ride_hr20(ride_id, peak)
+        db.set_ride_hr20(user_name, ride_id, peak)
     return len(rows)

@@ -154,7 +154,7 @@ def test_sync_imports_new_rides_once(connected, fake_polar):
     assert db.get_imported_polar_ids("Rider") == {"aaa111", "ccc333"}
     rides = {r["filename"]: r for r in db.get_user_rides("Rider")}
     assert rides["polar_aaa111.fit"]["norm_power"] == 200
-    assert db.get_ride_file(rides["polar_aaa111.fit"]["id"])[1] == b"FIT:aaa111"      # the FIT file is kept
+    assert db.get_ride_file("Rider", rides["polar_aaa111.fit"]["id"])[1] == b"FIT:aaa111"      # the FIT file is kept
 
     fake_polar["download"].clear()
     again = pi.sync_new_rides("Rider", ftp=250)

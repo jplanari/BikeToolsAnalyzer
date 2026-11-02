@@ -75,7 +75,7 @@ def test_new_rides_store_a_compressed_file_and_leave_the_row_small(temp_db):
     codec, blob = conn.execute("SELECT codec, content FROM ride_files").fetchone()
     assert codec == "zlib" and len(blob) < len(content) / 5
     rid = conn.execute("SELECT id FROM rides").fetchone()[0]
-    assert db.get_ride_file(rid) == ("big.json", content)
+    assert db.get_ride_file("Rider", rid) == ("big.json", content)
 
 
 @pytest.mark.sqlite_only
@@ -84,7 +84,7 @@ def test_incompressible_files_are_stored_raw(temp_db):
     content = os.urandom(2000)
     _ride("noise.fit", content)
     rid = sqlite3.connect(db.DB_FILE).execute("SELECT id FROM rides").fetchone()[0]
-    assert db.get_ride_file(rid)[1] == content
+    assert db.get_ride_file("Rider", rid)[1] == content
     assert sqlite3.connect(db.DB_FILE).execute("SELECT codec FROM ride_files").fetchone()[0] == "raw"
 
 
@@ -111,7 +111,7 @@ def test_old_database_is_migrated_once_with_a_backup(tmp_path, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM rides WHERE file_content IS NOT NULL").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM ride_files").fetchone()[0] == 60
     for rid, name in conn.execute("SELECT id, filename FROM rides"):
-        assert db.get_ride_file(rid) == (name, payloads[name])
+        assert db.get_ride_file("Rider", rid) == (name, payloads[name])
     assert os.path.getsize(path) < size_before / 3      # compressed and vacuumed
     backups = glob.glob(str(tmp_path / "backups" / "*before-file-migration.db"))
     assert len(backups) == 1
@@ -130,7 +130,7 @@ def test_unmigrated_row_still_readable(temp_db):
                  (uid, b"legacy"))
     conn.commit()
     rid = conn.execute("SELECT id FROM rides").fetchone()[0]
-    assert db.get_ride_file(rid) == ("x.gpx", b"legacy")
+    assert db.get_ride_file("Rider", rid) == ("x.gpx", b"legacy")
 
 
 # --- Locked databases ----------------------------------------------------------------

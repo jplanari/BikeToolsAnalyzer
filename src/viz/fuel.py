@@ -45,14 +45,14 @@ def render_fuel_summary(summary, weight, ride_id=None, user_name=None):
         st.caption(t("{word} carbohydrate load: about {used:.0%} of a full glycogen store (~{store:.0f} g).",
                      word=tr(nut.LOADS[word]), used=used, store=nut.glycogen_store(weight)))
     if ride_id is not None:
-        render_fuel_log(summary, weight, ride_id)
+        render_fuel_log(summary, weight, ride_id, user_name)
     elif user_name is None and summary.get('carb_g') is not None:
         st.caption(t("Choose a user to log what you ate on this ride."))
 
 
-def render_fuel_log(summary, weight, ride_id):
+def render_fuel_log(summary, weight, ride_id, user_name):
     """Form to log the carbohydrate eaten and the fluid drunk on a saved ride, and what that implies."""
-    eaten, fluid = db.get_ride_fuel(ride_id)
+    eaten, fluid = db.get_ride_fuel(user_name, ride_id)
     with st.form(f"fuel_log_{ride_id}"):
         c1, c2, c3 = st.columns([2, 2, 1])
         new_eaten = c1.number_input(t("Carbohydrate eaten (g)"), value=eaten, min_value=0.0,
@@ -64,7 +64,7 @@ def render_fuel_log(summary, weight, ride_id):
         c3.write("")
         saved = c3.form_submit_button(t("Save"))
     if saved:
-        ok, message = db.set_ride_fuel(ride_id, new_eaten, new_fluid)
+        ok, message = db.set_ride_fuel(user_name, ride_id, new_eaten, new_fluid)
         if not ok:
             st.error(t("Could not save: {message}", message=message))
             return

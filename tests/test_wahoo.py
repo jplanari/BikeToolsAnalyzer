@@ -124,7 +124,7 @@ def test_import_history(connected, fake_wahoo):
 
     rides = {r["filename"]: r for r in db.get_user_rides("Rider")}
     assert rides["wahoo_10.fit"]["norm_power"] == 200
-    name, content = db.get_ride_file(rides["wahoo_10.fit"]["id"])
+    name, content = db.get_ride_file("Rider", rides["wahoo_10.fit"]["id"])
     assert name == "wahoo_10.fit" and content == b"FIT:https://cdn/10.fit"      # original file kept
 
 

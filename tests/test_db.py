@@ -64,8 +64,8 @@ def test_get_ride_file(temp_db):
     db.save_ride("Rider", "a.gpx", b"payload", meta, {})
     ride_id = db.get_user_rides("Rider")[0]['id']
 
-    assert db.get_ride_file(ride_id) == ("a.gpx", b"payload")
-    assert db.get_ride_file(9999) == (None, None)
+    assert db.get_ride_file("Rider", ride_id) == ("a.gpx", b"payload")
+    assert db.get_ride_file("Rider", 9999) == (None, None)
 
 
 def test_w_prime_is_20_kj_unless_the_rider_gives_theirs(temp_db):

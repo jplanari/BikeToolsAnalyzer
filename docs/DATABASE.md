@@ -41,6 +41,19 @@ Keep to what both understand:
 - A new table with an integer `id` primary key must be added to `SERIAL_TABLES` in `dialect.py`.
 - Row access by name: `conn.row_factory = Row` (from `dialect`).
 
+## One rider never sees another's data
+
+Everything a rider owns hangs off `users.id`, and **every function that takes a ride, bike or session id also takes the
+rider** (`get_ride_file(user_name, ride_id)`, `delete_bike(user_name, bike_id)`, ...). The id is only honoured if the row
+belongs to that rider (`... AND user_id = (SELECT id FROM users WHERE name = ?)`); otherwise the call returns nothing /
+False, or raises `ValueError` for the batch rewrite `update_ride_metrics`. `tests/test_isolation.py` enforces this: one test
+fails when a new database function takes an id without the rider, and the others try every id-based function against the
+wrong rider. Add the rider to any new function of that kind.
+
+Server-wide data is not per rider and must never be offered to riders: `get_all_users`, the SMTP settings, the app
+(client id / secret) credentials, and `users_with_weekly_email`. A server's API must authenticate the rider first and only
+call the per-rider functions with that rider's name.
+
 ## Checking
 
 - `pytest` runs everything on SQLite. CI runs it a second time on PostgreSQL (the `postgres` job); a test about the

@@ -555,7 +555,7 @@ def _render_intake(user_name, stats, mode):
     st.subheader(t("What you ate"))
     st.caption(t("Log the carbohydrate eaten (and the fluid drunk) on a ride to compare it with what the ride burned and "
                  "with the guide. You can also log it on each ride's Summary."))
-    _intake_editor(stats)
+    _intake_editor(user_name, stats)
     totals = nut.intake_totals(stats)
     if not totals['logged']:
         st.info(t("No logs yet in this period. Fill in the table above for the rides where you took fuel."))
@@ -574,7 +574,7 @@ def _render_intake(user_name, stats, mode):
     _render_fade(stats, mode)
 
 
-def _intake_editor(stats, rows=12):
+def _intake_editor(user_name, stats, rows=12):
     """Editable table of the most recent rides that need fuel; writes the changed rows to the database."""
     if stats is None or stats.empty or 'carb_eaten_g' not in stats.columns:
         return
@@ -604,7 +604,7 @@ def _intake_editor(stats, rows=12):
         if not (_same(old[eaten_col], new[eaten_col]) and _same(old[fluid_col], new[fluid_col])):
             changed.append((int(new['ride_id']), new[eaten_col], new[fluid_col]))
     if changed and st.button(t("Save changes ({n})", n=len(changed)), key="fuel_log_save"):
-        failed = [db_set_ride_fuel(i, e, f) for i, e, f in changed]
+        failed = [db_set_ride_fuel(user_name, i, e, f) for i, e, f in changed]
         bad = [m for ok, m in failed if not ok]
         if bad:
             st.error(t("Could not save: {message}", message="; ".join(bad)))

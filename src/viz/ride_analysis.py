@@ -87,7 +87,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
     settings['bike_mass'], settings['crr'], settings['bike_name'] = bike_mass, crr, bike_label(bike)
 
     saved = get_ride_bike(user_name, file_bytes) if user_name else None
-    stored_weather = get_ride_weather(saved[0]) if saved else None
+    stored_weather = get_ride_weather(user_name, saved[0]) if saved else None
 
     with st.spinner(t('Processing {name} and fetching weather...', name=file_obj.name)):
         try:
@@ -325,7 +325,7 @@ def _keep_weather(user_name, file_bytes, payload, stored):
         return
     found = get_ride_bike(user_name, file_bytes)
     if found:
-        save_ride_weather(found[0], payload)
+        save_ride_weather(user_name, found[0], payload)
 
 
 def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bike_id=None):

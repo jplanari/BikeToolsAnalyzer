@@ -37,9 +37,9 @@ def get_rides_without_hr20(user_name, limit=25):
                                ORDER BY date_time DESC LIMIT ?""", (user['id'], limit)).fetchall()
     return [(r[0], r[1]) for r in rows]
 
-def set_ride_hr20(ride_id, bpm):
+def set_ride_hr20(user_name, ride_id, bpm):
     with connect() as conn:
-        conn.execute("UPDATE rides SET hr20_bpm = ? WHERE id = ?", (float(bpm or 0.0), ride_id))
+        conn.execute("UPDATE rides SET hr20_bpm = ? WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)", (float(bpm or 0.0), ride_id, user_name))
 
 def strava_id_from_filename(filename):
     """'strava_123.json' -> 123 (rides imported through the Strava API)."""
@@ -290,7 +290,7 @@ def get_user_rides(user_name):
 MAX_CARB_EATEN_G, MAX_FLUID_ML = 1500.0, 20000.0       # a typo guard, not a physiological limit
 
 
-def set_ride_fuel(ride_id, carb_eaten_g, fluid_ml):
+def set_ride_fuel(user_name, ride_id, carb_eaten_g, fluid_ml):
     """Stores what the rider ate and drank on a saved ride: grams of carbohydrate and millilitres of fluid. None
     clears a value (not logged); 0 means "nothing". Returns (ok, message)."""
     values = []
@@ -306,23 +306,25 @@ def set_ride_fuel(ride_id, carb_eaten_g, fluid_ml):
             return False, f"{name}: {v:g} is outside 0-{top:g}"
         values.append(v)
     with connect() as conn:
-        done = conn.execute("UPDATE rides SET carb_eaten_g = ?, fluid_ml = ? WHERE id = ?", (*values, ride_id)).rowcount
+        done = conn.execute("UPDATE rides SET carb_eaten_g = ?, fluid_ml = ? WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)",
+                            (*values, ride_id, user_name)).rowcount
     return (True, "") if done else (False, "ride not found")
 
 
-def get_ride_fuel(ride_id):
+def get_ride_fuel(user_name, ride_id):
     """(carbohydrate eaten g, fluid ml) logged for a ride; (None, None) when nothing was logged."""
     with connect() as conn:
-        row = conn.execute("SELECT carb_eaten_g, fluid_ml FROM rides WHERE id = ?", (ride_id,)).fetchone()
+        row = conn.execute("SELECT carb_eaten_g, fluid_ml FROM rides WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)",
+                           (ride_id, user_name)).fetchone()
     return (row[0], row[1]) if row else (None, None)
 
 
-def get_ride_file(ride_id):
+def get_ride_file(user_name, ride_id):
     """(filename, original file bytes) of a stored ride, or (None, None)."""
     with connect() as conn:
         row = conn.execute("""SELECT r.filename, f.codec, f.content, r.file_content
                               FROM rides r LEFT JOIN ride_files f ON f.ride_id = r.id
-                              WHERE r.id = ?""", (ride_id,)).fetchone()
+                              WHERE r.id = ? AND r.user_id = (SELECT id FROM users WHERE name = ?)""", (ride_id, user_name)).fetchone()
     if not row:
         return None, None
     filename, codec, blob, legacy = row
@@ -409,11 +411,15 @@ def get_rides_for_recompute(user_name, all_rides=False):
                                 FROM rides WHERE {where} ORDER BY date_time""", params).fetchall()
     return [dict(r) for r in rows]
 
-def update_ride_metrics(ride_id, metadata, power_curve_dict):
-    """Overwrites a ride's computed fields, power records and zone times."""
+def update_ride_metrics(user_name, ride_id, metadata, power_curve_dict):
+    """Overwrites a ride's computed fields, power records and zone times. Only the rider's own ride: anything else
+    raises ValueError and changes nothing."""
     with connect() as conn:
         c = conn.cursor()
-        user_id = c.execute("SELECT user_id FROM rides WHERE id = ?", (ride_id,)).fetchone()[0]
+        row = c.execute("SELECT user_id FROM rides WHERE id = ? AND user_id = (SELECT id FROM users WHERE name = ?)", (ride_id, user_name)).fetchone()
+        if row is None:
+            raise ValueError("ride not found")
+        user_id = row[0]
         cols = ['date_time', 'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power',
                 'avg_power', 'tss', 'if_factor', 'avg_hr'] + _METRIC_COLUMNS
         vals = [to_utc_iso(metadata.get('date')), metadata.get('dist', 0), metadata.get('ele', 0),

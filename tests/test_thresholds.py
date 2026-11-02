@@ -77,5 +77,5 @@ def test_rides_without_a_stored_hr_peak_are_listed_for_backfill(fresh_db):
     _ride("Old", "d.fit", "2026-10-25T07:00:00", 200, None)
     assert [f for _, f in db.get_rides_without_hr20("Old")] == ["d.fit"]
     rid = db.get_rides_without_hr20("Old")[0][0]
-    db.set_ride_hr20(rid, 0.0)
+    db.set_ride_hr20("Old", rid, 0.0)
     assert db.get_rides_without_hr20("Old") == [] and db.get_hr20("Old") == []
