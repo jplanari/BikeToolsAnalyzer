@@ -21,6 +21,7 @@ def _scalar(path, sql):
         conn.close()
 
 
+@pytest.mark.sqlite_only
 def test_new_database_uses_wal_and_current_schema_version(path):
     db.init_db()
     assert _scalar(path, "PRAGMA journal_mode") == "wal"
@@ -37,6 +38,7 @@ def test_init_db_runs_once_per_database_file(path, monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.sqlite_only
 def test_init_db_redoes_the_work_when_the_file_is_gone(path):
     import os
     db.init_db()
@@ -47,6 +49,7 @@ def test_init_db_redoes_the_work_when_the_file_is_gone(path):
     assert _scalar(path, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'users'") == 1
 
 
+@pytest.mark.sqlite_only
 def test_connect_commits_rolls_back_and_closes(path):
     db.init_db()
     with db.connect() as conn:
@@ -61,6 +64,7 @@ def test_connect_commits_rolls_back_and_closes(path):
         conn.execute("SELECT 1")
 
 
+@pytest.mark.sqlite_only
 def test_add_column_ignores_existing_but_not_real_errors(path):
     db.init_db()
     conn = sqlite3.connect(path)
@@ -105,6 +109,7 @@ def _legacy_global_hash_db(path):
     conn.close()
 
 
+@pytest.mark.sqlite_only
 def test_migration_rebuilds_rides_keeping_rows_children_and_indexes(path):
     _legacy_global_hash_db(path)
     db.save_user("Ana", 250, 170, 70.0)
@@ -138,6 +143,7 @@ def test_migration_rebuilds_rides_keeping_rows_children_and_indexes(path):
     assert _scalar(path, "SELECT COUNT(*) FROM rides WHERE user_id = %d" % uid) == 0
 
 
+@pytest.mark.sqlite_only
 def test_failed_migration_leaves_the_database_untouched(path, monkeypatch):
     _legacy_global_hash_db(path)
     def boom(conn):
@@ -156,6 +162,7 @@ def _ride(db_, name, start, f):
     return db_.save_ride(name, f"{f}.gpx", f.encode(), {'date': start, 'tss': 50, 'dist': 10.0}, {60: 100.0})
 
 
+@pytest.mark.sqlite_only
 def test_dates_are_stored_as_utc_instants(path):
     db.init_db()
     db.save_user("Ana", 250, 170, 70.0)
@@ -193,6 +200,7 @@ def test_other_zones_and_the_computer_default(path):
     assert db.get_user_data("Ana")['timezone'] is None
 
 
+@pytest.mark.sqlite_only
 def test_migration_normalizes_old_date_formats(path):
     db.init_db()
     db.save_user("Ana", 250, 170, 70.0)
@@ -208,6 +216,7 @@ def test_migration_normalizes_old_date_formats(path):
     assert _scalar(path, "SELECT date_time FROM power_records") == "2026-10-01T07:00:00+00:00"
 
 
+@pytest.mark.sqlite_only
 def test_new_indexes_exist(path):
     db.init_db()
     names = {r for r in (sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE type = 'index'"))}
@@ -216,6 +225,7 @@ def test_new_indexes_exist(path):
             "idx_rides_user_hash"} <= names
 
 
+@pytest.mark.sqlite_only
 def test_delete_user_takes_a_backup_first(path):
     import glob
     db.init_db()

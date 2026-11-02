@@ -6,6 +6,9 @@ import os
 import sqlite3
 import time
 
+from . import dialect
+from .dialect import Row, columns, table_exists          # noqa: F401  (re-exported for the other modules)
+
 # BIKETOOLS_DB lets you keep the database somewhere else, e.g. outside a OneDrive/Dropbox folder:
 # those sync tools (and Windows drives mounted in WSL) lock files unpredictably, which SQLite hates.
 DB_FILE = os.environ.get("BIKETOOLS_DB", "bikethools.db")
@@ -19,6 +22,8 @@ def _connect():
     left their rides, records and histograms behind. synchronous=NORMAL is the safe, faster
     setting for WAL (a crash can lose the last commit, never corrupt the file).
     """
+    if dialect.is_pg():
+        return dialect.connect_pg()
     conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -46,8 +51,7 @@ def connect(row_factory=None):
 
 def _add_column(c, table, column, definition):
     """ALTER TABLE ... ADD COLUMN when the column is missing. Any other error is a real one and propagates."""
-    existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
-    if column not in existing:
+    if column not in columns(c, table):
         c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
@@ -57,6 +61,8 @@ def _enable_wal():
     page reads). It needs shared memory, which network and some synced/mounted drives lack: when SQLite
     stays on its default journal there, that is fine, the app just works as before.
     """
+    if dialect.is_pg():
+        return None
     conn = sqlite3.connect(DB_FILE, timeout=BUSY_TIMEOUT_S)
     try:
         return conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
@@ -76,7 +82,7 @@ def backup_db(reason="manual", keep=None):
     since a failed backup should not block the work it was protecting.
     """
     import os, glob
-    if not os.path.exists(DB_FILE):
+    if dialect.is_pg() or not os.path.exists(DB_FILE):       # a server is backed up with pg_dump (docs/DATABASE.md)
         return None
     folder = os.path.join(os.path.dirname(os.path.abspath(DB_FILE)), "backups")
     stem = os.path.splitext(os.path.basename(DB_FILE))[0]
@@ -107,6 +113,9 @@ def data_stamp():
     stay valid between interactions and refresh themselves after any save or update.
     """
     import os
+    if dialect.is_pg():
+        with connect() as conn:
+            return ("pg", conn.execute("SELECT last_value FROM biketools_data_version").fetchone()[0])
     stamp = [DB_FILE]
     for path in (DB_FILE, DB_FILE + "-wal"):
         try:

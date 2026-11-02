@@ -1,6 +1,6 @@
 """Bikes by components."""
 import hashlib
-import sqlite3
+from .dialect import Row, integrity_errors, operational_errors
 from .core import connect
 from .users import get_user_data
 from src.i18n import t
@@ -29,10 +29,10 @@ def save_bike(user_name, name, parts, make_default=False):
         with connect() as conn:
             first = conn.execute("SELECT COUNT(*) FROM bikes WHERE user_id = ?", (user['id'],)).fetchone()[0] == 0
             cols = ['user_id', 'name'] + _BIKE_FIELDS + ['is_default']
-            conn.execute(f"INSERT INTO bikes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+            cur = conn.execute(f"INSERT INTO bikes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                          [user['id'], name.strip()] + _bike_values(parts) + [int(first)])
-            bike_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    except sqlite3.IntegrityError:
+            bike_id = cur.lastrowid
+    except integrity_errors():
         return False, t("You already have a bike with that name.")
     if make_default:
         set_default_bike(user_name, bike_id)
@@ -47,7 +47,7 @@ def update_bike(bike_id, name, parts):
             sets = ', '.join(f"{c} = ?" for c in ['name'] + _BIKE_FIELDS)
             conn.execute(f"UPDATE bikes SET {sets} WHERE id = ?", [name.strip()] + _bike_values(parts) + [bike_id])
         return True, t("Bike updated.")
-    except sqlite3.IntegrityError:
+    except integrity_errors():
         return False, t("You already have a bike with that name.")
 
 
@@ -57,8 +57,8 @@ def get_bikes(user_name):
     if not user:
         return []
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM bikes WHERE user_id = ? ORDER BY is_default DESC, name COLLATE NOCASE",
+        conn.row_factory = Row
+        rows = conn.execute("SELECT * FROM bikes WHERE user_id = ? ORDER BY is_default DESC, lower(name)",
                             (user['id'],)).fetchall()
     return [dict(r) for r in rows]
 
@@ -70,7 +70,7 @@ def delete_bike(bike_id):
         conn.execute("UPDATE rides SET bike_id = NULL WHERE bike_id = ?", (bike_id,))
         conn.execute("DELETE FROM bikes WHERE id = ?", (bike_id,))
         if row and row[1]:
-            nxt = conn.execute("SELECT id FROM bikes WHERE user_id = ? ORDER BY name COLLATE NOCASE LIMIT 1",
+            nxt = conn.execute("SELECT id FROM bikes WHERE user_id = ? ORDER BY lower(name) LIMIT 1",
                                (row[0],)).fetchone()
             if nxt:
                 conn.execute("UPDATE bikes SET is_default = 1 WHERE id = ?", (nxt[0],))

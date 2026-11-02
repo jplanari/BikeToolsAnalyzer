@@ -85,3 +85,37 @@ def no_real_weather_requests(monkeypatch):
         raise requests.exceptions.ConnectionError("tests are offline")
     monkeypatch.setattr(weather.requests, "get", unreachable)
     monkeypatch.setattr(weather.time, "sleep", lambda s: None)
+
+
+# --- the same tests on PostgreSQL ---------------------------------------------------------------------------------
+# CI sets BIKETOOLS_DATABASE_URL for a second run of the suite. Every test then starts from an empty schema (SQLite
+# tests each get their own file; here they share one server), and tests about SQLite itself are skipped.
+
+PG_URL = os.environ.get("BIKETOOLS_DATABASE_URL", "").strip()
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sqlite_only: needs the SQLite file itself (backups, PRAGMAs, file locking)")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not PG_URL:
+        return
+    skip = pytest.mark.skip(reason="about the SQLite file; not applicable on PostgreSQL")
+    for item in items:
+        if "sqlite_only" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def fresh_postgres_schema():
+    if not PG_URL:
+        yield
+        return
+    import psycopg
+    from src.data.db import schema
+    with psycopg.connect(PG_URL, autocommit=True) as conn:
+        conn.execute("DROP SCHEMA public CASCADE")
+        conn.execute("CREATE SCHEMA public")
+    schema._initialised.clear()
+    yield

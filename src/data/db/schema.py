@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from . import core
 from .auth import encrypt_plaintext_secrets
+from . import dialect
 from .core import _add_column, _enable_wal, backup_db, connect
 from .rides import _move_ride_files
 
@@ -21,7 +22,8 @@ def _migration_per_user_file_hash(conn):
     a column constraint, so the table is rebuilt the way the SQLite documentation prescribes.
     """
     import re
-    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rides'").fetchone()
+    row = None if dialect._on_pg(conn) else \
+        conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rides'").fetchone()     # PostgreSQL starts with the final table
     if row and 'file_hash TEXT UNIQUE' in row[0]:
         indexes = [r[0] for r in conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'rides' AND sql IS NOT NULL")]
@@ -46,7 +48,7 @@ def _migration_query_indexes(conn):
             ("idx_power_records_user_dur", "power_records", "user_id, duration_sec, watts"),
             ("idx_power_records_kj_user", "power_records_kj", "user_id, kj, duration_sec, watts"),
             ("idx_planned_sessions_user_date", "planned_sessions", "user_id, date")):
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+        if dialect.table_exists(conn, table):
             conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({cols})")
 
 
@@ -57,7 +59,7 @@ def _migration_utc_dates(conn):
     rider's local day. A naive time was always read as UTC, so nothing moves.
     """
     for table in ("rides", "power_records", "power_records_kj"):
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+        if not dialect.table_exists(conn, table):
             continue
         for (old,) in conn.execute(f"SELECT DISTINCT date_time FROM {table} WHERE date_time IS NOT NULL").fetchall():
             new = to_utc_iso(old)
@@ -86,11 +88,28 @@ MIGRATIONS = [
 
 
 def schema_version():
+    if dialect.is_pg():
+        with connect() as conn:
+            return conn.execute("SELECT version FROM biketools_schema").fetchone()[0]
     conn = sqlite3.connect(core.DB_FILE, timeout=core.BUSY_TIMEOUT_S)
     try:
         return conn.execute("PRAGMA user_version").fetchone()[0]
     finally:
         conn.close()
+
+
+def _run_pg_migrations(pending):
+    """PostgreSQL: one transaction per migration, the version moves with it. A lock stops two servers migrating at once."""
+    done = []
+    for version, fn in pending:
+        with connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(?)", (7301,))
+            if conn.execute("SELECT version FROM biketools_schema").fetchone()[0] >= version:
+                continue                                  # another process just did it
+            fn(conn)
+            conn.execute("UPDATE biketools_schema SET version = ?", (version,))
+        done.append(version)
+    return done
 
 
 def run_migrations():
@@ -100,6 +119,8 @@ def run_migrations():
     pending = [(v, fn) for v, fn in MIGRATIONS if v > current]
     if not pending:
         return done
+    if dialect.is_pg():
+        return _run_pg_migrations(pending)
     if _has_rides():
         backup_db("before-migration")
     for version, fn in pending:
@@ -126,6 +147,8 @@ def run_migrations():
 
 
 def _has_rides():
+    if dialect.is_pg():
+        return False
     conn = sqlite3.connect(core.DB_FILE, timeout=core.BUSY_TIMEOUT_S)
     try:
         return conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'rides'").fetchone() is not None and \
@@ -152,7 +175,7 @@ def migrate_db():
         for col in ("ftp_auto", "lthr_auto"):
             _add_column(c, 'users', col, 'INTEGER DEFAULT 0')
 
-        _add_column(c, 'rides', 'strava_activity_id', 'INTEGER')
+        _add_column(c, 'rides', 'strava_activity_id', 'BIGINT')
         # Phase 1 per-ride metrics. metrics_version marks rides whose stored
         # metrics predate the current calculation (0 = legacy) so they can be
         # recomputed from their stored files.
@@ -270,22 +293,22 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS strava_auth (
                 user_id INTEGER PRIMARY KEY,
-                athlete_id INTEGER,
+                athlete_id BIGINT,
                 athlete_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
-                expires_at INTEGER NOT NULL,
+                expires_at BIGINT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
         c.execute('''
             CREATE TABLE IF NOT EXISTS wahoo_auth (
                 user_id INTEGER PRIMARY KEY,
-                wahoo_user_id INTEGER,
+                wahoo_user_id BIGINT,
                 wahoo_name TEXT,
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
-                expires_at INTEGER NOT NULL,
+                expires_at BIGINT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ''')
@@ -331,8 +354,8 @@ def migrate_db():
         c.execute('''
             CREATE TABLE IF NOT EXISTS wahoo_sent (
                 session_id INTEGER PRIMARY KEY,      -- planned_sessions.id
-                plan_id INTEGER NOT NULL,
-                workout_id INTEGER NOT NULL,
+                plan_id BIGINT NOT NULL,
+                workout_id BIGINT NOT NULL,
                 starts TEXT NOT NULL,                -- UTC ISO sent to Wahoo
                 sent_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES planned_sessions(id) ON DELETE CASCADE
@@ -347,6 +370,16 @@ def migrate_db():
         ''')
 
 
+def _bootstrap_pg():
+    """What SQLite keeps in the file itself: the schema version and the change counter the UI caches key on."""
+    with connect() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(?)", (7302,))
+        conn.execute("CREATE TABLE IF NOT EXISTS biketools_schema (version INTEGER NOT NULL)")
+        if conn.execute("SELECT 1 FROM biketools_schema").fetchone() is None:
+            conn.execute("INSERT INTO biketools_schema (version) VALUES (0)")
+        conn.execute("CREATE SEQUENCE IF NOT EXISTS biketools_data_version")
+
+
 _init_lock = threading.Lock()
 _initialised = set()
 
@@ -358,15 +391,18 @@ def init_db(force=False):
     force=True does the work again.
     """
     with _init_lock:
-        if not force and core.DB_FILE in _initialised and os.path.exists(core.DB_FILE):
+        key = dialect.database_url() if dialect.is_pg() else core.DB_FILE
+        if not force and key in _initialised and (dialect.is_pg() or os.path.exists(core.DB_FILE)):
             return
         if _init_db():
-            _initialised.add(core.DB_FILE)           # not when the file migration was postponed: retry next run
+            _initialised.add(key)           # not when the file migration was postponed: retry next run
 
 
 def _init_db():
     """Initializes the database with users, rides, and power_records tables."""
     _enable_wal()
+    if dialect.is_pg():
+        _bootstrap_pg()
     with connect() as conn:
         c = conn.cursor()
     

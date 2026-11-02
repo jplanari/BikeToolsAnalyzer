@@ -7,7 +7,8 @@ from .core import connect
 def save_ride_weather(ride_id, payload):
     """Stores (or replaces) the weather payload of a saved ride."""
     with connect() as conn:
-        conn.execute("INSERT OR REPLACE INTO ride_weather (ride_id, payload, fetched_at) VALUES (?, ?, ?)",
+        conn.execute("""INSERT INTO ride_weather (ride_id, payload, fetched_at) VALUES (?, ?, ?)
+                        ON CONFLICT (ride_id) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at""",
                      (ride_id, json.dumps(payload), datetime.now(timezone.utc).isoformat(timespec='seconds')))
 
 

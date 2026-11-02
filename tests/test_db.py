@@ -33,6 +33,7 @@ def test_save_and_get_user(temp_db):
     assert user['height'] == 175.0  # default
 
 
+@pytest.mark.sqlite_only
 def test_save_ride_stores_date_distance_elevation(temp_db):
     """Regression: metadata keys used to mismatch, storing NULL date and 0 km / 0 m."""
     db.save_user("Rider", 250, 170, 70.0, 180.0)

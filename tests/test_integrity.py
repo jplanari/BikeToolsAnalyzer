@@ -25,10 +25,12 @@ def _count(table):
     return sqlite3.connect(db.DB_FILE).execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
+@pytest.mark.sqlite_only
 def test_connections_enforce_foreign_keys(temp_db):
     assert db._connect().execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
+@pytest.mark.sqlite_only
 def test_deleting_a_user_removes_everything_they_own(temp_db):
     _ride()
     db.delete_user("Rider")
@@ -38,10 +40,11 @@ def test_deleting_a_user_removes_everything_they_own(temp_db):
 
 def test_child_rows_need_a_real_ride(temp_db):
     conn = db._connect()
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db.dialect.integrity_errors()):
         conn.execute("INSERT INTO ride_zones (ride_id, kind, zone, seconds) VALUES (999, 'power', 'Z1', 5)")
 
 
+@pytest.mark.sqlite_only
 def test_backup_is_a_consistent_copy_and_old_ones_are_pruned(temp_db, tmp_path, monkeypatch):
     _ride()
     stamps = iter(f"20261028-00000{i}" for i in range(6))
@@ -63,6 +66,7 @@ def test_backup_without_a_database_is_a_noop(tmp_path, monkeypatch):
 
 # --- Ride files ----------------------------------------------------------------------
 
+@pytest.mark.sqlite_only
 def test_new_rides_store_a_compressed_file_and_leave_the_row_small(temp_db):
     content = b'{"watts": [200, 200, 200]}' * 500
     _ride("big.json", content)
@@ -74,6 +78,7 @@ def test_new_rides_store_a_compressed_file_and_leave_the_row_small(temp_db):
     assert db.get_ride_file(rid) == ("big.json", content)
 
 
+@pytest.mark.sqlite_only
 def test_incompressible_files_are_stored_raw(temp_db):
     import os
     content = os.urandom(2000)
@@ -83,6 +88,7 @@ def test_incompressible_files_are_stored_raw(temp_db):
     assert sqlite3.connect(db.DB_FILE).execute("SELECT codec FROM ride_files").fetchone()[0] == "raw"
 
 
+@pytest.mark.sqlite_only
 def test_old_database_is_migrated_once_with_a_backup(tmp_path, monkeypatch):
     import glob, os
     path = tmp_path / "old.db"
@@ -116,6 +122,7 @@ def test_old_database_is_migrated_once_with_a_backup(tmp_path, monkeypatch):
     assert len(glob.glob(str(tmp_path / "backups" / "*.db"))) == 1
 
 
+@pytest.mark.sqlite_only
 def test_unmigrated_row_still_readable(temp_db):
     conn = sqlite3.connect(db.DB_FILE)
     uid = conn.execute("SELECT id FROM users").fetchone()[0]
@@ -143,6 +150,7 @@ def _legacy_db(tmp_path, monkeypatch, n=40):
     return path
 
 
+@pytest.mark.sqlite_only
 def test_concurrent_app_starts_migrate_once_without_errors(tmp_path, monkeypatch):
     import threading
     path = _legacy_db(tmp_path, monkeypatch)
@@ -164,6 +172,7 @@ def test_concurrent_app_starts_migrate_once_without_errors(tmp_path, monkeypatch
     assert conn.execute("SELECT COUNT(*) FROM rides WHERE file_content IS NOT NULL").fetchone()[0] == 0
 
 
+@pytest.mark.sqlite_only
 def test_locked_database_postpones_the_migration_instead_of_crashing(tmp_path, monkeypatch):
     path = _legacy_db(tmp_path, monkeypatch)
     monkeypatch.setattr(db, "BUSY_TIMEOUT_S", 0.2)

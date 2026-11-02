@@ -1,5 +1,5 @@
 """Riders and their thresholds."""
-import sqlite3
+from .dialect import Row, integrity_errors, operational_errors
 from .core import backup_db, connect
 from src.i18n import t
 
@@ -19,7 +19,7 @@ def save_user(name, ftp=None, lthr=None, weight=70.0, height=175.0, w_prime=None
                           weight, height, int(ftp is None), int(lthr is None),
                           DEFAULT_W_PRIME if not w_prime else float(w_prime)))
         return True, t("User saved successfully!")
-    except sqlite3.IntegrityError:
+    except integrity_errors():
         return False, t("User already exists.")
     except Exception as e:
         return False, t("Database Error: {e}", e=e)
@@ -100,7 +100,7 @@ def get_all_users():
 
 def get_user_data(name):
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         c = conn.cursor()
         c.execute("SELECT * FROM users WHERE name = ?", (name,))
         row = c.fetchone()

@@ -4,6 +4,8 @@ from src.analysis.dates import to_utc_iso
 import hashlib
 import pandas as pd
 import re
+from . import dialect
+from .dialect import Row, integrity_errors, operational_errors
 import sqlite3
 import threading
 import warnings
@@ -107,7 +109,7 @@ def _move_ride_files(batch=10):
     with _migration_lock:
         try:
             return _do_move_ride_files(batch)
-        except sqlite3.OperationalError as e:
+        except operational_errors() as e:
             warnings.warn(f"Ride-file migration postponed ({e}); it will be retried on the next run.")
             return None
 
@@ -134,13 +136,16 @@ def _do_move_ride_files(batch):
                 break
             for ride_id, content in rows:
                 codec, blob = _pack(bytes(content))
-                conn.execute("INSERT OR REPLACE INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)",
+                conn.execute("""INSERT INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)
+                                ON CONFLICT (ride_id) DO UPDATE SET codec = excluded.codec, content = excluded.content""",
                              (ride_id, codec, blob))
                 conn.execute("UPDATE rides SET file_content = NULL WHERE id = ?", (ride_id,))
             conn.commit()
             moved += len(rows)
         conn.close()
-        try:                                   # give the freed space back to the disk
+        try:                                   # give the freed space back to the disk (SQLite only)
+            if dialect.is_pg():
+                return moved
             vac = sqlite3.connect(core.DB_FILE, timeout=core.BUSY_TIMEOUT_S)
             vac.execute("VACUUM")
             vac.close()
@@ -252,7 +257,7 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
             
         return True, t("Ride saved successfully!")
         
-    except sqlite3.IntegrityError:
+    except integrity_errors():
         return False, tr(DUPLICATE_MESSAGE)
         
     except Exception as e:
@@ -265,7 +270,7 @@ def get_user_rides(user_name):
         return []
     
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         c = conn.cursor()
         c.execute('''
             SELECT id, filename, date_time, distance_km, elevation_m, norm_power, tss,
@@ -395,7 +400,7 @@ def get_rides_for_recompute(user_name, all_rides=False):
     if not user:
         return []
     with connect() as conn:
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = Row
         where = "user_id = ?" + ("" if all_rides else f" AND {_NEEDS_UPDATE_SQL}")
         params = (user['id'],) if all_rides else (user['id'], METRICS_VERSION)
         rows = conn.execute(f"""SELECT id, filename, date_time, norm_power, if_factor,
