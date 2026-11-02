@@ -21,7 +21,10 @@ def public_url():
 
 def link(kind, token):
     base = public_url()
-    return f"{base}/?{'verify' if kind == 'verify' else 'reset'}={quote(token, safe="")}" if base else None
+    if not base:
+        return None
+    key = "verify" if kind == "verify" else "reset"
+    return f"{base}/?{key}={quote(token, safe='')}"
 
 
 def compose(kind, token, name):
