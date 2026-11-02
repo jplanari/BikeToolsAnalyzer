@@ -103,7 +103,8 @@ def main(argv=None):
             print("mobile/web/js/locales.js is out of date: run python -m mobile.build_locales")
         return 1 if (stale or bad or any(missing.values())) else 0
     OUT.write_text(text, encoding="utf-8")
-    print(f"wrote {OUT} ({sum(len(v) for v in json.loads(text.split('=', 1)[1].rstrip(';\n')).values())} entries)")
+    entries = sum(len(v) for v in json.loads(text.split("=", 1)[1].strip().rstrip(";")).values())
+    print(f"wrote {OUT} ({entries} entries)")
     return 1 if (bad or any(missing.values())) else 0
 
 
