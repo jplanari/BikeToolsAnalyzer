@@ -6,7 +6,7 @@ import streamlit as st
 
 from src.data.cached import get_user_rides
 from src.data.imports.strava_import import DUPLICATE_START_TOLERANCE_S
-from src.data.db import get_ride_file
+from src.data.db import count_deleted_rides, delete_ride, forget_deleted_rides, get_ride_file
 from src.viz.formatting import format_duration
 from src.i18n import t, fdate
 
@@ -79,7 +79,7 @@ def _num(v, spec, unit=""):
     return "–" if v is None or pd.isna(v) else f"{v:{spec}}{unit}"
 
 
-def _card(r):
+def _card(r, user_name):
     ts = _when(r)
     moving = r.get("moving_s")
     with st.container(border=True):
@@ -97,6 +97,28 @@ def _card(r):
                 f.name = name
                 st.session_state[GALLERY_KEY] = f
                 st.rerun()
+        with st.popover(t("Delete ride"), use_container_width=True):
+            st.warning(t("This removes the ride and everything stored for it. A ride from Strava or Wahoo is not "
+                         "imported again."))
+            if st.button(t("Delete this ride"), key=f"delete_ride_{r['id']}", type="primary"):
+                ok, msg = delete_ride(user_name, int(r["id"]))
+                if ok:
+                    st.session_state.pop(GALLERY_KEY, None)
+                    st.toast(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+
+def _deleted_rides_note(user_name):
+    gone = count_deleted_rides(user_name)
+    if gone:
+        with st.expander(t("Deleted rides ({n})", n=gone)):
+            st.caption(t("Rides you deleted that came from Strava or Wahoo are not imported again. Allow it if "
+                         "you want the next sync to bring them back."))
+            if st.button(t("Allow them to be imported again"), key="forget_deleted"):
+                forget_deleted_rides(user_name)
+                st.rerun()
 
 
 def render_gallery(user_name):
@@ -106,6 +128,7 @@ def render_gallery(user_name):
     rides = get_user_rides(user_name)
     if not rides:
         st.caption(t("Rides you analyse are saved automatically and will appear here."))
+        _deleted_rides_note(user_name)
         return
     wk = week_summary(rides)
     st.subheader(t("Your rides"))
@@ -122,7 +145,8 @@ def render_gallery(user_name):
     for start in range(0, len(shown), 3):
         for col, r in zip(st.columns(3), shown[start:start + 3]):
             with col:
-                _card(r)
+                _card(r, user_name)
+    _deleted_rides_note(user_name)
     if total > len(shown) and st.button(t('Show more ({total} older)', total=total - len(shown)), key="gallery_more"):
         st.session_state["gallery_shown"] = shown_n + PAGE_SIZE
         st.rerun()

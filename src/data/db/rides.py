@@ -9,6 +9,7 @@ from .dialect import Row, integrity_errors, operational_errors
 import sqlite3
 import threading
 import warnings
+from datetime import datetime, timezone
 from . import core
 from .core import _connect, _date_filter, backup_db, connect
 from .users import get_user_data
@@ -451,3 +452,46 @@ def get_ride_start_times(user_name):
         if pd.notna(ts):
             out.append(ts.tz_convert(None))
     return out
+
+
+_PROVIDER_FILE = re.compile(r"(strava_\d+\.json|wahoo_\d+\.fit|polar_[A-Za-z0-9]+\.fit)", re.I)
+
+
+def delete_ride(user_name, ride_id):
+    """
+    Removes one of the rider's rides with everything stored for it (file, power curve, zones, histograms, weather,
+    what was logged as eaten). A backup is taken first (SQLite). A ride that came from Strava, Wahoo or Polar is
+    remembered by its file name, so the next sync does not import it again. Returns (ok, message).
+    """
+    user = get_user_data(user_name)
+    if not user:
+        return False, t("User not found.")
+    with connect() as conn:
+        row = conn.execute("SELECT filename FROM rides WHERE id = ? AND user_id = ?", (ride_id, user['id'])).fetchone()
+    if not row:
+        return False, t("Ride not found.")
+    backup_db("before-delete-ride")
+    with connect() as conn:
+        if row[0] and _PROVIDER_FILE.fullmatch(row[0]):
+            conn.execute("""INSERT INTO deleted_rides (user_id, filename, deleted_at) VALUES (?, ?, ?)
+                            ON CONFLICT (user_id, filename) DO NOTHING""",
+                         (user['id'], row[0].lower(), datetime.now(timezone.utc).isoformat(timespec='seconds')))
+        conn.execute("DELETE FROM rides WHERE id = ? AND user_id = ?", (ride_id, user['id']))
+    return True, t("Ride deleted.")
+
+
+def count_deleted_rides(user_name):
+    user = get_user_data(user_name)
+    if not user:
+        return 0
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM deleted_rides WHERE user_id = ?", (user['id'],)).fetchone()[0]
+
+
+def forget_deleted_rides(user_name):
+    """Lets the next sync import the rides that were deleted before. Returns how many were forgotten."""
+    user = get_user_data(user_name)
+    if not user:
+        return 0
+    with connect() as conn:
+        return conn.execute("DELETE FROM deleted_rides WHERE user_id = ?", (user['id'],)).rowcount

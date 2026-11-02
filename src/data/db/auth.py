@@ -176,8 +176,9 @@ def get_imported_polar_ids(user_name):
     if not user:
         return set()
     with connect() as conn:
-        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\'",
-                            (user['id'],)).fetchall()
+        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\' "
+                            "UNION SELECT filename FROM deleted_rides WHERE user_id = ? AND filename LIKE 'polar\\_%.fit' ESCAPE '\\'",
+                            (user['id'], user['id'])).fetchall()
     return {i for i in (polar_id_from_filename(r[0]) for r in rows) if i is not None}
 
 def get_wahoo_sent(user_name):
@@ -213,8 +214,9 @@ def get_imported_wahoo_ids(user_name):
     if not user:
         return set()
     with connect() as conn:
-        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'",
-                            (user['id'],)).fetchall()
+        rows = conn.execute("SELECT filename FROM rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\' "
+                            "UNION SELECT filename FROM deleted_rides WHERE user_id = ? AND filename LIKE 'wahoo\\_%.fit' ESCAPE '\\'",
+                            (user['id'], user['id'])).fetchall()
     return {i for i in (wahoo_id_from_filename(r[0]) for r in rows) if i is not None}
 
 def latest_wahoo_ride_date(user_name):
@@ -267,7 +269,14 @@ def get_imported_strava_ids(user_name):
     with connect() as conn:
         rows = conn.execute("SELECT strava_activity_id FROM rides WHERE user_id = ? "
                             "AND strava_activity_id IS NOT NULL", (user['id'],)).fetchall()
-    return {r[0] for r in rows}
+        gone = conn.execute("SELECT filename FROM deleted_rides WHERE user_id = ? AND filename LIKE 'strava\\_%.json' ESCAPE '\\'",
+                            (user['id'],)).fetchall()
+    ids = {r[0] for r in rows}
+    for (name,) in gone:
+        m = re.fullmatch(r"strava_(\d+)\.json", name or "")
+        if m:
+            ids.add(int(m.group(1)))
+    return ids
 
 def latest_strava_ride_date(user_name):
     """Start (naive UTC) of the newest ride imported from Strava, or None."""
