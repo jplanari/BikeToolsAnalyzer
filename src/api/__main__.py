@@ -9,22 +9,10 @@ The database is the same one the desktop app uses (BIKETOOLS_DB)."""
 import argparse
 import datetime
 import logging
-import socketserver
 import sys
-from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from src.data import db
-from .app import application
-
-
-class ThreadingServer(socketserver.ThreadingMixIn, WSGIServer):
-    daemon_threads = True
-
-
-class QuietHandler(WSGIRequestHandler):
-    def log_message(self, fmt, *args):          # never log the query string or headers: they can carry tokens
-        line = str(args[0]).split("?")[0] if args else ""
-        logging.getLogger("biketools.api").info("%s %s %s", self.address_string(), line, " ".join(str(a) for a in args[1:]))
+from . import runner
 
 
 def _when(ts):
@@ -50,7 +38,7 @@ def main(argv=None):
     db.init_db()
     if a.cmd == "serve":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-        with make_server(a.host, a.port, application, server_class=ThreadingServer, handler_class=QuietHandler) as httpd:
+        with runner.make(a.host, a.port) as httpd:
             print(f"BikeTools phone server on http://{a.host}:{a.port}  (Ctrl+C to stop)")
             if a.host not in ("127.0.0.1", "localhost"):
                 print("Reachable from other devices. Plain HTTP is only safe on a network you trust; "

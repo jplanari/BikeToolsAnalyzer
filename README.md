@@ -6,6 +6,10 @@ BikeTools Analyzer is a local, privacy-focused Python dashboard for analyzing cy
 
 A standalone version with its own window (no terminal, no Python install) can be built for Windows, macOS and Linux: see [desktop/README.md](desktop/README.md). Your data is kept in a per-user folder, separate from the program.
 
+## Phone app (Android)
+
+A phone version shows your rides, ride summaries (with the energy and fuel estimate), training load and power profile, in English, Spanish and Catalan. It is read-only: uploading, editing and logging what you ate stay in the desktop app. The phone talks to your own computer (or a server of yours); nothing goes to a third party. Installing, pairing and security notes: [mobile/README.md](mobile/README.md).
+
 **Extending the code:** see the [developer guide (PDF)](docs/developer_guide/BikeTools-Developer-Guide.pdf); its LaTeX source is in `docs/developer_guide/` (`latexmk -pdf main.tex`).
 
 ## Key Features
@@ -97,6 +101,7 @@ streamlit run app.py
 ```
 BikeToolsAnalyzer/
 ├── app.py                  # Entry point
+├── mobile/                 # Phone app: web client (web/), Android wrapper (android/), translations build
 ├── requirements.txt
 ├── .streamlit/
 │   └── secrets.toml.example  # Strava API credentials template
@@ -125,6 +130,7 @@ BikeToolsAnalyzer/
     │   ├── wahoo.py          # Wahoo Cloud API client (OAuth, workouts, FIT download)
     │   ├── wahoo_import.py   # Wahoo single-ride, history and sync
     │   └── weather.py
+    ├── api/                # Phone API: read-only JSON over WSGI (stdlib), token auth, serves mobile/web
     ├── references.py       # the literature behind each model, shown on the References page
     ├── physics/            # Core Science Logic
     │   ├── aerodyn.py

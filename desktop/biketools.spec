@@ -6,7 +6,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 datas, binaries, hiddenimports = [(os.path.join(ROOT, 'app.py'), '.'), (os.path.join(ROOT, 'src'), 'src'),
-                                    (os.path.join(ROOT, '.streamlit', 'config.toml'), '.streamlit')], [], []
+                                    (os.path.join(ROOT, '.streamlit', 'config.toml'), '.streamlit'),
+                                    (os.path.join(ROOT, 'mobile', 'web'), os.path.join('mobile', 'web'))], [], []
 for pkg in ('streamlit', 'streamlit_folium', 'folium', 'plotly', 'fitparse', 'gpxpy', 'geographiclib',
             'matplotlib', 'altair', 'cryptography'):
     d, b, h = collect_all(pkg)

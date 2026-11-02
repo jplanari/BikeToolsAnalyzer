@@ -1,0 +1,13 @@
+{
+  "appId": "io.github.jplanari.biketools",
+  "appName": "BikeTools",
+  "webDir": "../web",
+  "backgroundColor": "#101418",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}
