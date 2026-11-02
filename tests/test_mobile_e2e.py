@@ -98,3 +98,19 @@ def test_offline_shows_the_last_data(page, server):
     page.reload()
     page.wait_for_selector(".ride", timeout=30000)
     assert page.is_visible("#banner")
+
+
+def test_password_sign_in(page, server, monkeypatch):
+    url, _ = server
+    monkeypatch.setattr(db.passwords, "COST", {'n': 2 ** 10, 'r': 8, 'p': 1})
+    db.set_user_password("Rider", "a good password")
+    page.goto(f"{url}/#/connect")
+    page.fill("#name", "Rider")
+    page.fill("#password", "wrong one")
+    page.click("#go")
+    page.wait_for_selector("#err:not([hidden])")
+    assert "password" in page.inner_text("#err").lower()
+    page.fill("#password", "a good password")
+    page.click("#go")
+    page.wait_for_selector(".ride")
+    assert page.locator(".ride").count() == 4

@@ -327,3 +327,37 @@ def test_user_corner_adds_a_bike_from_its_parts(seeded_db):
     assert bike["name"] == "Road" and bike["crr"] == pytest.approx(0.004)
     assert bike["frame_kg"] + bike["wheelset_kg"] + bike["groupset_kg"] + bike["tyres_kg"] == pytest.approx(6.0)
     assert any("Road" in e.label and "6.00 kg" in e.label for e in at.expander)
+
+
+# --- rider passwords ----------------------------------------------------------------------
+
+@pytest.fixture
+def protected_db(empty_db, monkeypatch):
+    monkeypatch.setattr(db.passwords, "COST", {'n': 2 ** 10, 'r': 8, 'p': 1})       # fast hashes for the test
+    db.save_user("Locked", 250, 170, 70.0, 180.0)
+    assert db.set_user_password("Locked", "a good password")[0]
+
+
+def test_a_protected_rider_stays_closed_until_the_password_is_typed(protected_db):
+    from src.viz import login
+    login._throttle.reset("Locked")
+    at = _app()
+    _no_errors(at)
+    assert "protected" in _texts(at.header)
+    assert not [r for r in at.sidebar.radio if r.label == "Source"]                  # the import tools are not shown
+    at.text_input(key="unlock_password").set_value("not it")
+    _widget(at.button, "Unlock").click().run()
+    assert "Wrong password." in _texts(at.error) and "protected" in _texts(at.header)
+    at.text_input(key="unlock_password").set_value("a good password")
+    _widget(at.button, "Unlock").click().run()
+    assert not at.exception and "protected" not in _texts(at.header)
+    assert [r for r in at.sidebar.radio if r.label == "Source"]                      # open now
+    _no_errors(_go(at, "User Corner"))
+    assert "🔒 Password" in _texts(at.subheader)
+
+
+def test_a_rider_without_a_password_opens_straight_away(empty_db):
+    db.save_user("Open", 250, 170, 70.0, 180.0)
+    at = _app()
+    _no_errors(at)
+    assert not [e for e in at.text_input if e.key == "unlock_password"]

@@ -5,6 +5,7 @@ import io
 from src.data.db import (save_user,
                          get_all_users,
                          delete_user,
+                         set_user_password,
                          get_strava_auth,
                          save_strava_auth,
                          delete_strava_auth,
@@ -16,7 +17,8 @@ from src.data.db import (save_user,
                          create_oauth_state,
                          consume_oauth_state,
                          data_stamp)
-from src.viz import theme
+from src.viz import login, theme
+from src.data.db.passwords import MIN_LENGTH as MIN_PASSWORD
 from src.i18n import t, mark, session as i18n_session, tr
 from src.viz.connections import get_credentials, setup_box
 from src.data.parsers.upload import expand_upload, UPLOAD_TYPES
@@ -70,12 +72,14 @@ def render_sidebar():
     tab_select, tab_create = st.sidebar.tabs([t("Select User"), t("Create/Edit")])
     
     selected_user_name = None
+    u_data = None
     
     with tab_select:
         users = get_all_users()
         if users:
             selected_user_name = st.selectbox(t("Current User"), users, key="current_user")
-            if selected_user_name:
+            locked = login.is_locked(selected_user_name)
+            if selected_user_name and not locked:
                 _follow_the_data(selected_user_name)
                 u_data = get_user_data(selected_user_name)
                 if i18n_session.apply_user_language(selected_user_name, (u_data or {}).get('language')):
@@ -87,13 +91,18 @@ def render_sidebar():
                     user_height = u_data['height']
                     user_w_prime = u_data.get('w_prime') or user_w_prime
 
-
-            with st.popover(t("Delete user")):
-                st.warning(t('This removes **{selected_user_name}** with all their rides, records and plans. It cannot be '
-                                'undone.', selected_user_name=selected_user_name))
-                if st.button(t('Yes, delete {selected_user_name}', selected_user_name=selected_user_name), type="primary", key="confirm_delete_user"):
-                    delete_user(selected_user_name)
+            if locked:
+                st.caption(t("🔒 Protected by a password."))
+            else:
+                if selected_user_name and (u_data or {}).get('has_password') and st.button(t("🔒 Lock"), key="lock_user"):
+                    login.lock(selected_user_name)
                     st.rerun()
+                with st.popover(t("Delete user")):
+                    st.warning(t('This removes **{selected_user_name}** with all their rides, records and plans. It cannot be '
+                                    'undone.', selected_user_name=selected_user_name))
+                    if st.button(t('Yes, delete {selected_user_name}', selected_user_name=selected_user_name), type="primary", key="confirm_delete_user"):
+                        delete_user(selected_user_name)
+                        st.rerun()
         else:
             st.info(t("No users found. Create one!"))
 
@@ -106,13 +115,19 @@ def render_sidebar():
                                        placeholder=t("estimated from your rides"), help=theme.lthr_help())
             new_wprime = st.number_input(t("W′ (kJ) · optional"), value=None, min_value=1.0, step=0.5,
                                          placeholder=f"{theme.DEFAULT_W_PRIME_KJ} kJ", help=theme.w_prime_help())
+            new_password = st.text_input(t("Password · optional"), type="password", help=t("Keeps this rider's data closed until it is typed in."))
             new_weight = st.number_input(t("Weight (kg)"), value=70.0)
             new_height = st.number_input(t("Height (cm)"), value=175)
             submitted = st.form_submit_button(t("Save User"))
-            if submitted and new_name:
+            if submitted and new_name and new_password and len(new_password) < MIN_PASSWORD:
+                st.error(t("Use at least {n} characters.", n=MIN_PASSWORD))
+            elif submitted and new_name:
                 success, msg = save_user(new_name, int(new_ftp) if new_ftp else None,
                                           int(new_lthr) if new_lthr else None, new_weight, new_height,
                                           theme.w_prime_from_kj(new_wprime))
+                if success and new_password:
+                    set_user_password(new_name, new_password, force=True)
+                    login.unlock(new_name)
                 if success:
                     st.success(msg)
                     st.rerun()
@@ -120,6 +135,10 @@ def render_sidebar():
                     st.error(msg)
 
     i18n_session.picker(selected_user_name)
+
+    if login.is_locked(selected_user_name):                 # nothing below (or in the page) shows until it is unlocked
+        login.render_unlock(selected_user_name)
+        st.stop()
 
     st.sidebar.markdown("---")
     st.sidebar.header(t("📂 Data Import"))

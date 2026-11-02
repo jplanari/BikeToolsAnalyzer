@@ -1,5 +1,6 @@
 """The phone API as a WSGI application (standard library only), plus the phone web app's static files.
 
+    POST /api/v1/login               {name, password, label}: a rider with a password gets a token for this phone
     GET /api/v1/ping                 no token; lets the app test a server address
     GET /api/v1/me                   the rider this token belongs to
     GET /api/v1/rides?limit&offset   ride list, newest first, duplicates collapsed
@@ -8,7 +9,7 @@
     GET /api/v1/training/load        fitness, fatigue, form, volume
     GET /api/v1/training/power       power curves, records, critical power, profile
 
-Everything else is read from `mobile/web`. The API only reads; nothing can be changed through it. A request needs
+Everything else is read from `mobile/web`. Apart from signing in, the API only reads; nothing can be changed through it. A request needs
 `Authorization: Bearer <token>` (tokens are made in the desktop app's User corner, or with `python -m src.api token
 create`); each token belongs to one rider and sees only that rider's data."""
 import json
@@ -21,6 +22,7 @@ import time
 from pathlib import Path
 
 from src.data import db
+from src.security import Throttle
 from . import payloads
 
 log = logging.getLogger("biketools.api")
@@ -35,36 +37,9 @@ def allowed_origins():
     extra = [o.strip().rstrip("/") for o in os.environ.get("BIKETOOLS_API_ORIGINS", "").split(",") if o.strip()]
     return set(APP_ORIGINS) | set(extra)
 
-
-class Throttle:
-    """Slows down guessing: after FAIL_LIMIT bad tokens from one address within FAIL_WINDOW_S, it is refused."""
-    def __init__(self, limit=FAIL_LIMIT, window=FAIL_WINDOW_S):
-        self.limit, self.window = limit, window
-        self._fails = {}
-        self._lock = threading.Lock()
-
-    def _recent(self, key, now):
-        hits = [t for t in self._fails.get(key, []) if now - t < self.window]
-        if hits:
-            self._fails[key] = hits
-        else:
-            self._fails.pop(key, None)
-        return hits
-
-    def blocked(self, key, now=None):
-        with self._lock:
-            return len(self._recent(key, now or time.time())) >= self.limit
-
-    def fail(self, key, now=None):
-        now = now or time.time()
-        with self._lock:
-            self._recent(key, now)
-            self._fails.setdefault(key, []).append(now)
-            if len(self._fails) > 5000:         # bound the memory a scan from many addresses could use
-                self._fails.clear()
-
-
 _throttle = Throttle()
+_login_throttle = Throttle(limit=20, window=600)      # per rider name, so a password cannot be guessed from many addresses
+MAX_BODY = 4096
 
 _ROUTES = [
     (re.compile(r"^/ping$"), "ping", False),
@@ -146,6 +121,35 @@ def _static(path):
     return "200 OK", ctype, target.read_bytes()
 
 
+def _login(environ, respond, fail):
+    """A rider with a password signs in from the phone and gets a token (the same kind the desktop app hands out)."""
+    store = ("Cache-Control", "no-store")
+    who = _client(environ)
+    try:
+        size = int(environ.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        size = 0
+    if size <= 0 or size > MAX_BODY:
+        return fail("400 Bad Request", "expected a small JSON body", [store])
+    try:
+        body = json.loads(environ["wsgi.input"].read(size) or b"{}")
+        name, password = str(body.get("name") or ""), str(body.get("password") or "")
+        label = str(body.get("label") or "Phone")[:db.tokens.MAX_LABEL]
+    except (ValueError, AttributeError, TypeError):
+        return fail("400 Bad Request", "expected a JSON object with name and password", [store])
+    key = name.strip().lower()
+    for throttle, k in ((_throttle, who), (_login_throttle, key)):
+        if throttle.blocked(k):
+            return fail("429 Too Many Requests", "too many failed attempts; wait a while", [store, ("Retry-After", str(throttle.retry_after(k)))])
+    if not name or not db.verify_user_password(name, password):
+        _throttle.fail(who)
+        _login_throttle.fail(key)
+        return fail("401 Unauthorized", "wrong name or password", [store])
+    _login_throttle.reset(key)
+    token, _ = db.create_api_token(name, label)
+    return respond("200 OK", "application/json; charset=utf-8", json.dumps({"token": token, "me": payloads.me(name)}), [store])
+
+
 def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET").upper()
     path = environ.get("PATH_INFO", "/")
@@ -167,6 +171,8 @@ def application(environ, start_response):
 
     if method == "OPTIONS":
         return respond("204 No Content", "text/plain", b"")
+    if method == "POST" and path == API + "/login":
+        return _login(environ, respond, fail)
     if method not in ("GET", "HEAD"):
         return fail("405 Method Not Allowed", "read-only API", [("Allow", "GET, HEAD, OPTIONS")])
 

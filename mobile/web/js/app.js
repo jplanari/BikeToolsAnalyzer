@@ -1,4 +1,4 @@
-import { baseUrl, config, connect, saveConfig, signOut } from './api.js';
+import { baseUrl, config, connect, login, saveConfig, signOut } from './api.js';
 import { esc } from './fmt.js';
 import { LANGUAGES, detect, language, setLanguage, t } from './i18n.js';
 import { errorMessage, powerView, rideView, ridesView, trainingView } from './views.js';
@@ -35,48 +35,75 @@ function drawTabs(current) {
 
 // --- Connect / settings ----------------------------------------------------------------------------------------
 
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.)/;
+function unencryptedAndPublic(address) {
+  try {
+    const u = new URL(baseUrl(address));
+    return u.protocol === 'http:' && !(PRIVATE_HOST.test(u.hostname) || u.hostname.endsWith('.local') || u.hostname.endsWith('.ts.net') || !u.hostname.includes('.'));
+  } catch { return false; }
+}
+
 function connectView(prefill = {}) {
   const c = config();
   const sameOrigin = location.protocol.startsWith('http') && !['localhost', '127.0.0.1'].includes(location.hostname) && !window.Capacitor;
   const server = prefill.server || c.server || (sameOrigin ? location.origin : '');
+  let mode = prefill.token ? 'token' : 'password';
   titleEl.textContent = 'BikeTools';
   document.title = 'BikeTools';
   backEl.hidden = true; drawTabs(null); bannerEl.hidden = true;
   view.innerHTML = `
     <h2>${esc(t('Connect to your BikeTools'))}</h2>
-    <p class="muted">${esc(t('This app shows the data of your BikeTools Analyzer. Start the phone server on your computer, then create an access token in the desktop app (User corner → Phone app).'))}</p>
+    <p class="muted">${esc(t('This app shows the data of your BikeTools Analyzer. Start the phone server on your computer, then sign in with your rider name and password, or create an access token in the desktop app (User Corner → Phone app).'))}</p>
     <form id="f" autocomplete="off">
       <label for="server">${esc(t('Server address'))}</label>
       <input id="server" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="http://192.168.1.20:8765" value="${esc(server)}">
-      <label for="token">${esc(t('Access token'))}</label>
-      <input id="token" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bt_…" value="${esc(prefill.token || '')}">
+      <div id="pw-fields">
+        <label for="name">${esc(t('Rider name'))}</label>
+        <input id="name" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username">
+        <label for="password">${esc(t('Password'))}</label>
+        <input id="password" type="password" autocomplete="current-password">
+      </div>
+      <div id="tk-fields">
+        <label for="token">${esc(t('Access token'))}</label>
+        <input id="token" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="bt_…" value="${esc(prefill.token || '')}">
+      </div>
       <p class="error" id="err" role="alert" hidden></p>
+      <p class="error" id="block" hidden>${esc(t('Passwords are not sent over an unencrypted connection outside a private network. Use a VPN such as Tailscale or an https address.'))}</p>
       <button class="btn" id="go">${esc(t('Connect'))}</button>
+      <button class="btn secondary" id="swap" type="button"></button>
     </form>
     <p class="note" id="warn" hidden>${esc(t('This address is not encrypted (http) and is not on a private network. Anyone on the way could read your data and token. Prefer a VPN such as Tailscale or an https address.'))}</p>`;
-  const warn = () => {
-    const b = baseUrl($('server').value);
-    let risky = false;
-    try {
-      const u = new URL(b);
-      risky = u.protocol === 'http:' && !(/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.)/.test(u.hostname) || u.hostname.endsWith('.local') || u.hostname.endsWith('.ts.net') || !u.hostname.includes('.'));
-    } catch { /* not a URL yet */ }
-    $('warn').hidden = !risky;
+  const refresh = () => {
+    $('pw-fields').hidden = mode !== 'password';
+    $('tk-fields').hidden = mode !== 'token';
+    $('swap').textContent = mode === 'password' ? t('Use an access token instead') : t('Sign in with a password instead');
+    const risky = unencryptedAndPublic($('server').value);
+    $('warn').hidden = !risky || mode === 'password';
+    $('block').hidden = !(risky && mode === 'password');
+    $('go').disabled = risky && mode === 'password';
   };
-  $('server').addEventListener('input', warn); warn();
+  $('server').addEventListener('input', refresh);
+  $('swap').addEventListener('click', () => { mode = mode === 'password' ? 'token' : 'password'; refresh(); });
+  refresh();
   $('f').addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = $('err'), btn = $('go');
     err.hidden = true; btn.disabled = true; btn.textContent = t('Connecting…');
     try {
-      const me = await connect($('server').value, $('token').value.trim());
-      saveConfig({ server: baseUrl($('server').value), token: $('token').value.trim() });
+      let token, me;
+      if (mode === 'password') {
+        ({ token, me } = await login($('server').value, $('name').value.trim(), $('password').value));
+      } else {
+        token = $('token').value.trim();
+        me = await connect($('server').value, token);
+      }
+      saveConfig({ server: baseUrl($('server').value), token });
       setLanguage(detect(me.language));
       location.hash = '#/rides';
       route();
     } catch (ex) {
-      err.textContent = ex.kind === 'auth' ? t('That token was not accepted.') : errorMessage(ex);
-      err.hidden = false; btn.disabled = false; btn.textContent = t('Connect');
+      err.textContent = ex.kind === 'auth' ? t('That token was not accepted.') : ex.kind === 'login' ? t('Wrong name or password.') : errorMessage(ex);
+      err.hidden = false; btn.textContent = t('Connect'); refresh();
     }
   });
 }

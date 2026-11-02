@@ -144,6 +144,8 @@ def render_user_corner(user_name):
     c4.metric(t("Weight"), f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
     _timezone_control(user_name, user_data)
+    from src.viz.login import render_password_settings
+    render_password_settings(user_name)
     
     st.markdown("---")
 

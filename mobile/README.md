@@ -20,7 +20,9 @@ The database is the same one the desktop app uses (`BIKETOOLS_DB`).
 
 ## 2. Pair the phone
 
-In the same place press **Create access token**, give the phone a name and copy the token (it is shown once; only a hash is stored). Then either
+**Riders with a password:** set it in User Corner → 🔒 Password (or `python -m src.api password set "<rider>"` on a server). Then just choose Connect, type the server address, the rider name and the password. The server gives that phone its own token, so you can still revoke phones one by one; changing the password signs every phone out. The app refuses password sign-in over plain http outside a private network.
+
+Or, without a password, in the same place press **Create access token**, give the phone a name and copy the token (it is shown once; only a hash is stored). Then either
 
 - open the web link it shows in the phone's browser (`http://<computer>:8765/#/pair?...`) — the app opens in the browser and can be added to the home screen; or
 - install the Android app (below), choose **Connect** and type the server address and paste the token, or open the `biketools://pair?...` link.
@@ -44,7 +46,8 @@ The APK is built by GitHub Actions from this folder (a Capacitor wrapper around 
 ## Security notes
 
 - Tokens are random (256 bit), stored hashed, scoped to one rider, revocable, and never written to the server log. Ten wrong tokens from one address lock that address out for a minute (behind a reverse proxy set `BIKETOOLS_API_TRUST_PROXY=1` so the real client address is used).
-- The server only answers `GET`; it cannot change or delete anything.
+- Passwords are optional, stored as salted scrypt hashes (never returned by any API) and checked in constant time; wrong passwords cost the same whether or not the rider exists. Ten wrong attempts from one address, or twenty for one rider within ten minutes, are refused for a while.
+- Apart from signing in, the server only answers `GET`; it cannot change or delete anything.
 - Over plain http, anyone on the path can read the token and your data: that is why the VPN/https advice above matters.
 
 ## Development

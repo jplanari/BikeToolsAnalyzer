@@ -16,17 +16,17 @@ class Client:
     def __init__(self, token=None, **env):
         self.token, self.env = token, env
 
-    def get(self, path, token="default", method="GET", headers=None, remote="10.0.0.1"):
+    def get(self, path, token="default", method="GET", headers=None, remote="10.0.0.1", body=b""):
         query = ""
         if "?" in path:
             path, query = path.split("?", 1)
         env = {"REQUEST_METHOD": method, "PATH_INFO": path, "QUERY_STRING": query, "REMOTE_ADDR": remote,
-               "wsgi.input": io.BytesIO(), **self.env}
+               "wsgi.input": io.BytesIO(body), **self.env}
         tok = self.token if token == "default" else token
         if tok:
             env["HTTP_AUTHORIZATION"] = f"Bearer {tok}"
         for k, v in (headers or {}).items():
-            env["HTTP_" + k.upper().replace("-", "_")] = v
+            env[k.upper().replace("-", "_") if k.lower() == "content-length" else "HTTP_" + k.upper().replace("-", "_")] = v
         out = {}
 
         def start(status, hdrs):

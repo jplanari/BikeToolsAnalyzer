@@ -4,6 +4,8 @@
     python -m src.api token create "<rider>" [--label "Pixel 8"]
     python -m src.api token list "<rider>"
     python -m src.api token revoke "<rider>" <id>
+    python -m src.api password set "<rider>"        (asks for the password)
+    python -m src.api password remove "<rider>"
 
 The database is the same one the desktop app uses (BIKETOOLS_DB)."""
 import argparse
@@ -33,6 +35,9 @@ def main(argv=None):
     r = tk.add_parser("revoke")
     r.add_argument("rider")
     r.add_argument("id", type=int)
+    pw = sub.add_parser("password", help="set or remove a rider's password").add_subparsers(dest="action", required=True)
+    pw.add_parser("set").add_argument("rider")
+    pw.add_parser("remove").add_argument("rider")
     a = p.parse_args(argv)
 
     db.init_db()
@@ -48,6 +53,18 @@ def main(argv=None):
             except KeyboardInterrupt:
                 print("stopped")
         return 0
+    if a.cmd == "password":
+        if a.action == "remove":
+            ok, msg = db.clear_user_password(a.rider, force=True)
+        else:
+            import getpass
+            first = getpass.getpass("New password: ")
+            if first != getpass.getpass("Repeat it: "):
+                print("The two passwords differ.", file=sys.stderr)
+                return 1
+            ok, msg = db.set_user_password(a.rider, first, force=True)
+        print(msg or "Done.")
+        return 0 if ok else 1
     if a.action == "create":
         token, tid = db.create_api_token(a.rider, a.label)
         if not token:

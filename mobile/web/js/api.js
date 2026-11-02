@@ -65,3 +65,24 @@ export async function connect(server, token) {
   if (!ping || ping.app !== 'BikeTools') throw new ApiError('network');
   return get(base + '/api/v1/me', token, 8000);
 }
+
+/** Signs in with a rider's name and password; the server answers with a token for this phone. */
+export async function login(server, name, password) {
+  const base = baseUrl(server);
+  if (!base) throw new ApiError('network');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await fetch(base + '/api/v1/login', {
+      method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, password, label: 'Phone app' }),
+    });
+    if (r.status === 401) throw new ApiError('login', 401);
+    if (r.status === 429) throw new ApiError('throttled', 429);
+    if (!r.ok) throw new ApiError('http', r.status);
+    return await r.json();
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    throw new ApiError('network');
+  } finally { clearTimeout(timer); }
+}
