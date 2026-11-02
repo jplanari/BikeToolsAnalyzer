@@ -153,6 +153,12 @@ REFERENCES = [
          "A step towards personalized sports nutrition: carbohydrate intake during exercise",
          "Sports Medicine 44(S1):S25–S33",
          mark("The shape of the fuelling guide: up to 30–60 g/h for rides to 2 hours, 60–90 g/h for longer ones.")),
+    _ref('smith-2013', FUEL, "Smith JW, Pascoe DD, Passe DH, Ruby BC, Stewart LK, Baker LB, Zachwieja JJ", 2013,
+         "Curvilinear dose-response relationship of carbohydrate (0–120 g·h⁻¹) and performance",
+         "Medicine & Science in Sports & Exercise 45(2):336–341",
+         mark("Performance in cyclists rises with carbohydrate intake and levels off at about 60–80 g/h, the "
+              "background to comparing rides with and without enough fuel."),
+         doi="10.1249/MSS.0b013e31827205d1"),
     _ref('thomas-2016', FUEL, "Thomas DT, Erdman KA, Burke LM", 2016,
          "Position of the Academy of Nutrition and Dietetics, Dietitians of Canada, and the American College of "
          "Sports Medicine: nutrition and athletic performance",
