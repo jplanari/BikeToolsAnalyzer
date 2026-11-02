@@ -157,7 +157,7 @@ def test_training_page(seeded_db):
 def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
     at = _go(_app(), "Training")
     options = list(_widget(at.radio, "Section").options)
-    assert len(options) == 5
+    assert len(options) == 6
     _widget(at.radio, "Show").set_value("6 months").run()
     for name in options[1:]:                       # only the selected section is drawn
         _widget(at.radio, "Section").set_value(name).run()
