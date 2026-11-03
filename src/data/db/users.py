@@ -52,6 +52,18 @@ def set_user_language(user_name, language):
     with connect() as conn:
         conn.execute("UPDATE users SET language = ? WHERE name = ?", (code, user_name))
 
+def set_user_body(user_name, weight, height):
+    """Sets the rider's weight (kg, 20-300) and height (cm, 100-250). Returns False for values outside those ranges."""
+    try:
+        weight, height = float(weight), float(height)
+    except (TypeError, ValueError):
+        return False
+    if not (20 <= weight <= 300 and 100 <= height <= 250):
+        return False
+    with connect() as conn:
+        conn.execute("UPDATE users SET weight = ?, height = ? WHERE name = ?", (weight, height, user_name))
+    return True
+
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
     with connect() as conn:
