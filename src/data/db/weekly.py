@@ -18,6 +18,10 @@ def save_smtp_settings(host, port, security, username, password, sender):
         """, (host.strip(), int(port), security, (username or '').strip() or None, _sec.encrypt(password or None), sender.strip()))
 
 def get_smtp_settings():
+    """The mail account: the server's own (BIKETOOLS_SMTP_* variables) when set, else the one saved in the app."""
+    from src.serverconf import smtp_from_env
+    if (env := smtp_from_env()) is not None:
+        return env
     with connect() as conn:
         conn.row_factory = Row
         row = conn.execute("SELECT * FROM smtp_settings WHERE id = 1").fetchone()

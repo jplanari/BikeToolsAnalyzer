@@ -35,6 +35,7 @@ NAME_BAD = re.compile(r"[\x00-\x1f\x7f/\\<>]")
 login_throttle = Throttle(limit=10, window=600)       # per e-mail
 client_throttle = Throttle(limit=30, window=600)      # per client address
 register_throttle = Throttle(limit=8, window=3600)    # per client address
+register_unknown = Throttle(limit=300, window=3600)   # all sign-ups together, when the address is not known
 reset_throttle = Throttle(limit=5, window=3600)       # per e-mail and per client address
 
 
@@ -136,12 +137,13 @@ def _by_email(conn, email):
                         (email,)).fetchone()
 
 
-def register(name, email, password, client="-"):
+def register(name, email, password, client=None):
     """Creates an account and sends the verification e-mail. Returns (ok, message). The same message comes back
     whether or not the e-mail already had an account (that owner is told by e-mail instead)."""
-    if register_throttle.blocked(client):
+    bucket, key = (register_throttle, client) if client else (register_unknown, "all")
+    if bucket.blocked(key):
         return False, t("Too many attempts. Wait a while and try again.")
-    register_throttle.fail(client)
+    bucket.fail(key)
     name, mail = clean_name(name), clean_email(email)
     if not name:
         return False, t("Choose a rider name of 2 to 40 characters without / \\ < >.")
@@ -193,12 +195,13 @@ def verify_email(token):
     return True, t("Your e-mail address is confirmed. You can sign in.")
 
 
-def resend_verification(email, client="-"):
+def resend_verification(email, client=None):
     """Sends a new verification e-mail if the address has an unverified account. Always the same answer."""
     mail = clean_email(email)
-    if mail and not reset_throttle.blocked(mail) and not reset_throttle.blocked(client):
+    if mail and not reset_throttle.blocked(mail) and not (client and reset_throttle.blocked(client)):
         reset_throttle.fail(mail)
-        reset_throttle.fail(client)
+        if client:
+            reset_throttle.fail(client)
         with connect() as conn:
             row = _by_email(conn, mail)
             token = _issue(conn, row[0], 'verify', VERIFY_TTL_S) if row and not row[3] else None
@@ -209,16 +212,17 @@ def resend_verification(email, client="-"):
 
 # --- sign-in, sessions ------------------------------------------------------------------------------------------------
 
+OK = "ok"
 WRONG = "wrong"
 UNVERIFIED = "unverified"
 THROTTLED = "throttled"
 
 
-def login(email, password, client="-", label="browser"):
+def login(email, password, client=None, label="browser"):
     """Signs in. Returns (status, token_or_None, rider_name_or_None); status is 'ok', 'wrong', 'unverified' or
     'throttled'. Unknown e-mail, no password and wrong password are all 'wrong', and cost the same time."""
     mail = (email or "").strip().lower()
-    if login_throttle.blocked(mail) or client_throttle.blocked(client):
+    if login_throttle.blocked(mail) or (client and client_throttle.blocked(client)):
         return THROTTLED, None, None
     with connect() as conn:
         row = _by_email(conn, mail) if clean_email(mail) else None
@@ -227,7 +231,8 @@ def login(email, password, client="-", label="browser"):
         _spend_time()
     if not good:
         login_throttle.fail(mail)
-        client_throttle.fail(client)
+        if client:
+            client_throttle.fail(client)
         return WRONG, None, None
     if not row[3]:
         return UNVERIFIED, None, None
@@ -236,7 +241,7 @@ def login(email, password, client="-", label="browser"):
     with connect() as conn:
         conn.execute("""INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen, label)
                         VALUES (?, ?, ?, ?, ?, ?)""", (_digest(token), row[0], now, now + SESSION_TTL_S, now, label[:60]))
-    return "ok", token, row[1]
+    return OK, token, row[1]
 
 
 def session_user(token):
@@ -288,12 +293,13 @@ def change_password(user_name, current, new, keep_token=None):
     return True, t("Password changed.")
 
 
-def request_password_reset(email, client="-"):
+def request_password_reset(email, client=None):
     """Sends a reset link if the address has an account. Always the same answer."""
     mail = clean_email(email)
-    if mail and not reset_throttle.blocked(mail) and not reset_throttle.blocked(client):
+    if mail and not reset_throttle.blocked(mail) and not (client and reset_throttle.blocked(client)):
         reset_throttle.fail(mail)
-        reset_throttle.fail(client)
+        if client:
+            reset_throttle.fail(client)
         with connect() as conn:
             row = _by_email(conn, mail)
             token = _issue(conn, row[0], 'reset', RESET_TTL_S) if row else None

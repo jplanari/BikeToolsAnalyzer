@@ -327,3 +327,48 @@ def test_user_corner_adds_a_bike_from_its_parts(seeded_db):
     assert bike["name"] == "Road" and bike["crr"] == pytest.approx(0.004)
     assert bike["frame_kg"] + bike["wheelset_kg"] + bike["groupset_kg"] + bike["tyres_kg"] == pytest.approx(6.0)
     assert any("Road" in e.label and "6.00 kg" in e.label for e in at.expander)
+
+
+# --- shared server: sign-in gate -----------------------------------------------------------------
+
+@pytest.fixture
+def server(empty_db, monkeypatch):
+    from src.data.db import accounts as acc
+    monkeypatch.setenv("BIKETOOLS_SERVER_MODE", "1")
+    monkeypatch.setattr(acc, "COST", {'n': 2 ** 10, 'r': 8, 'p': 1})
+    mails = []
+    monkeypatch.setattr(acc, "deliver", lambda kind, email, token, name: mails.append((kind, email, token, name)))
+    return mails
+
+
+def _page_text(at):
+    return " ".join(str(x.value) for x in list(at.markdown) + list(at.error) + list(at.success) + list(at.info))
+
+
+def test_server_mode_shows_only_the_sign_in_screens(server):
+    db.save_user("Hidden", 250, 170, 70.0, 180.0)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception
+    assert [t.label for t in at.tabs] == ["Sign in", "Create account", "Forgot password"]
+    assert "Current User" not in [w.label for w in at.sidebar.selectbox] and "Hidden" not in _page_text(at)           # no list of riders, no app behind it
+
+
+def test_sign_up_confirm_and_sign_in(server):
+    from src.data.db import accounts as acc
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    signup = [w for w in at.text_input if w.label == "Rider name"][0]
+    signup.set_value("Nuria")
+    mail_inputs = [w for w in at.text_input if w.label == "E-mail"]
+    mail_inputs[1].set_value("nuria@example.com")
+    [w for w in at.text_input if w.label == "Password"][1].set_value("a long password")
+    [b for b in at.button if b.label == "Create account"][0].click().run()
+    assert server and server[-1][0] == "verify"
+    assert acc.verify_email(server[-1][2])[0]
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    [w for w in at.text_input if w.label == "E-mail"][0].set_value("nuria@example.com")
+    [w for w in at.text_input if w.label == "Password"][0].set_value("a long password")
+    [b for b in at.button if b.label == "Sign in"][0].click().run()
+    assert not at.exception
+    assert at.session_state["auth_user"] == "Nuria"
+    assert any(b.label == "Sign out" for b in at.sidebar.button)
+    assert "Current User" not in [w.label for w in at.sidebar.selectbox]       # nobody else's name to pick

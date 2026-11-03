@@ -66,5 +66,5 @@ call the per-rider functions with that rider's name.
 ## Not done yet (needed for a public server)
 
 - Connection pooling (each call opens a connection).
-- Per-user isolation tests at the data-layer level, accounts with e-mail verification, retention and deletion tooling.
+- Retention tooling (what to keep for riders who stop using the server). Accounts and isolation are done: see `docs/ACCOUNTS.md`, `docs/SERVER.md`.
 - Moving an existing SQLite database into PostgreSQL (a one-off import script).

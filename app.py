@@ -18,6 +18,13 @@ from src.i18n import session as i18n_session
 i18n_session.init_session()
 theme.page_header("v1.4")
 
+# On a shared server nobody gets past here without signing in
+from src import serverconf
+signed_in = None
+if serverconf.server_mode():
+    from src.viz import auth_gate
+    signed_in = auth_gate.gate()
+
 # Initialize Session State
 if 'history_file' not in st.session_state:
     st.session_state['history_file'] = None
