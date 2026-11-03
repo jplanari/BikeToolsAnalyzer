@@ -75,6 +75,20 @@ def _by_hand(new, old, auto):
     return int(new) if int(new) != int(old) or not auto else None
 
 
+def _body_controls(user_name, user):
+    """Weight and height: they drive W/kg, the aerodynamics and the energy figures, and change over time."""
+    from src.data.db import set_user_body
+    with st.popover(t("Set weight / height")):
+        with st.form(f"body_{user_name}"):
+            weight = st.number_input(t("Weight (kg)"), value=float(user['weight']), min_value=20.0, max_value=300.0, step=0.5)
+            height = st.number_input(t("Height (cm)"), value=float(user['height']), min_value=100.0, max_value=250.0, step=1.0)
+            if st.form_submit_button(t("Save")):
+                if set_user_body(user_name, weight, height):
+                    st.rerun()
+                else:
+                    st.error(t("Enter a weight between 20 and 300 kg and a height between 100 and 250 cm."))
+
+
 def _timezone_control(user_name, user):
     """The rider's time zone: which day a ride belongs to (a 23:30 ride is that evening, not tomorrow in UTC)."""
     from zoneinfo import available_timezones
@@ -143,6 +157,7 @@ def render_user_corner(user_name):
     c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.w_prime_help())
     c4.metric(t("Weight"), f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
+    _body_controls(user_name, user_data)
     _timezone_control(user_name, user_data)
     
     st.markdown("---")

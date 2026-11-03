@@ -75,3 +75,13 @@ def test_w_prime_is_20_kj_unless_the_rider_gives_theirs(temp_db):
     assert db.get_user_data("Given")['w_prime'] == 27500
     db.set_user_w_prime("Default", 23400)
     assert db.get_user_data("Default")['w_prime'] == 23400
+
+
+def test_set_user_body_updates_weight_and_height_within_limits(temp_db):
+    db.save_user("Rider", 250, 170, 70.0, 175.0)
+    assert db.set_user_body("Rider", 68.5, 180) is True
+    u = db.get_user_data("Rider")
+    assert (u["weight"], u["height"]) == (68.5, 180.0)
+    for bad in ((5, 180), (68, 400), ("x", 180), (None, None)):
+        assert db.set_user_body("Rider", *bad) is False
+    assert db.get_user_data("Rider")["weight"] == 68.5
