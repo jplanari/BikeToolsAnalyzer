@@ -95,6 +95,22 @@ The upload box itself stops at 200 MB (`--server.maxUploadSize`), and Caddy at 2
 upload says so once and stops; deleting rides makes room. For comparison, one heavy cyclist uses about 17 MB of ride files a
 year, so 500 MB is decades. On the desktop the limits are the old, looser ones (200 MB and 2 GB) and there is no quota.
 
+## Looking at the server (admin view)
+
+`tools/admin.py` is a read-only terminal view for whoever runs the server. Run it on the server with the same settings the
+app uses (`BIKETOOLS_DATABASE_URL`, or `BIKETOOLS_DB` for a SQLite file):
+
+    python tools/admin.py             overview: riders, rides, stored data, accounts, activity
+    python tools/admin.py riders      one line per rider: e-mail, account state, rides, stored size, last seen, connections
+    python tools/admin.py tables      rows and size of every table
+    python tools/admin.py --json      the same, as JSON (for scripts)
+
+It shows the database size, the number and size of the original ride files, riders (with confirmed / waiting accounts and new
+sign-ups in the last 7 and 30 days), activities (total, last 7 and 30 days, average per rider), sessions open now, provider
+connections and how many expired sessions are waiting to be cleaned. It changes nothing. The output has rider names and
+e-mail addresses, so keep it private. The code is `src/data/db/admin.py`; it is deliberately not part of `src.data.db`, and a
+test fails if any page of the app imports it.
+
 ## Not covered yet
 
 - The admin view only reads: there is no way to ban a rider or message riders yet.
