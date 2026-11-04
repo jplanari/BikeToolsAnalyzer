@@ -80,7 +80,7 @@ year, so 500 MB is decades. On the desktop the limits are the old, looser ones (
 
 ## Not covered yet
 
-- No admin screen: look at the database for the list of accounts; there is no way to ban or message riders.
+- The admin view only reads: there is no way to ban a rider or message riders yet.
 - Sessions of 30 days mean a deleted browser cookie is the only "forget me" on a shared computer: use Sign out there.
 - The cookie is written by a small script in the page; if a browser blocks it the rider has to sign in again each time
   the tab is reloaded.
