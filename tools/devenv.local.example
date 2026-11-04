@@ -1,0 +1,16 @@
+# Copy to tools/devenv.local (git ignores that file) and fill in what you need. Plain shell assignments.
+
+# Mail account used by:  bt_mail on   (Gmail needs an app password, not your normal one)
+BT_SMTP_HOST=smtp.gmail.com
+BT_SMTP_PORT=587
+BT_SMTP_SECURITY=starttls
+BT_SMTP_USER=you@gmail.com
+BT_SMTP_PASSWORD=
+BT_SMTP_SENDER=you@gmail.com
+
+# PostgreSQL used by:  bt_db postgres   (a throwaway database, not production)
+BT_PG_URL=postgresql://biketools:password@localhost:5432/biketools_test
+
+# Optional: other places / port
+# BT_SERVER_DATA=$HOME/.local/share/BikeToolsAnalyzer-server-test
+# BT_PORT=8501
