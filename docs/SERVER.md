@@ -28,6 +28,23 @@ sections) with `redirect_uri` set to the public address. In server mode credenti
 Start: `BIKETOOLS_SERVER_MODE=1 ... streamlit run app.py --server.address 127.0.0.1 --server.port 8501`
 and point the proxy at it (WebSocket support on).
 
+## Trying it on your computer
+
+`tools/devenv.sh` gives you switches for the settings above, for one terminal at a time (Linux and macOS, bash or zsh).
+Nothing is permanent: closing the terminal, or `bt_clear`, removes every setting.
+
+    source tools/devenv.sh
+    bt_server on          # sign-in screens, with a separate test folder (your real desktop data is never touched)
+    bt_mail off           # or: bt_mail on  (after filling in tools/devenv.local; copy tools/devenv.local.example)
+    bt_run                # opens the desktop window; "bt_run web" uses your browser instead
+    bt_confirm            # with mail off: marks the accounts you signed up as confirmed
+    bt_status             # shows every setting
+    bt_reset              # deletes the test data (asks first)
+
+Other switches: `bt_db sqlite|postgres`, `bt_proxy on|off`, `bt_limits strict|default` (tiny upload and storage limits, to see
+the messages; they exist once the limits change is merged), `bt_server off` (back to the normal app). `bt_help` lists all
+of them. Windows would need a PowerShell version of the same file; it does not exist yet.
+
 ## How accounts behave
 
 - Sign-up asks for a rider name, e-mail and password (8+ characters, stored as scrypt hashes). The e-mail is confirmed
