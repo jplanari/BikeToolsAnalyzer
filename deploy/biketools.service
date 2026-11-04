@@ -1,0 +1,25 @@
+# Without Docker: a systemd service. Install:
+#   sudo useradd --system --create-home --home-dir /opt/biketools biketools
+#   (put the code in /opt/biketools/app and a virtualenv in /opt/biketools/venv; pip install -r requirements.txt -r requirements-server.txt)
+#   sudo cp deploy/biketools.service /etc/systemd/system/ && sudo systemctl enable --now biketools
+# Secrets go in /etc/biketools.env (chmod 600), one NAME=value per line (see deploy/.env.example). Put Caddy or nginx in
+# front for HTTPS and set BIKETOOLS_TRUST_PROXY=1 only if Streamlit is reachable through that proxy alone (it listens on 127.0.0.1).
+[Unit]
+Description=BikeTools Analyzer
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=biketools
+WorkingDirectory=/opt/biketools/app
+EnvironmentFile=/etc/biketools.env
+Environment=BIKETOOLS_SERVER_MODE=1
+ExecStart=/opt/biketools/venv/bin/streamlit run app.py --server.address=127.0.0.1 --server.port=8501 --server.headless=true --server.maxUploadSize=200 --server.fileWatcherType=none --browser.gatherUsageStats=false
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

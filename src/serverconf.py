@@ -24,6 +24,32 @@ def trust_proxy():
     return _flag("BIKETOOLS_TRUST_PROXY")
 
 
+def _megabytes(name, on_server, on_desktop):
+    """A size limit in bytes from an environment variable in MB (0 = no limit); the defaults differ for a shared server."""
+    default = on_server if server_mode() else on_desktop
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    return int(value * 1024 * 1024) if value > 0 else 0
+
+
+def max_activity_bytes():
+    """BIKETOOLS_MAX_ACTIVITY_MB: the biggest single ride file (after unzipping). 50 MB on a server, 200 MB on the desktop."""
+    return _megabytes("BIKETOOLS_MAX_ACTIVITY_MB", 50, 200)
+
+
+def max_unpacked_bytes():
+    """BIKETOOLS_MAX_UNPACKED_MB: everything unpacked from one upload (zip-bomb guard). 500 MB on a server, 2 GB on the desktop."""
+    return _megabytes("BIKETOOLS_MAX_UNPACKED_MB", 500, 2048)
+
+
+def rider_quota_bytes():
+    """BIKETOOLS_RIDER_QUOTA_MB: the most original ride files one rider may store. 500 MB on a server, none on the desktop."""
+    return _megabytes("BIKETOOLS_RIDER_QUOTA_MB", 500, 0)
+
+
 def smtp_from_env():
     """The mail account of the server as the same dict the database gives, or None when not configured here."""
     host, sender = os.environ.get("BIKETOOLS_SMTP_HOST", "").strip(), os.environ.get("BIKETOOLS_SMTP_SENDER", "").strip()

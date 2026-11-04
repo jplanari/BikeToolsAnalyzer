@@ -13,6 +13,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 
+from src import serverconf
 from src.i18n import mark, t, tr
 
 NOT_A_RIDE = mark("not a ride file (expected FIT, GPX or TCX, or a zip / gz of them).")
@@ -60,17 +61,23 @@ def _hidden(member):
     return any(p.startswith(".") or p == "__MACOSX" for p in parts if p)
 
 
+def _activity_limit():
+    """One unpacked file: the module default, or the smaller limit a server sets (BIKETOOLS_MAX_ACTIVITY_MB)."""
+    return min(MAX_ACTIVITY_BYTES, serverconf.max_activity_bytes() or MAX_ACTIVITY_BYTES)
+
+
 def expand_upload(name, data, _depth=0, _budget=None):
     """
     Returns (activities, notes). `notes` explains what was skipped (unknown file types, unreadable archives);
     an upload that holds nothing usable gives an empty list and a note, never an exception.
     """
-    budget = _budget if _budget is not None else [MAX_TOTAL_BYTES]
+    budget = _budget if _budget is not None else [min(MAX_TOTAL_BYTES, serverconf.max_unpacked_bytes() or MAX_TOTAL_BYTES)]
+    limit = _activity_limit()
     kind = sniff_kind(data)
     notes = []
 
     if kind in ACTIVITY_KINDS:
-        if len(data) > MAX_ACTIVITY_BYTES:
+        if len(data) > limit or len(data) > budget[0]:
             return [], [f"{name}: " + t("file is too large.")]
         budget[0] -= len(data)
         return [Activity(f"{_stem(name)}.{kind}", bytes(data), kind)], notes
@@ -81,10 +88,10 @@ def expand_upload(name, data, _depth=0, _budget=None):
     if kind == "gzip":
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz:
-                inner = gz.read(MAX_ACTIVITY_BYTES + 1)
+                inner = gz.read(limit + 1)
         except (OSError, EOFError) as e:
             return [], [f"{name}: " + t("could not unzip it ({e}).", e=e)]
-        if len(inner) > MAX_ACTIVITY_BYTES:
+        if len(inner) > limit:
             return [], [f"{name}: " + t("file is too large.")]
         return expand_upload(_stem(name), inner, _depth + 1, budget)
 
@@ -94,7 +101,7 @@ def expand_upload(name, data, _depth=0, _budget=None):
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 members = [i for i in zf.infolist() if not i.is_dir() and not _hidden(i.filename)]
                 for info in sorted(members, key=lambda i: i.filename):
-                    if info.file_size > MAX_ACTIVITY_BYTES or info.file_size > budget[0]:
+                    if info.file_size > limit or info.file_size > budget[0]:
                         notes.append(f"{info.filename}: " + t("too large, skipped."))
                         continue
                     try:
