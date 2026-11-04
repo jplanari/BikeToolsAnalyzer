@@ -8,4 +8,9 @@ backups/
 *.db-wal
 *.db-shm
 validation/output/
+<<<<<<< HEAD
 tools/devenv.local
+=======
+deploy/.env
+deploy/secrets.toml
+>>>>>>> origin/main

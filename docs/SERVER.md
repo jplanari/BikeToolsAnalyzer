@@ -42,7 +42,7 @@ Nothing is permanent: closing the terminal, or `bt_clear`, removes every setting
     bt_reset              # deletes the test data (asks first)
 
 Other switches: `bt_db sqlite|postgres`, `bt_proxy on|off`, `bt_limits strict|default` (tiny upload and storage limits, to see
-the messages; they exist once the limits change is merged), `bt_server off` (back to the normal app). `bt_help` lists all
+the messages), `bt_server off` (back to the normal app). `bt_help` lists all
 of them. Windows would need a PowerShell version of the same file; it does not exist yet.
 
 ## How accounts behave
@@ -55,9 +55,49 @@ of them. Windows would need a PowerShell version of the same file; it does not e
 - A rider can delete their account (password required) and everything of theirs goes with it.
 - The Strava / Wahoo / Polar return only attaches to the rider who started it.
 
+## Deploying with Docker (recommended)
+
+The `deploy/` folder has everything for one server with Docker: the app, PostgreSQL, and Caddy, which gets the HTTPS
+certificate by itself. Only Caddy is open to the internet (ports 80 and 443).
+
+1. Point a domain name at the server and open ports 80 and 443.
+2. `cd deploy`, then `cp .env.example .env` and fill it in: the domain, a database password, a `BIKETOOLS_SECRET_KEY`
+   (the file says how to make one) and the mail account. Keep a copy of the secret key somewhere safe, apart from backups.
+3. `touch secrets.toml` (put the `[strava]`, `[wahoo]`, `[polar]` sections in it when you have them; Docker needs the
+   file to exist).
+4. `docker compose up -d --build`, then open `https://your-domain`.
+5. Check it: `docker compose ps` (all three running, `app` healthy) and `docker compose logs -f app`.
+
+Update to a new version: `git pull && docker compose up -d --build`. The database lives in a Docker volume and is migrated
+when the app starts. Without Docker, `deploy/biketools.service` is a systemd unit with the same settings.
+
+**Backups.** `deploy/backup.sh /var/backups/biketools` writes a dated `pg_dump` and keeps the last 14; run it from cron
+(`15 3 * * *  cd /opt/biketools/deploy && ./backup.sh /var/backups/biketools`) and copy the folder off the machine. Restore
+into an empty database to test it before you need it:
+
+    docker compose exec -T db createdb -U biketools -T template0 restore_test
+    docker compose exec -T db pg_restore -U biketools -d restore_test --no-owner < biketools-DATE.dump
+
+**Not tested by me.** These files were written without a Docker daemon available, so the first real build is the test.
+`docker compose config` accepts them. Expect to fix small things on the first run and tell me what it says.
+
+## Limits on uploads and storage
+
+Strangers upload files to a public server, so these are on by default in server mode (all in MB; `0` switches one off):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BIKETOOLS_MAX_ACTIVITY_MB` | 50 | The biggest single ride file, after unzipping |
+| `BIKETOOLS_MAX_UNPACKED_MB` | 500 | Everything unpacked from one upload (a zip that expands to gigabytes is cut off) |
+| `BIKETOOLS_RIDER_QUOTA_MB` | 500 | The most original ride files one rider can store; the User Corner shows how much is used |
+
+The upload box itself stops at 200 MB (`--server.maxUploadSize`), and Caddy at 250 MB. When a rider reaches their quota the
+upload says so once and stops; deleting rides makes room. For comparison, one heavy cyclist uses about 17 MB of ride files a
+year, so 500 MB is decades. On the desktop the limits are the old, looser ones (200 MB and 2 GB) and there is no quota.
+
 ## Not covered yet
 
-- No admin screen: look at the database for the list of accounts; there is no way to ban or message riders.
+- The admin view only reads: there is no way to ban a rider or message riders yet.
 - Sessions of 30 days mean a deleted browser cookie is the only "forget me" on a shared computer: use Sign out there.
 - The cookie is written by a small script in the page; if a browser blocks it the rider has to sign in again each time
   the tab is reloaded.
