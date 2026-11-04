@@ -38,9 +38,25 @@ and point the proxy at it (WebSocket support on).
 - A rider can delete their account (password required) and everything of theirs goes with it.
 - The Strava / Wahoo / Polar return only attaches to the rider who started it.
 
+## Looking at the server (admin view)
+
+`tools/admin.py` is a read-only terminal view for whoever runs the server. Run it on the server with the same settings the
+app uses (`BIKETOOLS_DATABASE_URL`, or `BIKETOOLS_DB` for a SQLite file):
+
+    python tools/admin.py             overview: riders, rides, stored data, accounts, activity
+    python tools/admin.py riders      one line per rider: e-mail, account state, rides, stored size, last seen, connections
+    python tools/admin.py tables      rows and size of every table
+    python tools/admin.py --json      the same, as JSON (for scripts)
+
+It shows the database size, the number and size of the original ride files, riders (with confirmed / waiting accounts and new
+sign-ups in the last 7 and 30 days), activities (total, last 7 and 30 days, average per rider), sessions open now, provider
+connections and how many expired sessions are waiting to be cleaned. It changes nothing. The output has rider names and
+e-mail addresses, so keep it private. The code is `src/data/db/admin.py`; it is deliberately not part of `src.data.db`, and a
+test fails if any page of the app imports it.
+
 ## Not covered yet
 
-- No admin screen: look at the database for the list of accounts; there is no way to ban or message riders.
+- The admin view only reads: there is no way to ban a rider or message riders yet.
 - Sessions of 30 days mean a deleted browser cookie is the only "forget me" on a shared computer: use Sign out there.
 - The cookie is written by a small script in the page; if a browser blocks it the rider has to sign in again each time
   the tab is reloaded.
