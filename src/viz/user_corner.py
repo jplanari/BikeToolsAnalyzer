@@ -89,6 +89,17 @@ def _body_controls(user_name, user):
                     st.error(t("Enter a weight between 20 and 300 kg and a height between 100 and 250 cm."))
 
 
+def _storage_caption(user_name):
+    """On a server with a storage limit: how much of it the rider has used."""
+    from src import serverconf
+    from src.data.db import stored_bytes
+    quota = serverconf.rider_quota_bytes()
+    if quota:
+        used = stored_bytes(user_name)
+        st.caption(t("💾 Storage: {used} of {total} MB used by your ride files.", used=f"{used / 1048576:.1f}",
+                     total=f"{quota // 1048576}"))
+
+
 def _timezone_control(user_name, user):
     """The rider's time zone: which day a ride belongs to (a 23:30 ride is that evening, not tomorrow in UTC)."""
     from zoneinfo import available_timezones
@@ -157,6 +168,7 @@ def render_user_corner(user_name):
     c3.metric("W′", f"{(user_data.get('w_prime') or 20000) / 1000:.1f} kJ", help=theme.w_prime_help())
     c4.metric(t("Weight"), f"{user_data['weight']} kg")
     _threshold_controls(user_name, user_data)
+    _storage_caption(user_name)
     _body_controls(user_name, user_data)
     _timezone_control(user_name, user_data)
     

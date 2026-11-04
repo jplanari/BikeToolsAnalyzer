@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from . import core
 from .core import _connect, _date_filter, backup_db, connect
 from .users import get_user_data
+from src import serverconf
 from src.i18n import mark, t, tr
 
 def get_hr20(user_name, start=None):
@@ -223,6 +224,21 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
 DUPLICATE_MESSAGE = mark("Ride already exists (duplicate file).")
 
 
+QUOTA_MESSAGE = mark("Storage limit reached: delete some rides to add more.")
+
+
+def is_quota_message(msg):
+    return msg in (QUOTA_MESSAGE, tr(QUOTA_MESSAGE))
+
+
+def stored_bytes(user_name):
+    """Bytes the rider's original ride files take in the database (as stored, compressed)."""
+    with connect() as conn:
+        row = conn.execute("""SELECT COALESCE(SUM(length(f.content)), 0) FROM ride_files f JOIN rides r ON r.id = f.ride_id
+                              WHERE r.user_id = (SELECT id FROM users WHERE name = ?)""", (user_name,)).fetchone()
+    return int(row[0] or 0)
+
+
 def is_duplicate_message(msg):
     """True if msg is save_ride's duplicate answer, in any language (callers must not match on its words)."""
     return msg in (DUPLICATE_MESSAGE, tr(DUPLICATE_MESSAGE))
@@ -238,6 +254,13 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
     try:
         with connect() as conn:
             c = conn.cursor()
+            codec, blob = _pack(file_content)
+            quota = serverconf.rider_quota_bytes()
+            if quota:                                  # a shared server limits what one rider can store
+                used = c.execute("""SELECT COALESCE(SUM(length(f.content)), 0) FROM ride_files f JOIN rides r ON r.id = f.ride_id
+                                    WHERE r.user_id = ?""", (user['id'],)).fetchone()[0]
+                if int(used or 0) + len(blob) > quota:
+                    return False, tr(QUOTA_MESSAGE)
             # 1. Insert Ride Metadata
             cols = ['user_id', 'filename', 'file_hash', 'date_time',
                     'distance_km', 'elevation_m', 'avg_speed_kph', 'norm_power', 'avg_power',
@@ -250,7 +273,6 @@ def save_ride(user_name, filename, file_content, metadata, power_curve_dict):
                     metadata.get(k, 0 if k == 'metrics_version' else None) for k in _METRIC_COLUMNS]
             c.execute(f"INSERT INTO rides ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
             ride_id = c.lastrowid
-            codec, blob = _pack(file_content)
             c.execute("INSERT INTO ride_files (ride_id, codec, content) VALUES (?, ?, ?)", (ride_id, codec, blob))
 
             # 2. Power records (curve) and time in zones

@@ -59,6 +59,9 @@ def import_activities(user_name, activities, ftp, lthr=None, progress=None):
                 known_starts.append(start)
         elif db.is_duplicate_message(msg):
             res.already_imported += 1
+        elif db.is_quota_message(msg):             # every further file would fail the same way: say it once and stop
+            res.failed.append(msg)
+            break
         else:
             res.failed.append(f"{act.name}: {msg}")
     if progress:

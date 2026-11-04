@@ -8,3 +8,5 @@ backups/
 *.db-wal
 *.db-shm
 validation/output/
+deploy/.env
+deploy/secrets.toml

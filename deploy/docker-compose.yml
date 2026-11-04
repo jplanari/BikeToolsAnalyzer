@@ -1,0 +1,70 @@
+# BikeTools Analyzer on one server: the app, PostgreSQL and Caddy (HTTPS certificates are obtained automatically).
+#
+#   cd deploy
+#   cp .env.example .env        # then fill it in (see the comments inside)
+#   docker compose up -d --build
+#
+# Only Caddy is reachable from the internet (ports 80 and 443). The app and the database are on a private network,
+# which is also why BIKETOOLS_TRUST_PROXY=1 is safe here.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: biketools
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: biketools
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biketools -d biketools"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BIKETOOLS_SERVER_MODE: "1"
+      BIKETOOLS_TRUST_PROXY: "1"
+      BIKETOOLS_PUBLIC_URL: https://${DOMAIN:?set DOMAIN in .env}
+      BIKETOOLS_DATABASE_URL: postgresql://biketools:${POSTGRES_PASSWORD}@db:5432/biketools
+      BIKETOOLS_SECRET_KEY: ${BIKETOOLS_SECRET_KEY:?set BIKETOOLS_SECRET_KEY in .env}
+      BIKETOOLS_SMTP_HOST: ${BIKETOOLS_SMTP_HOST:-}
+      BIKETOOLS_SMTP_PORT: ${BIKETOOLS_SMTP_PORT:-587}
+      BIKETOOLS_SMTP_SECURITY: ${BIKETOOLS_SMTP_SECURITY:-starttls}
+      BIKETOOLS_SMTP_USER: ${BIKETOOLS_SMTP_USER:-}
+      BIKETOOLS_SMTP_PASSWORD: ${BIKETOOLS_SMTP_PASSWORD:-}
+      BIKETOOLS_SMTP_SENDER: ${BIKETOOLS_SMTP_SENDER:-}
+      BIKETOOLS_RIDER_QUOTA_MB: ${BIKETOOLS_RIDER_QUOTA_MB:-500}
+      BIKETOOLS_MAX_ACTIVITY_MB: ${BIKETOOLS_MAX_ACTIVITY_MB:-50}
+      BIKETOOLS_MAX_UNPACKED_MB: ${BIKETOOLS_MAX_UNPACKED_MB:-500}
+    # Strava / Wahoo / Polar keys, if you have them (the [strava], [wahoo], [polar] sections). Create the file first.
+    volumes:
+      - ./secrets.toml:/app/.streamlit/secrets.toml:ro
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  dbdata:
+  caddydata:
+  caddyconfig:
