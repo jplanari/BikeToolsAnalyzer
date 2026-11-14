@@ -24,7 +24,6 @@ from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.analysis.decoupling import GOOD_PCT, decoupling
 from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
 from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
@@ -75,6 +74,9 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_p
         df.attrs.pop('w_prime', None)
 
     return df, climbs, p_comps
+
+GOOD_PCT = 5.0                    # Friel: under this the aerobic base holds up
+RELIABLE_DECOUPLING_S = 3600      # his guide: an hour or more of steady riding
 
 
 def process_and_display_analysis(file_obj, user_name, settings):
@@ -172,7 +174,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     elif section == "📈 Time series":
         _render_time_series(df)
     elif section == "⚡ Power":
-        _render_power(df, settings, summary['power_curve'], user_name)
+        _render_power(df, settings, summary['power_curve'], user_name, summary.get('decoupling_pct'))
     elif section == "💨 Aero":
         _render_aero(df, settings, p_comps)
     elif section == "🔥 Thermal":
@@ -452,11 +454,13 @@ def _render_w_prime_notice(df, settings, user_name):
         st.rerun()
 
 
-def _render_decoupling(df):
-    """Aerobic decoupling: how much the power per heart beat falls from the first to the second half of the ride."""
-    d = decoupling(df)
-    if d is None:
+def _render_decoupling(df, pct):
+    """Aerobic decoupling (the ride's stored Pa:HR figure, ride_metrics.aerobic_decoupling): how much the power per
+    heart beat falls from the first to the second half of the pedalling time."""
+    if pct is None or 'power' not in df.columns or 'hr' not in df.columns:
         return
+    pedalling = int(((df['power'] > 0) & (df['hr'] > 0)).sum())
+    d = {'pct': float(pct), 'minutes': pedalling / 60.0, 'reliable': pedalling >= RELIABLE_DECOUPLING_S}
     st.subheader(t("Aerobic decoupling"))
     verdict = (t("Your aerobic base held up: the second half was about as efficient as the first.")
                if d['pct'] < GOOD_PCT else
@@ -469,7 +473,7 @@ def _render_decoupling(df):
                           t(" The ride is under an hour, so this is only a rough indication.")))
 
 
-def _render_power(df, settings, current_curve, user_name):
+def _render_power(df, settings, current_curve, user_name, decoupling_pct=None):
     st.subheader(t("W' Balance"))
     _render_w_prime_notice(df, settings, user_name)
     if 'w_prime_balance' in df.columns:
@@ -487,7 +491,7 @@ def _render_power(df, settings, current_curve, user_name):
                 get_power_records(user_name, today - pd.Timedelta(days=89), today)))
 
         show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
-        _render_decoupling(df)
+        _render_decoupling(df, decoupling_pct)
 
     st.subheader(t("Zone Distribution"))
     c1, c2 = st.columns(2)
