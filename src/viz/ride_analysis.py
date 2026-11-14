@@ -24,6 +24,7 @@ from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
+from src.analysis.decoupling import GOOD_PCT, decoupling
 from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
 from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
@@ -451,6 +452,23 @@ def _render_w_prime_notice(df, settings, user_name):
         st.rerun()
 
 
+def _render_decoupling(df):
+    """Aerobic decoupling: how much the power per heart beat falls from the first to the second half of the ride."""
+    d = decoupling(df)
+    if d is None:
+        return
+    st.subheader(t("Aerobic decoupling"))
+    verdict = (t("Your aerobic base held up: the second half was about as efficient as the first.")
+               if d['pct'] < GOOD_PCT else
+               t("Efficiency dropped in the second half: fatigue, heat or fuelling is catching up with you."))
+    st.metric(t("Power per heartbeat, first half vs second"), f"{d['pct']:+.1f} %",
+              help=t("Friel's decoupling over {minutes} min of riding. Under 5 % is a good aerobic base; a bigger drop "
+                     "is a sign of drift. A negative figure (second half more efficient) is common after a warm-up.",
+                     minutes=int(d['minutes'])))
+    st.caption(verdict + ("" if d['reliable'] else
+                          t(" The ride is under an hour, so this is only a rough indication.")))
+
+
 def _render_power(df, settings, current_curve, user_name):
     st.subheader(t("W' Balance"))
     _render_w_prime_notice(df, settings, user_name)
@@ -469,6 +487,7 @@ def _render_power(df, settings, current_curve, user_name):
                 get_power_records(user_name, today - pd.Timedelta(days=89), today)))
 
         show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
+        _render_decoupling(df)
 
     st.subheader(t("Zone Distribution"))
     c1, c2 = st.columns(2)

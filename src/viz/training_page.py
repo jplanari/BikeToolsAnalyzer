@@ -354,6 +354,12 @@ def _render_power(user_name, user, today, mode):
     weight, ftp = user['weight'], user['ftp']
     curves = pp.window_curves(recs, today)
     _chart(tp.plot_power_windows(curves, mode, weight))
+    seasons = pp.season_curves(recs, today)
+    if len(seasons) > 1:
+        st.markdown(t("##### Year by year"))
+        _chart(tp.plot_season_curves(seasons, weight, mode))
+        st.caption(t("Each line is your best effort at every duration within one calendar year, in W/kg. A line above "
+                     "the one before it is a year of better fitness at that duration."))
 
     recent = pp.as_dict(curves['Last 90 days'])
     two = estimate_critical_power(recent) if recent else None
