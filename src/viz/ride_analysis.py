@@ -25,7 +25,8 @@ from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records, get_user_data
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
+from src.physics.aerodyn import (calculate_CdA, cda_with_confidence, calculate_power_components, BIKE_MASS_KG, CRR,
+                                 CDA_ESTIMATE_NOTE, RELIABILITY_NOTE)
 from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
@@ -75,6 +76,9 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_p
         df.attrs.pop('w_prime', None)
 
     return df, climbs, p_comps
+
+GOOD_PCT = 5.0                    # Friel: under this the aerobic base holds up
+RELIABLE_DECOUPLING_S = 3600      # his guide: an hour or more of steady riding
 
 
 def process_and_display_analysis(file_obj, user_name, settings):
@@ -172,7 +176,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     elif section == "📈 Time series":
         _render_time_series(df)
     elif section == "⚡ Power":
-        _render_power(df, settings, summary['power_curve'], user_name)
+        _render_power(df, settings, summary['power_curve'], user_name, summary.get('decoupling_pct'))
     elif section == "💨 Aero":
         _render_aero(df, settings, p_comps)
     elif section == "🔥 Thermal":
@@ -380,15 +384,14 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bi
 
 
 def _ensure_cda(df, settings):
-    """CdA per sample, its aerodynamic power and the ride's overall CdA fit, attached to df (used by the Aero
-    section and as the starting point of the climb estimator). Returns the fit or None."""
-    if 'power' not in df.columns or 'speed' not in df.columns:
-        return None
+    """CdA per sample, its aerodynamic power and the ride's overall CdA (always a value, with its level: measured,
+    rough or assumed), attached to df. Used by the Aero section and as the starting point of the climb estimator."""
     physics = dict(rider_mass=settings.get('weight', 70), bike_mass=settings.get('bike_mass') or BIKE_MASS_KG,
                    crr=settings.get('crr') or CRR)
-    df['cda'], df['p_aero'] = calculate_CdA(df, **physics)
-    fit = estimate_cda(df, **physics)
-    df.attrs['cda_est'] = fit['cda'] if fit else None
+    if 'power' in df.columns and 'speed' in df.columns:
+        df['cda'], df['p_aero'] = calculate_CdA(df, **physics)
+    fit = cda_with_confidence(df, **physics)
+    df.attrs['cda_est'] = fit['cda']
     return fit
 
 
@@ -423,6 +426,20 @@ def _render_time_series(df):
                     use_container_width=True, key="ts_chart", config=ts.PLOT_CONFIG)
 
 
+def cda_label(fit, bridged=""):
+    """Title and help text of the CdA figure, according to how it was obtained."""
+    if fit['level'] == 'measured':
+        return (t("CdA (estimate)"),
+                t("Least-squares fit over {minutes} min faster than 18 km/h. ", minutes=fit['seconds'] // 60)
+                + tr(CDA_ESTIMATE_NOTE) + t(" It absorbs any error in weight, rolling resistance, wind and gradient.")
+                + bridged)
+    if fit['level'] == 'rough':
+        return (t("CdA (rough)"),
+                t("Fit over {minutes} min of riding at any speed above 11 km/h. ", minutes=fit['seconds'] // 60)
+                + tr(RELIABILITY_NOTE['rough']) + bridged)
+    return t("CdA (assumed)"), tr(RELIABILITY_NOTE['assumed'])
+
+
 def _render_aero(df, settings, p_comps):
     st.subheader(t("💨 Aerodynamic Analysis & Power Budget"))
     fit = _ensure_cda(df, settings)
@@ -430,22 +447,20 @@ def _render_aero(df, settings, p_comps):
         st.caption(t('Power balance with {bike_name} and {weight:.0f} kg rider. CdA is an estimate computed from '
                         'the ride.', bike_name=settings['bike_name'], weight=settings['weight']))
     avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
-    if fit:
-        c1, c2 = st.columns(2)
-        tunnel = fit.get('tunnel_seconds') or 0
-        bridged = (t(" Includes {minutes} min {seconds} s where the speed was lost while pedalling (a tunnel), "
-                     "taken at the stretch's average speed.", minutes=tunnel // 60, seconds=tunnel % 60) if tunnel else "")
-        c1.metric(t("CdA (estimate)"), f"{fit['cda']:.3f} m²",
-                  help=t("Least-squares fit over {minutes} min faster than 18 km/h. ", minutes=fit['seconds'] // 60)
-                       + tr(CDA_ESTIMATE_NOTE)
-                       + t(" It absorbs any error in weight, rolling resistance, wind and gradient.") + bridged)
-        c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else t("N/A"))
-        no_wind = "wind_speed" not in df.columns
+    c1, c2 = st.columns(2)
+    tunnel = fit.get('tunnel_seconds') or 0
+    bridged = (t(" Includes {minutes} min {seconds} s where the speed was lost while pedalling (a tunnel), "
+                 "taken at the stretch's average speed.", minutes=tunnel // 60, seconds=tunnel % 60) if tunnel else "")
+    label, help_text = cda_label(fit, bridged)
+    c1.metric(label, f"{fit['cda']:.3f} m²", help=help_text)
+    c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else t("N/A"))
+    no_wind = "wind_speed" not in df.columns
+    if fit['level'] == 'measured':
         st.caption("⚠️ " + tr(CDA_ESTIMATE_NOTE)
                    + (t(" No wind data for this ride: still air is assumed, which understates the CdA "
                         "when there was a head wind.") if no_wind else ""))
     else:
-        st.warning(t("Not enough stable data points (Speed > 18km/h required)."))
+        st.warning(tr(RELIABILITY_NOTE[fit['level']]))
 
     st.markdown(t("**Power Budget: Where did your watts go?**"))
     with st.spinner(t("Calculating power components...")):
@@ -475,7 +490,26 @@ def _render_w_prime_notice(df, settings, user_name):
         st.rerun()
 
 
-def _render_power(df, settings, current_curve, user_name):
+def _render_decoupling(df, pct):
+    """Aerobic decoupling (the ride's stored Pa:HR figure, ride_metrics.aerobic_decoupling): how much the power per
+    heart beat falls from the first to the second half of the pedalling time."""
+    if pct is None or 'power' not in df.columns or 'hr' not in df.columns:
+        return
+    pedalling = int(((df['power'] > 0) & (df['hr'] > 0)).sum())
+    d = {'pct': float(pct), 'minutes': pedalling / 60.0, 'reliable': pedalling >= RELIABLE_DECOUPLING_S}
+    st.subheader(t("Aerobic decoupling"))
+    verdict = (t("Your aerobic base held up: the second half was about as efficient as the first.")
+               if d['pct'] < GOOD_PCT else
+               t("Efficiency dropped in the second half: fatigue, heat or fuelling is catching up with you."))
+    st.metric(t("Power per heartbeat, first half vs second"), f"{d['pct']:+.1f} %",
+              help=t("Friel's decoupling over {minutes} min of riding. Under 5 % is a good aerobic base; a bigger drop "
+                     "is a sign of drift. A negative figure (second half more efficient) is common after a warm-up.",
+                     minutes=int(d['minutes'])))
+    st.caption(verdict + ("" if d['reliable'] else
+                          t(" The ride is under an hour, so this is only a rough indication.")))
+
+
+def _render_power(df, settings, current_curve, user_name, decoupling_pct=None):
     st.subheader(t("W' Balance"))
     _render_w_prime_notice(df, settings, user_name)
     if 'w_prime_balance' in df.columns:
@@ -503,6 +537,7 @@ def _render_power(df, settings, current_curve, user_name):
                 get_power_records(user_name, today - pd.Timedelta(days=89), today)))
 
         show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
+        _render_decoupling(df, decoupling_pct)
 
     st.subheader(t("Zone Distribution"))
     c1, c2 = st.columns(2)

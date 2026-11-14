@@ -196,6 +196,24 @@ def plot_power_windows(curves, mode='light', weight=None):
     return _layout(fig, t('Best power by period'), t('Watts'), pal, x_title=t('Duration'))
 
 
+def plot_season_curves(curves, weight, mode='light'):
+    """Best power per duration for each calendar year, in W/kg so a change of weight does not look like a change of
+    fitness. `curves` is {year: curve} from power_profile.season_curves; newest year drawn strongest."""
+    pal = palette(mode)
+    fig = go.Figure()
+    for i, (year, c) in enumerate(curves.items()):
+        if c is None or c.empty or not weight:
+            continue
+        c = c.sort_values('duration')
+        custom = np.stack([c['watts'], c['date'].map(lambda d: fdate(d, '%d %b %Y'))], axis=1)
+        fig.add_trace(go.Scatter(
+            x=c['duration'], y=(c['watts'] / weight).round(2), name=str(year), mode='lines',
+            line=dict(color=pal['series'][i % 4], width=2.5 if i == 0 else 2), customdata=custom,
+            hovertemplate='%{y:.2f} W/kg (%{customdata[0]:.0f} W) · %{customdata[1]}'))
+    fig.update_xaxes(type='log', **_TICKS)
+    return _layout(fig, t('Best power by year'), t('W/kg'), pal, x_title=t('Duration'))
+
+
 def plot_cp_history(hist, mode='light'):
     """CP and 95 % of 20-min power over time (both in watts: one axis)."""
     pal = palette(mode)

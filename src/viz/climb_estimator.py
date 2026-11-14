@@ -4,13 +4,13 @@ import pandas as pd
 import streamlit as st
 
 from src.physics import climb_model as cm
-from src.physics.aerodyn import get_air_density, get_avg_cda
+from src.physics.aerodyn import ASSUMED_CDA, get_air_density, get_avg_cda
 from src.viz.formatting import format_duration
 from src.i18n import t, mark, tr
 
 BIKE_MASS_KG = 8.0                # same bike weight the ride analysis assumes
 DEFAULT_CRR = 0.005               # same as the ride analysis
-DEFAULT_CDA = 0.32                # upright on the hoods; used when the ride has no usable CdA estimate
+DEFAULT_CDA = ASSUMED_CDA          # upright on the hoods; used when the ride has no usable CdA estimate
 EFFICIENCY = 0.97                 # 3 % drivetrain loss, as in the ride analysis
 
 
