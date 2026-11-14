@@ -102,6 +102,60 @@ def fit_cp3(curve_dict, min_s=60, max_s=1800):
     return {'cp': float(cp), 'w_prime': float(w_prime), 'pmax': float(pmax), 'rmse': rmse}
 
 
+OMPD_TCPMAX_S = 1800.0      # Puchowicz et al. 2020: CP holds up to here; beyond it power declines log-linearly
+
+
+def _ompd(secs, cp, w_prime, pmax, a):
+    """Omni-domain power-duration model (Puchowicz, Baker and Clarke 2020):
+    P(t) = W'/t (1 - exp(-t (Pmax - CP) / W')) + CP, minus A ln(t / TCPmax) after TCPmax."""
+    secs = np.asarray(secs, dtype=float)
+    p = w_prime / secs * (1 - np.exp(-secs * (pmax - cp) / w_prime)) + cp
+    return p - np.where(secs > OMPD_TCPMAX_S, a * np.log(secs / OMPD_TCPMAX_S), 0.0)
+
+
+def fit_ompd(curve_dict, min_s=1, max_s=18000):
+    """
+    The omni-domain model fitted to the whole mean-maximal curve, sprints to hours. Unlike the 3-parameter model
+    (fitted only between 1 and 30 min, and overestimating beyond), it describes the long end too: A is the watts lost
+    per natural-log unit of time after 30 min. Returns dict(cp, w_prime, pmax, a, rmse, long_end) or None.
+    'long_end' is False when the curve has no effort longer than 30 min: A is then not fitted (0).
+    """
+    pts = sorted((d, w) for d, w in (curve_dict or {}).items()
+                 if min_s <= d <= max_s and w and np.isfinite(w))
+    if len(pts) < 6 or sum(1 for d, _ in pts if d >= 120) < 3:
+        return None
+    secs = np.array([d for d, _ in pts], dtype=float)
+    p = np.array([w for _, w in pts], dtype=float)
+    long_end = bool((secs > OMPD_TCPMAX_S).sum() >= 2)
+    three = fit_cp3(curve_dict) or {}
+    cp0 = float(three.get('cp') or np.interp(1200, secs, p) * 0.95)
+    w0 = float(np.clip(three.get('w_prime') or 20000, 2000, 60000))
+    pmax0 = float(max(p.max(), cp0 + 100))
+    try:
+        if long_end:
+            fn = _ompd
+            p0, lo, hi = [cp0, w0, pmax0, 20.0], [20, 500, 50, 0], [2000, 150000, 5000, 500]
+        else:
+            fn = lambda secs_, cp, w, pm: _ompd(secs_, cp, w, pm, 0.0)
+            p0, lo, hi = [cp0, w0, pmax0], [20, 500, 50], [2000, 150000, 5000]
+        par, _ = curve_fit(fn, secs, p, p0=p0, bounds=(lo, hi), maxfev=40000)
+    except (RuntimeError, ValueError):
+        return None
+    cp, w_prime, pmax = (float(x) for x in par[:3])
+    a = float(par[3]) if long_end else 0.0
+    if pmax <= cp:
+        return None
+    rmse = float(np.sqrt(np.mean((_ompd(secs, cp, w_prime, pmax, a) - p) ** 2)))
+    return {'cp': cp, 'w_prime': w_prime, 'pmax': pmax, 'a': a, 'rmse': rmse, 'long_end': long_end}
+
+
+def ompd_curve(fit, durations):
+    """{duration: modelled watts} for plotting a fit_ompd result."""
+    if not fit:
+        return {}
+    return {int(d): float(_ompd([d], fit['cp'], fit['w_prime'], fit['pmax'], fit['a'])[0]) for d in durations}
+
+
 def cp_history(records, window_days=90, freq='W', today=None):
     """
     How CP / W' / FTP estimates evolved: at the end of each week (or month),

@@ -92,6 +92,23 @@ def get_kj_records(user_name, start=None, end=None):
     df['date'] = _parse_dates(df['date'], user)
     return df[cols]
 
+def get_work_records(user_name, start=None, end=None):
+    """Power after X kJ/kg (total or above CP) per ride: DataFrame(basis, threshold, duration, watts, date, ride_id)."""
+    cols = ['basis', 'threshold', 'duration', 'watts', 'date', 'ride_id']
+    user = get_user_data(user_name)
+    if not user:
+        return pd.DataFrame(columns=cols)
+    where, params = _date_filter(start, end, user)
+    with connect() as conn:
+        df = pd.read_sql_query(f"""SELECT w.basis, w.threshold, w.duration_sec AS duration, w.watts,
+                                          r.date_time AS date, r.id AS ride_id
+                                   FROM power_records_work w JOIN rides r ON r.id = w.ride_id
+                                   WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}""",
+                               conn, params=[user['id'], *params])
+    df['date'] = _parse_dates(df['date'], user)
+    return df[cols]
+
+
 def get_zone_rows(user_name, kind, start=None, end=None):
     """Time in zones per ride: DataFrame(ride_id, date, zone, seconds); kind 'power' or 'hr'."""
     cols = ['ride_id', 'date', 'zone', 'seconds']

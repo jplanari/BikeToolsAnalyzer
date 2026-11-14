@@ -15,13 +15,14 @@ from src.viz.plots import (plot_elevation,
                            plot_zone_distribution,
                            plot_power_budget,
                            plot_w_prime_balance)
-from src.analysis.power import power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, w_prime_needed
+from src.analysis.power import (power_curve, time_in_zones, coggan_zones, calculate_w_prime_balance, w_prime_needed,
+                                w_prime_balance_differential)
 from src.analysis.hr import estimate_hr_threshold, time_in_hr_zones
 from src.analysis import power_profile as pp
 from src.data.db import (save_ride, is_duplicate_message, build_ride_metadata, get_ride_start_times, set_user_w_prime, get_ride_bike,
                          get_ride_weather, save_ride_weather)
 from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
-from src.data.cached import get_user_best_power, get_power_records
+from src.data.cached import get_user_best_power, get_power_records, get_user_data
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
 from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
@@ -103,7 +104,7 @@ def process_and_display_analysis(file_obj, user_name, settings):
             return
 
         current_ftp = settings['ftp']
-        summary = summarize_ride(df, current_ftp, settings.get('lthr'))
+        summary = summarize_ride(df, current_ftp, settings.get('lthr'), get_user_data(user_name) if user_name else None)
         duration_s = summary['duration_s']
         avg_speed = summary['avg_speed_kph']
         avg_power = summary['avg_power']
@@ -229,6 +230,8 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
               help=t("Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride "
                    "suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals."))
     
+    _render_trimp(summary)
+
     if summary.get('carb_g') is not None:
         render_fuel_summary(summary, weight, ride_id=db_ride_id, user_name=user_name)
 
@@ -250,6 +253,22 @@ def _render_summary(df, summary, filename, total_dist, total_ascent, laps_df, cl
         if not laps_df.empty:
             with st.expander(t("⏱️ Laps / Intervals")):
                 st.dataframe(laps_df.rename(columns=tr))
+
+
+def _render_trimp(summary):
+    """Heart-rate training load (TRIMP), Edwards and Banister. Needs max (and resting) HR in the profile."""
+    if not summary.get('avg_hr'):
+        return
+    ed, ban = summary.get('trimp_edwards'), summary.get('trimp_banister')
+    if ed is None and ban is None:
+        st.caption(t("ℹ️ Set your maximum and resting heart rate in the User Corner to see TRIMP for this ride."))
+        return
+    r1, r2, _, _ = st.columns(4)
+    r1.metric(t("TRIMP (Edwards)"), f"{ed:.0f}" if ed is not None else t("N/A"),
+              help=t("Minutes in five heart-rate zones of 10 % of your maximum, weighted 1 to 5 (Edwards 1993)."))
+    r2.metric(t("TRIMP (Banister)"), f"{ban:.0f}" if ban is not None else t("N/A"),
+              help=t("Minutes weighted by heart-rate reserve, rising exponentially with intensity (Banister 1991). "
+                     "Uses the constants derived for men; for women it reads about 5–20 % low. Needs resting HR."))
 
 
 def _render_balance_summary(summary):
@@ -455,7 +474,17 @@ def _render_power(df, settings, current_curve, user_name):
     st.subheader(t("W' Balance"))
     _render_w_prime_notice(df, settings, user_name)
     if 'w_prime_balance' in df.columns:
-        show_centered(plot_w_prime_balance(df, settings['w_prime_cap']))
+        model = remembered(st.radio, "w_prime_model", "integral", t("W′ model"), ["integral", "differential"],
+                           horizontal=True, format_func=lambda m: {"integral": t("Integral (Skiba 2012)"),
+                                                                   "differential": t("Differential (Skiba 2015)")}[m],
+                           help=t("Integral: W′ recovers with a fixed 546 s time constant. Differential: recovery is "
+                                  "faster the easier you ride and the emptier the tank; it predicted exhaustion more "
+                                  "closely in a validation study."))
+        shown = df
+        if model == "differential" and 'power' in df.columns and settings.get('ftp'):
+            cap = (df.attrs.get('w_prime') or {}).get('used') or settings['w_prime_cap']
+            shown = df.assign(w_prime_balance=w_prime_balance_differential(df['power'], settings['ftp'], cap))
+        show_centered(plot_w_prime_balance(shown, settings['w_prime_cap']))
     else:
         st.info(t("No W' Balance data available."))
 

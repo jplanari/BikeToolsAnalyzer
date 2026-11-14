@@ -131,6 +131,28 @@ def calculate_w_prime_balance(power_series, ftp, w_prime_cap_j=20000, tau=546):
     return w_prime_cap_j - w_prime_expended(power_series, ftp, tau)
 
 
+def w_prime_balance_differential(power_series, cp, w_prime_cap_j=20000):
+    """
+    W' balance with the differential model (Skiba et al. 2015): above CP the balance falls by (P - CP) each
+    second; below CP it recovers by (W'0 - W'bal) x (CP - P) / W'0, so recovery is faster the further below CP the
+    rider is and the emptier the tank. No fixed time constant, unlike the integral model (tau = 546 s), which
+    was fitted to one group and recovers at the same speed whatever the recovery power. Assumes 1 Hz samples.
+    """
+    if not cp or power_series is None or power_series.empty or not w_prime_cap_j:
+        return pd.Series(dtype=float)
+    p = power_series.fillna(0).to_numpy(dtype=float)
+    w0 = float(w_prime_cap_j)
+    bal = np.empty(len(p))
+    w = w0
+    for i, watts in enumerate(p):
+        if watts > cp:
+            w -= watts - cp
+        else:
+            w += (w0 - w) * (cp - watts) / w0
+        bal[i] = w
+    return pd.Series(bal, index=power_series.index)
+
+
 def w_prime_needed(power_series, ftp, tau=546):
     """The smallest W' (joules) that keeps this ride's balance from going below zero; 0 without data."""
     if ftp is None or ftp == 0 or power_series.empty:

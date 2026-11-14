@@ -231,6 +231,26 @@ def plot_durability(table, mode='light'):
                    barmode='group', yaxis_range=[0, 110])
 
 
+def plot_durability_per_kg(table, basis, mode='light'):
+    """Retention (%) after X kJ/kg (all work or work above CP), grouped by effort duration."""
+    pal = palette(mode)
+    fig = go.Figure()
+    if table is None or table.empty:
+        return fig
+    labels = {5: '5 s', 60: '1 min', 300: '5 min', 1200: '20 min', 3600: '60 min'}
+    above = basis == 'above_cp_kjkg'
+    for i, (x, g) in enumerate(table.groupby('threshold')):
+        g = g.sort_values('duration')
+        name = t('after {x:g} kJ/kg above CP', x=x) if above else t('after {x:g} kJ/kg', x=x)
+        fig.add_trace(go.Bar(
+            x=[labels.get(d, f'{d}s') for d in g['duration']], y=g['retention_pct'], name=name,
+            marker_color=pal['series'][i % 4], customdata=np.stack([g['fatigued'], g['fresh']], axis=1),
+            hovertemplate='%{y:.0f} % (%{customdata[0]:.0f} of %{customdata[1]:.0f} W)'))
+    fig.add_hline(y=100, line=dict(color=pal['muted'], width=1, dash='dot'))
+    return _layout(fig, t('Power kept after work per kg'), t('% of fresh best'), pal, barmode='group',
+                   yaxis_range=[0, 110])
+
+
 # --- Intensity distribution ------------------------------------------------------
 
 def plot_intensity_distribution(dist, mode='light'):

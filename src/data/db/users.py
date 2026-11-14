@@ -64,6 +64,36 @@ def set_user_body(user_name, weight, height):
         conn.execute("UPDATE users SET weight = ?, height = ? WHERE name = ?", (weight, height, user_name))
     return True
 
+MAX_HR_RANGE = (120, 230)
+REST_HR_RANGE = (30, 110)
+
+
+def set_user_hr(user_name, max_hr=None, rest_hr=None):
+    """
+    Sets the rider's maximum and resting heart rate (bpm), used by TRIMP. None (or 0) clears a value. Returns False,
+    and changes nothing, for values outside 120-230 / 30-110 bpm or a resting rate not below the maximum.
+    """
+    def clean(v, lo, hi):
+        if v in (None, "", 0):
+            return None
+        try:
+            v = int(round(float(v)))
+        except (TypeError, ValueError):
+            raise ValueError
+        if not lo <= v <= hi:
+            raise ValueError
+        return v
+    try:
+        mx, rs = clean(max_hr, *MAX_HR_RANGE), clean(rest_hr, *REST_HR_RANGE)
+    except ValueError:
+        return False
+    if mx is not None and rs is not None and rs >= mx:
+        return False
+    with connect() as conn:
+        conn.execute("UPDATE users SET max_hr = ?, rest_hr = ? WHERE name = ?", (mx, rs, user_name))
+    return True
+
+
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
     with connect() as conn:

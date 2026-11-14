@@ -75,7 +75,7 @@ def sync_new_rides(user_name, ftp, progress=None, lthr=None):
         try:
             filename, payload = fetch_ride_file(user_name, ex)
             df, dist_m, ele_m = prepare_ride(filename, payload)
-            summ = summarize_ride(df, ftp, lthr)
+            summ = summarize_ride(df, ftp, lthr, db.get_user_data(user_name))
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'], summ['norm_power'], summ['tss'],
                                           summ['if'], filename=filename, metrics=metrics_for_storage(summ))
             ok, msg = db.save_ride(user_name, filename, payload, meta, summ['power_curve'])

@@ -100,6 +100,31 @@ def _storage_caption(user_name):
                      total=f"{quota // 1048576}"))
 
 
+def _hr_controls(user_name, user):
+    """Maximum and resting heart rate: the inputs of TRIMP (heart-rate training load)."""
+    from src.data.db import set_user_hr
+    mx, rs = user.get('max_hr'), user.get('rest_hr')
+    if mx or rs:
+        st.caption(t("❤️ Max HR {max_hr} bpm · resting HR {rest_hr} bpm", max_hr=mx or "–", rest_hr=rs or "–"))
+    else:
+        st.caption(t("❤️ Set your maximum and resting heart rate to get TRIMP, a training load from heart rate."))
+    with st.popover(t("Set max / resting HR")):
+        st.markdown(t("**Maximum HR**: the highest you have seen at the end of an all-out effort (not a formula like "
+                      "220 − age, which can be 10–20 bpm off). **Resting HR**: lying down, just after waking."))
+        with st.form(f"hr_{user_name}"):
+            max_hr = st.number_input(t("Maximum HR (bpm)"), value=int(mx) if mx else None, min_value=120, max_value=230,
+                                     step=1, placeholder=t("not set"))
+            rest_hr = st.number_input(t("Resting HR (bpm)"), value=int(rs) if rs else None, min_value=30, max_value=110,
+                                      step=1, placeholder=t("not set"))
+            if st.form_submit_button(t("Save")):
+                if set_user_hr(user_name, max_hr, rest_hr):
+                    st.rerun()
+                else:
+                    st.error(t("The resting heart rate must be lower than the maximum."))
+        st.caption(t("New values count for rides saved from now on; run **Update ride history** to apply them to older "
+                     "rides."))
+
+
 def _timezone_control(user_name, user):
     """The rider's time zone: which day a ride belongs to (a 23:30 ride is that evening, not tomorrow in UTC)."""
     from zoneinfo import available_timezones
@@ -170,6 +195,7 @@ def render_user_corner(user_name):
     _threshold_controls(user_name, user_data)
     _storage_caption(user_name)
     _body_controls(user_name, user_data)
+    _hr_controls(user_name, user_data)
     _timezone_control(user_name, user_data)
     
     st.markdown("---")

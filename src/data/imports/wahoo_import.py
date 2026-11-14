@@ -131,7 +131,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
         try:
             filename, payload = fetch_ride_file(cfg, user_name, w, usage=usage)
             df, dist_m, ele_m = prepare_ride(filename, payload)
-            summ = summarize_ride(df, ftp, lthr)
+            summ = summarize_ride(df, ftp, lthr, db.get_user_data(user_name))
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'], summ['norm_power'],
                                           summ['tss'], summ['if'], filename=filename,
                                           metrics=metrics_for_storage(summ))

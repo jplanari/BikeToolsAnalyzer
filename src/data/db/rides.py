@@ -57,7 +57,8 @@ def _iso_timestamp(ts):
 # 4: power after 1/2/3 MJ of work (durability); zone times on moving time only
 # 5: decoupling ignores coasting (0 W) seconds
 # 6: impossible sensor readings (power spikes, HR dropouts) removed before scoring
-METRICS_VERSION = 8              # 8: carbohydrate burned (energy and fuel); 7: left/right balance (both need the original file, so older rides get them on update)
+# 9: TRIMP (needs max / resting HR) and durability per kg of body mass (total and above CP)
+METRICS_VERSION = 9              # 8: carbohydrate burned (energy and fuel); 7: left/right balance (both need the original file, so older rides get them on update)
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):
@@ -191,12 +192,16 @@ def _metrics_fields(metrics):
         'bal_s': _opt_int(metrics.get('bal_s')),
         **{k: _opt_float(metrics.get(k)) for k in ('te_l', 'te_r', 'ps_l', 'ps_r')},
         'carb_g': _opt_float(metrics.get('carb_g')),
+        'trimp_edwards': _opt_float(metrics.get('trimp_edwards')),
+        'trimp_banister': _opt_float(metrics.get('trimp_banister')),
+        'fatigued_work': metrics.get('fatigued_work') or {},
         'metrics_version': METRICS_VERSION,
     }
 
 _METRIC_COLUMNS = ['duration_s', 'moving_s', 'kj', 'ftp_at_ride', 'lthr_at_ride', 'vi', 'ef',
                    'decoupling_pct', 'tss_source', 'hrr60_bpm', 'hrr_efforts', 'hr20_bpm', 'metrics_version',
-                   'bal_right_pct', 'bal_first_pct', 'bal_last_pct', 'bal_s', 'te_l', 'te_r', 'ps_l', 'ps_r', 'carb_g']
+                   'bal_right_pct', 'bal_first_pct', 'bal_last_pct', 'bal_s', 'te_l', 'te_r', 'ps_l', 'ps_r', 'carb_g',
+                   'trimp_edwards', 'trimp_banister']
 
 def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
     """Power records and zone times for one ride (caller deletes old ones)."""
@@ -215,6 +220,12 @@ def _insert_children(c, user_id, ride_id, metadata, power_curve_dict):
                      VALUES (?, ?, ?, ?, ?, ?)""",
                   [(ride_id, user_id, int(kj), int(d), float(w), to_utc_iso(metadata.get('date')))
                    for kj, curve in fatigued.items() for d, w in curve.items()
+                   if w is not None and pd.notna(w)])
+    work = metadata.get('fatigued_work') or {}
+    c.executemany("""INSERT INTO power_records_work (ride_id, user_id, basis, threshold, duration_sec, watts, date_time)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  [(ride_id, user_id, basis, float(x), int(d), float(w), to_utc_iso(metadata.get('date')))
+                   for basis, by_x in work.items() for x, curve in by_x.items() for d, w in curve.items()
                    if w is not None and pd.notna(w)])
     hist = metadata.get('hist') or {}
     c.executemany("INSERT INTO ride_hist (ride_id, pair, x, y, seconds) VALUES (?, ?, ?, ?, ?)",
@@ -453,6 +464,7 @@ def update_ride_metrics(user_name, ride_id, metadata, power_curve_dict):
         c.execute("DELETE FROM ride_zones WHERE ride_id = ?", (ride_id,))
         c.execute("DELETE FROM ride_hist WHERE ride_id = ?", (ride_id,))
         c.execute("DELETE FROM power_records_kj WHERE ride_id = ?", (ride_id,))
+        c.execute("DELETE FROM power_records_work WHERE ride_id = ?", (ride_id,))
         _insert_children(c, user_id, ride_id, metadata, power_curve_dict)
 
 def get_ride_zones(ride_ids, kind):

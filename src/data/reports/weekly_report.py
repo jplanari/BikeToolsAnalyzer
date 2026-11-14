@@ -73,7 +73,7 @@ def _ride_figures(user, ride):
     df = _with_weather(df, user['name'], ride['id'])
     ftp = ftp_used_for_ride(ride, user['ftp'])
     lthr = ride.get('lthr_at_ride') or user['lthr']
-    summary = summarize_ride(df, ftp, lthr)
+    summary = summarize_ride(df, ftp, lthr, user)
     if 'power' in df.columns and df['power'].notna().any() and ftp:
         df['w_prime_balance'] = calculate_w_prime_balance(df['power'], ftp, w_prime_cap_j=user.get('w_prime') or 20000)
     settings = {'ftp': ftp, 'lthr': lthr, 'weight': user['weight'], 'height': user.get('height')}

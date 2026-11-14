@@ -148,7 +148,7 @@ def import_history(cfg, user_name, since, ftp, progress=None, usage=None, lthr=N
             # fetch_ride_file refreshes the token if needed (long imports can outlive one)
             filename, payload = fetch_ride_file(cfg, user_name, act, usage=usage)
             df, dist_m, ele_m = prepare_ride(filename, payload)
-            summ = summarize_ride(df, ftp, lthr)
+            summ = summarize_ride(df, ftp, lthr, db.get_user_data(user_name))
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'],
                                           summ['norm_power'], summ['tss'], summ['if'],
                                           filename=filename,
