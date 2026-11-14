@@ -97,7 +97,7 @@ REFERENCES = [
          mark("Edwards TRIMP: minutes in five heart-rate zones of 10 % of maximum, weighted 1 to 5.")),
     _ref('banister-1991', POWER, "Banister EW", 1991, "Modeling elite athletic performance",
          "In: MacDougall JD, Wenger HA, Green HJ (eds), Physiological Testing of the High-Performance Athlete. "
-         "Human Kinetics", mark("Banister TRIMP from heart-rate reserve, with the constants for men.")),
+         "Human Kinetics", mark("Banister TRIMP from heart-rate reserve, with the constants for men or women from the profile.")),
     _ref('sanchez-jimenez-2025', ENDURANCE, "Sánchez-Jiménez JL, Salas-Montoro JA, Mateo-March M, Priego-Quesada JI, "
          "Zabala M, Pérez-Díaz JJ", 2025,
          "Is intensity the most important factor in determining the amount of prior work accumulated that affects "

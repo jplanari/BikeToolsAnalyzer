@@ -1,5 +1,6 @@
 """Max / resting heart rate in the profile, and TRIMP and per-kg durability stored with each ride."""
 import numpy as np
+import pytest
 import pandas as pd
 
 from src.data import db
@@ -68,3 +69,19 @@ def test_another_riders_records_are_not_returned(temp_db):
     db.save_user("Other", 250, 170, 70.0, 175.0)
     _save(_ride(), db.get_user_data("Rider"))
     assert db.get_work_records("Other").empty
+
+
+def test_sex_picks_the_banister_constants(temp_db):
+    from src.analysis import trimp
+    db.save_user("Rider", 250, 170, 60.0, 165.0)
+    db.set_user_hr("Rider", 190, 50)
+    assert db.set_user_sex("Rider", "x") is False                         # only 'm', 'f' or not set
+    men = summarize_ride(_ride(3600), 250, 170, db.get_user_data("Rider"))
+    assert db.set_user_sex("Rider", "f") is True
+    women = summarize_ride(_ride(3600), 250, 170, db.get_user_data("Rider"))
+    x = (150 - 50) / (190 - 50)
+    assert women['trimp_banister'] / men['trimp_banister'] == pytest.approx(1.34375 * np.exp(-0.25 * x), rel=1e-6)
+    assert women['trimp_sex'] == 'f' and men['trimp_sex'] is None
+    assert women['trimp_edwards'] == men['trimp_edwards']                 # Edwards does not depend on sex
+    assert db.set_user_sex("Rider", None) is True and db.get_user_data("Rider")['sex'] is None
+    assert trimp.constants_for('m') == trimp.constants_for(None) == trimp.BANISTER_MEN

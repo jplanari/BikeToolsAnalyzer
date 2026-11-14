@@ -94,6 +94,18 @@ def set_user_hr(user_name, max_hr=None, rest_hr=None):
     return True
 
 
+SEXES = ('m', 'f')
+
+
+def set_user_sex(user_name, sex):
+    """Sets the rider's sex for the Banister TRIMP constants: 'm', 'f', or None to clear. Returns False otherwise."""
+    if sex not in SEXES and sex is not None:
+        return False
+    with connect() as conn:
+        conn.execute("UPDATE users SET sex = ? WHERE name = ?", (sex, user_name))
+    return True
+
+
 def set_user_w_prime(user_name, w_prime):
     """Sets the rider's W' (joules)."""
     with connect() as conn:

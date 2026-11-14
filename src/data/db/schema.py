@@ -269,6 +269,8 @@ def migrate_db():
         # Maximum and resting heart rate (bpm) for TRIMP; NULL = not set by the rider
         _add_column(c, 'users', 'max_hr', 'INTEGER')
         _add_column(c, 'users', 'rest_hr', 'INTEGER')
+        # 'm' or 'f': picks the Banister TRIMP constants, which were derived separately for men and women; NULL = not set
+        _add_column(c, 'users', 'sex', 'TEXT')
         # Heart-rate training load per ride (src/analysis/trimp.py); NULL = no HR or no max/rest HR in the profile
         _add_column(c, 'rides', 'trimp_edwards', 'REAL')
         _add_column(c, 'rides', 'trimp_banister', 'REAL')

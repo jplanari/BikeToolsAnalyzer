@@ -135,7 +135,9 @@ def summarize_ride(df, ftp, lthr=None, rider=None):
         'fatigued_work': (durability.work_curves(df['power'], rider.get('weight'), rider.get('cp') or ftp)
                           if has_power else {}),
         'trimp_edwards': trimp.edwards(hr, rider.get('max_hr'), is_moving) if has_hr else None,
-        'trimp_banister': trimp.banister(hr, rider.get('rest_hr'), rider.get('max_hr'), is_moving) if has_hr else None,
+        'trimp_banister': (trimp.banister(hr, rider.get('rest_hr'), rider.get('max_hr'), is_moving,
+                                          trimp.constants_for(rider.get('sex'))) if has_hr else None),
+        'trimp_sex': rider.get('sex'),
         'hist': rm.joint_histograms(df, is_moving),
         'hrr60': hrr60,
         'has_balance': bal.has_balance(df),

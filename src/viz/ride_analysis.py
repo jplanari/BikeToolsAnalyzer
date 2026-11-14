@@ -266,9 +266,14 @@ def _render_trimp(summary):
     r1, r2, _, _ = st.columns(4)
     r1.metric(t("TRIMP (Edwards)"), f"{ed:.0f}" if ed is not None else t("N/A"),
               help=t("Minutes in five heart-rate zones of 10 % of your maximum, weighted 1 to 5 (Edwards 1993)."))
+    sex = summary.get('trimp_sex')
+    which = (t("Uses the constants derived for women.") if sex == 'f' else
+             t("Uses the constants derived for men.") if sex == 'm' else
+             t("No sex in your profile, so the men's constants are used; for women that reads about 5–20 % low. "
+               "Set it in the User Corner."))
     r2.metric(t("TRIMP (Banister)"), f"{ban:.0f}" if ban is not None else t("N/A"),
               help=t("Minutes weighted by heart-rate reserve, rising exponentially with intensity (Banister 1991). "
-                     "Uses the constants derived for men; for women it reads about 5–20 % low. Needs resting HR."))
+                     "Needs resting HR.") + " " + which)
 
 
 def _render_balance_summary(summary):

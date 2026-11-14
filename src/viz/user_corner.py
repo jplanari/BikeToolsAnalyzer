@@ -102,7 +102,7 @@ def _storage_caption(user_name):
 
 def _hr_controls(user_name, user):
     """Maximum and resting heart rate: the inputs of TRIMP (heart-rate training load)."""
-    from src.data.db import set_user_hr
+    from src.data.db import set_user_hr, set_user_sex
     mx, rs = user.get('max_hr'), user.get('rest_hr')
     if mx or rs:
         st.caption(t("❤️ Max HR {max_hr} bpm · resting HR {rest_hr} bpm", max_hr=mx or "–", rest_hr=rs or "–"))
@@ -116,8 +116,13 @@ def _hr_controls(user_name, user):
                                      step=1, placeholder=t("not set"))
             rest_hr = st.number_input(t("Resting HR (bpm)"), value=int(rs) if rs else None, min_value=30, max_value=110,
                                       step=1, placeholder=t("not set"))
+            sexes = [None, 'f', 'm']
+            sex = st.selectbox(t("Sex"), sexes, index=sexes.index(user.get('sex')) if user.get('sex') in sexes else 0,
+                               format_func=lambda s: {None: t("not set"), 'f': t("Female"), 'm': t("Male")}[s],
+                               help=t("Only used to pick the Banister TRIMP constants, which were derived separately "
+                                      "for men and women. Not set uses the men's constants."))
             if st.form_submit_button(t("Save")):
-                if set_user_hr(user_name, max_hr, rest_hr):
+                if set_user_hr(user_name, max_hr, rest_hr) and set_user_sex(user_name, sex):
                     st.rerun()
                 else:
                     st.error(t("The resting heart rate must be lower than the maximum."))
