@@ -24,7 +24,8 @@ from src.data.imports.strava_import import _is_near, DUPLICATE_START_TOLERANCE_S
 from src.data.cached import get_user_best_power, get_power_records
 from src.analysis.climbs import detect_climbs
 from src.viz.maps import create_route_map
-from src.physics.aerodyn import calculate_CdA, estimate_cda, calculate_power_components, BIKE_MASS_KG, CRR, CDA_ESTIMATE_NOTE
+from src.physics.aerodyn import (calculate_CdA, cda_with_confidence, calculate_power_components, BIKE_MASS_KG, CRR,
+                                 CDA_ESTIMATE_NOTE, RELIABILITY_NOTE)
 from src.data.providers.weather import load_or_fetch, weather_summary
 from src.physics.thermal import calculate_thermal_profile, CLOTHING_CATALOG
 from src.viz.formatting import format_duration, show_centered
@@ -356,15 +357,14 @@ def _save_ride_to_db(user_name, filename, file_bytes, df, dist, ele, summary, bi
 
 
 def _ensure_cda(df, settings):
-    """CdA per sample, its aerodynamic power and the ride's overall CdA fit, attached to df (used by the Aero
-    section and as the starting point of the climb estimator). Returns the fit or None."""
-    if 'power' not in df.columns or 'speed' not in df.columns:
-        return None
+    """CdA per sample, its aerodynamic power and the ride's overall CdA (always a value, with its level: measured,
+    rough or assumed), attached to df. Used by the Aero section and as the starting point of the climb estimator."""
     physics = dict(rider_mass=settings.get('weight', 70), bike_mass=settings.get('bike_mass') or BIKE_MASS_KG,
                    crr=settings.get('crr') or CRR)
-    df['cda'], df['p_aero'] = calculate_CdA(df, **physics)
-    fit = estimate_cda(df, **physics)
-    df.attrs['cda_est'] = fit['cda'] if fit else None
+    if 'power' in df.columns and 'speed' in df.columns:
+        df['cda'], df['p_aero'] = calculate_CdA(df, **physics)
+    fit = cda_with_confidence(df, **physics)
+    df.attrs['cda_est'] = fit['cda']
     return fit
 
 
@@ -399,6 +399,20 @@ def _render_time_series(df):
                     use_container_width=True, key="ts_chart", config=ts.PLOT_CONFIG)
 
 
+def cda_label(fit, bridged=""):
+    """Title and help text of the CdA figure, according to how it was obtained."""
+    if fit['level'] == 'measured':
+        return (t("CdA (estimate)"),
+                t("Least-squares fit over {minutes} min faster than 18 km/h. ", minutes=fit['seconds'] // 60)
+                + tr(CDA_ESTIMATE_NOTE) + t(" It absorbs any error in weight, rolling resistance, wind and gradient.")
+                + bridged)
+    if fit['level'] == 'rough':
+        return (t("CdA (rough)"),
+                t("Fit over {minutes} min of riding at any speed above 11 km/h. ", minutes=fit['seconds'] // 60)
+                + tr(RELIABILITY_NOTE['rough']) + bridged)
+    return t("CdA (assumed)"), tr(RELIABILITY_NOTE['assumed'])
+
+
 def _render_aero(df, settings, p_comps):
     st.subheader(t("💨 Aerodynamic Analysis & Power Budget"))
     fit = _ensure_cda(df, settings)
@@ -406,22 +420,20 @@ def _render_aero(df, settings, p_comps):
         st.caption(t('Power balance with {bike_name} and {weight:.0f} kg rider. CdA is an estimate computed from '
                         'the ride.', bike_name=settings['bike_name'], weight=settings['weight']))
     avg_p_aero = df['p_aero'].mean() if 'p_aero' in df.columns else None
-    if fit:
-        c1, c2 = st.columns(2)
-        tunnel = fit.get('tunnel_seconds') or 0
-        bridged = (t(" Includes {minutes} min {seconds} s where the speed was lost while pedalling (a tunnel), "
-                     "taken at the stretch's average speed.", minutes=tunnel // 60, seconds=tunnel % 60) if tunnel else "")
-        c1.metric(t("CdA (estimate)"), f"{fit['cda']:.3f} m²",
-                  help=t("Least-squares fit over {minutes} min faster than 18 km/h. ", minutes=fit['seconds'] // 60)
-                       + tr(CDA_ESTIMATE_NOTE)
-                       + t(" It absorbs any error in weight, rolling resistance, wind and gradient.") + bridged)
-        c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else t("N/A"))
-        no_wind = "wind_speed" not in df.columns
+    c1, c2 = st.columns(2)
+    tunnel = fit.get('tunnel_seconds') or 0
+    bridged = (t(" Includes {minutes} min {seconds} s where the speed was lost while pedalling (a tunnel), "
+                 "taken at the stretch's average speed.", minutes=tunnel // 60, seconds=tunnel % 60) if tunnel else "")
+    label, help_text = cda_label(fit, bridged)
+    c1.metric(label, f"{fit['cda']:.3f} m²", help=help_text)
+    c2.metric(t("Avg Aero Power"), f"{int(avg_p_aero)} W" if pd.notna(avg_p_aero) else t("N/A"))
+    no_wind = "wind_speed" not in df.columns
+    if fit['level'] == 'measured':
         st.caption("⚠️ " + tr(CDA_ESTIMATE_NOTE)
                    + (t(" No wind data for this ride: still air is assumed, which understates the CdA "
                         "when there was a head wind.") if no_wind else ""))
     else:
-        st.warning(t("Not enough stable data points (Speed > 18km/h required)."))
+        st.warning(tr(RELIABILITY_NOTE[fit['level']]))
 
     st.markdown(t("**Power Budget: Where did your watts go?**"))
     with st.spinner(t("Calculating power components...")):

@@ -214,7 +214,9 @@ def _page_aero(d):
     if a:
         _tile_row(fig, 0.895, [
             (t('Estimated CdA'), _fmt(a['cda'], '.3f', ' m²'),
-             t('an estimate, {seconds} min used', seconds=a['seconds'] // 60) if a['cda'] else t('not enough stable data')),
+             {'measured': t('an estimate, {seconds} min used', seconds=a['seconds'] // 60),
+              'rough': t('rough: only {seconds} min of usable riding', seconds=a['seconds'] // 60),
+              'assumed': t('assumed, not measured')}[a['level']]),
             (t('Mean pedal power'), _fmt(a.get('pedal_w'), '.0f', ' W'), t('whole ride')),
         ], cols=5)
     ax = _axes(fig, 0.80, 0.15, 0.30, RIGHT)

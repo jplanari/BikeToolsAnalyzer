@@ -34,6 +34,12 @@ CDA_ESTIMATE_NOTE = mark("An estimate, not a measurement: with realistic errors 
                      "wind it is typically within ±10 % in calm conditions and ±20–30 % in wind. Compare rides on "
                      "similar routes rather than reading the absolute value.")   # shown through tr(); from the validation report (error budget)
 CDA_VALID = (0.10, 0.80)         # outside this a fitted CdA is a sign of bad data, not a rider
+COARSE_MIN_SPEED_MS = 3.0        # rough fit: slower than this (about 11 km/h) the drag is too small to matter at all
+COARSE_MAX_DESCENT_PCT = 10.0    # rough fit: descents steeper than this are still left out (braking)
+COARSE_MIN_SAMPLES = 30          # rough fit: seconds of usable samples needed
+MEASURED_MIN_SAMPLES = 300       # a 'measured' figure needs five minutes of usable riding: at two minutes a 5 kg error in
+                                 # weight already moved the fit by 7 %, at 40 minutes by 3 %
+ASSUMED_CDA = 0.32               # a typical upright road position: shown only when the ride says nothing usable
 
 _RD, _RV = 287.058, 461.495      # gas constants of dry air and water vapour, J/(kg K)
 
@@ -224,6 +230,46 @@ def estimate_cda(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, driv
     if not CDA_VALID[0] <= cda <= CDA_VALID[1]:
         return None
     return {'cda': cda, 'seconds': int(ok.sum()), 'tunnel_seconds': int((ok & b['bridged']).sum())}
+
+
+RELIABILITY_NOTE = {       # shown under a CdA that is not a measured fit
+    'rough': mark("Rough estimate: this ride has too little fast riding for a proper fit (or it was fitted over all speeds). "
+                  "Its error is larger than the figure suggests; a longer, faster ride gives a better one."),
+    'assumed': mark("Assumed value, not measured: this ride has no usable power and speed data to estimate CdA from, so a "
+                    "typical upright position is shown."),
+}
+
+
+def cda_with_confidence(df, rider_mass, bike_mass=BIKE_MASS_KG, crr=CRR, rho=None, drivetrain_loss=DRIVETRAIN_LOSS):
+    """
+    Always a CdA, with an honest label of how it was obtained:
+
+      'measured'  the least-squares fit of estimate_cda (enough fast, flat-ish data);
+      'rough'     a fit over every sample above COARSE_MIN_SPEED_MS (short, slow or hilly rides): less
+                  reliable, because the drag signal is weaker and any error in weight, Crr or gradient counts for more;
+      'assumed'   no usable power or speed, or the rough fit is implausible: ASSUMED_CDA, which says nothing
+                  about this rider and is shown so the page is never empty.
+
+    Returns {'cda': float, 'level': str, 'seconds': int, 'tunnel_seconds': int}. 'seconds' is the number of
+    samples the figure rests on (0 for 'assumed').
+    """
+    fit = estimate_cda(df, rider_mass, bike_mass=bike_mass, crr=crr, rho=rho, drivetrain_loss=drivetrain_loss)
+    if fit and fit['seconds'] >= MEASURED_MIN_SAMPLES:
+        return {'cda': fit['cda'], 'level': 'measured', 'seconds': fit['seconds'], 'tunnel_seconds': fit['tunnel_seconds']}
+    assumed = {'cda': ASSUMED_CDA, 'level': 'assumed', 'seconds': 0, 'tunnel_seconds': 0}
+    b = _balance(df, rider_mass, bike_mass, crr, rho, drivetrain_loss)
+    if b is None:
+        return assumed
+    k = b['unit_drag']
+    ok = (b['v'] > COARSE_MIN_SPEED_MS) & ~(b['slope'] * 100.0 < -COARSE_MAX_DESCENT_PCT) \
+        & k.notna() & b['p_aero'].notna() & (k > 0)
+    if int(ok.sum()) < COARSE_MIN_SAMPLES:
+        return assumed
+    k, p = k[ok], b['p_aero'][ok]
+    cda = float((p * k).sum() / (k * k).sum())
+    if not CDA_VALID[0] <= cda <= CDA_VALID[1]:
+        return assumed
+    return {'cda': cda, 'level': 'rough', 'seconds': int(ok.sum()), 'tunnel_seconds': int((ok & b['bridged']).sum())}
 
 
 def get_avg_cda(cda_series):
