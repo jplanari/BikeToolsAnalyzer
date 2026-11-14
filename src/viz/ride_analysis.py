@@ -76,6 +76,9 @@ def run_heavy_analysis(df, bike_mass, crr, drivetrain_loss, rider_mass, ftp, w_p
 
     return df, climbs, p_comps
 
+GOOD_PCT = 5.0                    # Friel: under this the aerobic base holds up
+RELIABLE_DECOUPLING_S = 3600      # his guide: an hour or more of steady riding
+
 
 def process_and_display_analysis(file_obj, user_name, settings):
     """Main logic to parse GPX, calculate stats, and render plots."""
@@ -172,7 +175,7 @@ def _render_sections(df, summary, settings, filename, total_dist, total_ascent, 
     elif section == "📈 Time series":
         _render_time_series(df)
     elif section == "⚡ Power":
-        _render_power(df, settings, summary['power_curve'], user_name)
+        _render_power(df, settings, summary['power_curve'], user_name, summary.get('decoupling_pct'))
     elif section == "💨 Aero":
         _render_aero(df, settings, p_comps)
     elif section == "🔥 Thermal":
@@ -463,7 +466,26 @@ def _render_w_prime_notice(df, settings, user_name):
         st.rerun()
 
 
-def _render_power(df, settings, current_curve, user_name):
+def _render_decoupling(df, pct):
+    """Aerobic decoupling (the ride's stored Pa:HR figure, ride_metrics.aerobic_decoupling): how much the power per
+    heart beat falls from the first to the second half of the pedalling time."""
+    if pct is None or 'power' not in df.columns or 'hr' not in df.columns:
+        return
+    pedalling = int(((df['power'] > 0) & (df['hr'] > 0)).sum())
+    d = {'pct': float(pct), 'minutes': pedalling / 60.0, 'reliable': pedalling >= RELIABLE_DECOUPLING_S}
+    st.subheader(t("Aerobic decoupling"))
+    verdict = (t("Your aerobic base held up: the second half was about as efficient as the first.")
+               if d['pct'] < GOOD_PCT else
+               t("Efficiency dropped in the second half: fatigue, heat or fuelling is catching up with you."))
+    st.metric(t("Power per heartbeat, first half vs second"), f"{d['pct']:+.1f} %",
+              help=t("Friel's decoupling over {minutes} min of riding. Under 5 % is a good aerobic base; a bigger drop "
+                     "is a sign of drift. A negative figure (second half more efficient) is common after a warm-up.",
+                     minutes=int(d['minutes'])))
+    st.caption(verdict + ("" if d['reliable'] else
+                          t(" The ride is under an hour, so this is only a rough indication.")))
+
+
+def _render_power(df, settings, current_curve, user_name, decoupling_pct=None):
     st.subheader(t("W' Balance"))
     _render_w_prime_notice(df, settings, user_name)
     if 'w_prime_balance' in df.columns:
@@ -481,6 +503,7 @@ def _render_power(df, settings, current_curve, user_name):
                 get_power_records(user_name, today - pd.Timedelta(days=89), today)))
 
         show_centered(plot_power_curve(power_curve(df['power']), best_curve, recent_curve))
+        _render_decoupling(df, decoupling_pct)
 
     st.subheader(t("Zone Distribution"))
     c1, c2 = st.columns(2)

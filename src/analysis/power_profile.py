@@ -61,6 +61,17 @@ def window_curves(records, today=None):
     return {label: best_curve(records, start, today) for label, start in windows.items()}
 
 
+def season_curves(records, today=None, years=4):
+    """Best curve of each calendar year, newest first, for the last `years` years that have any efforts: the
+    year-over-year comparison. {year: DataFrame(duration, watts, date, ride_id)}."""
+    if records is None or records.empty:
+        return {}
+    today = pd.Timestamp(today).normalize() if today is not None else pd.Timestamp.today().normalize()
+    seen = sorted({int(y) for y in records['date'].dt.year if y <= today.year}, reverse=True)[:years]
+    return {y: best_curve(records, pd.Timestamp(year=y, month=1, day=1),
+                          min(pd.Timestamp(year=y, month=12, day=31), today)) for y in seen}
+
+
 def as_dict(curve):
     """best_curve() -> {duration: watts}, the format estimate_critical_power uses."""
     if curve is None or curve.empty:
