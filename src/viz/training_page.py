@@ -64,17 +64,20 @@ def render_training_page(user_name):
     mode = _theme()
     _threshold_hint(user_name, user, today)
     _report_expander(user_name, today)
-    sections = [mark("📈 Load"), mark("⚡ Power profile"), mark("🔋 Durability"), mark("🎯 Intensity"), mark("🍌 Fuel"), mark("🔬 Deeper analytics")]
+    sections = [mark("🧭 How you're evolving"), mark("📈 Load"), mark("⚡ Power profile"), mark("🔋 Durability"),
+                mark("🎯 Intensity"), mark("🍌 Fuel"), mark("🔬 Deeper analytics")]
     section = section_picker(sections, key="training_section")
     if section == sections[0]:
-        _render_load(user_name, user['ftp'], today, mode)
+        _render_evolution(user_name, today)
     elif section == sections[1]:
-        _render_power(user_name, user, today, mode)
+        _render_load(user_name, user['ftp'], today, mode)
     elif section == sections[2]:
-        _render_durability(user_name, today, mode)
+        _render_power(user_name, user, today, mode)
     elif section == sections[3]:
-        _render_intensity(user_name, today, mode)
+        _render_durability(user_name, today, mode)
     elif section == sections[4]:
+        _render_intensity(user_name, today, mode)
+    elif section == sections[5]:
         _render_fuel(user_name, user, today, mode)
     else:
         render_deeper_analytics(user_name, user)
@@ -276,6 +279,32 @@ def _built_sessions(user_name, built, ftp=None, today=None):
                                "doesn't show up."))
                 elif int(r['id']) in sent:
                     st.caption(t("Sent to Wahoo."))
+
+
+_LEVEL_ICON = {'warning': "⛔", 'caution': "⚠️", 'good': "✅", 'neutral': "➖"}
+
+
+def _render_evolution(user_name, today):
+    """The last week or month compared with the one before: findings from fixed rules, each with its source."""
+    from src.analysis import insights
+    from src.references import REFERENCES
+    days = remembered(st.radio, "evo_days", 7, t("Compare"), [7, 28], horizontal=True,
+                      format_func=lambda d: t("Last week") if d == 7 else t("Last 4 weeks"))
+    prev_start = today - pd.Timedelta(days=2 * days - 1)
+    found = insights.evolution(
+        today, days, pmc=compute_pmc(get_user_tss_history(user_name), today=today),
+        stats=get_ride_stats(user_name, prev_start, today), records=get_power_records(user_name),
+        zone_rows=get_zone_rows(user_name, 'power', prev_start, today),
+        work_records=get_work_records(user_name, prev_start, today))
+    st.markdown("**" + insights.headline(found) + "**")
+    refs = {r['key']: f"{r['authors'].split(',')[0]}{' et al.' if ',' in r['authors'] else ''} "
+                      f"({r['year']})" if r['year'] else r['authors'] for r in REFERENCES}
+    for f in found:
+        st.markdown(f"{_LEVEL_ICON[f.level]} {f.text}")
+        if f.ref in refs:
+            st.caption("    " + t("Rule of thumb from {source} (see References).", source=refs[f.ref]))
+    st.caption(t("Computed from your stored rides with fixed rules taken from the literature; the comparison is "
+                 "with the {days} days before. Rules of thumb, not medical advice.", days=days))
 
 
 def _render_load(user_name, ftp, today, mode):

@@ -105,6 +105,10 @@ REFERENCES = [
          doi="10.1007/s00421-025-05885-0",
          used=mark("Durability per kg of body mass and above CP: the thresholds of 15, 30 and 45 kJ/kg and of 2.5, 5 "
                    "and 7.5 kJ/kg above CP.")),
+    _ref('lamberts-2011', ENDURANCE, "Lamberts RP, Swart J, Noakes TD, Lambert MI", 2011,
+         "A novel submaximal cycle test to monitor fatigue and predict cycling performance",
+         "British Journal of Sports Medicine",
+         mark("Heart-rate recovery after hard efforts as a sign of fatigue or fitness, in How you're evolving.")),
     _ref('maunder-2021', ENDURANCE, "Maunder E, Seiler S, Mildenhall MJ, Kilding AE, Plews DJ", 2021,
          "The importance of ‘durability’ in the physiological profiling of endurance athletes",
          "Sports Medicine 51(8):1619–1628",
