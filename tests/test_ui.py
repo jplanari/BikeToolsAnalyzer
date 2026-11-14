@@ -142,6 +142,8 @@ def test_empty_ftp_and_lthr_follow_the_rides_in_the_history(empty_db):
 def test_training_page(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()      # the page opens on How you're evolving
+    _no_errors(at)
     labels = [m.label for m in at.metric]
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= set(labels)
 
@@ -157,14 +159,24 @@ def test_training_page(seeded_db):
 def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
     at = _go(_app(), "Training")
     options = list(_widget(at.radio, "Section").options)
-    assert len(options) == 6
+    assert len(options) == 7 and options[0] == "🧭 How you're evolving"
+    _widget(at.radio, "Section").set_value("📈 Load").run()
     _widget(at.radio, "Show").set_value("6 months").run()
-    for name in options[1:]:                       # only the selected section is drawn
+    for name in options:                           # only the selected section is drawn
         _widget(at.radio, "Section").set_value(name).run()
         _no_errors(at)
-    _widget(at.radio, "Section").set_value(options[0]).run()
+    _widget(at.radio, "Section").set_value("📈 Load").run()
     _no_errors(at)
     assert _widget(at.radio, "Show").value == "6 months"      # survived the other sections
+
+
+def test_how_youre_evolving_renders_for_a_week_and_a_month(seeded_db):
+    at = _go(_app(), "Training")
+    _no_errors(at)                                 # it is the first section
+    assert any("Rules of thumb" in str(c.value) for c in at.caption)
+    _widget(at.radio, "Compare").set_value(28).run()
+    _no_errors(at)
+    assert any("28 days" in str(c.value) for c in at.caption)
 
 
 def test_deeper_analytics_live_on_the_training_page(seeded_db):
@@ -220,6 +232,8 @@ def test_pages_see_data_saved_after_the_first_run(seeded_db):
 def test_build_a_session_from_intervals_and_remove_it(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()
+    _no_errors(at)
     assert {"Duration", "Normalized", "IF", "TSS"} <= {m.label for m in at.metric}   # builder preview
 
     at.button(key="add_session_Rider").click().run()                                  # default blocks
@@ -270,6 +284,8 @@ def test_looks_can_be_changed_and_navigation_is_a_top_bar(seeded_db):
         _no_errors(at)
     assert not [r for r in at.sidebar.radio if r.label == "Navigation"]      # no placement choice any more
     _widget(at.radio, "Go to").set_value("Training").run()
+    _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()
     _no_errors(at)
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= {m.label for m in at.metric}
 
