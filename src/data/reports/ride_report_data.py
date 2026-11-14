@@ -56,14 +56,15 @@ def _climb_rows(df, climbs):
 
 
 def _aero(df, rider_mass):
-    """CdA fit and the mean power budget (W) on the basis of calculate_CdA. None without speed and power."""
+    """CdA (always a value, with its level) and the mean power budget (W) on the basis of calculate_CdA. The budget
+    is None without speed and power."""
+    fit = ae.cda_with_confidence(df, rider_mass)
     if 'power' not in df.columns or 'speed' not in df.columns or not df['power'].notna().any():
-        return None
-    fit = ae.estimate_cda(df, rider_mass)
+        return {'cda': fit['cda'], 'level': fit['level'], 'seconds': fit['seconds'], 'budget': None}
     _, p_aero = ae.calculate_CdA(df, rider_mass)
     comps = ae.calculate_power_components(df, rider_mass)
     if not len(comps) or p_aero.empty:
-        return {'cda': fit['cda'] if fit else None, 'seconds': fit['seconds'] if fit else 0, 'budget': None}
+        return {'cda': fit['cda'], 'level': fit['level'], 'seconds': fit['seconds'], 'budget': None}
     p_grav, p_roll, p_accel = comps
     pedal = float(df['power'].mean())
     budget = {mark('Aerodynamic drag'): float(p_aero.mean()), mark('Rolling resistance'): float(p_roll.mean()),
@@ -71,7 +72,7 @@ def _aero(df, rider_mass):
               mark('Drivetrain loss'): pedal * ae.DRIVETRAIN_LOSS}
     if not all(np.isfinite(v) for v in budget.values()):
         budget = None
-    return {'cda': fit['cda'] if fit else None, 'seconds': fit['seconds'] if fit else 0,
+    return {'cda': fit['cda'], 'level': fit['level'], 'seconds': fit['seconds'],
             'budget': budget, 'pedal_w': pedal}
 
 
