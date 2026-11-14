@@ -79,6 +79,32 @@ REFERENCES = [
               "of 546 s.")),
 
     # --- endurance and recovery -----------------------------------------------------------------------------------
+    _ref('skiba-2015', CP, "Skiba PF, Fulford J, Clarke DC, Vanhatalo A, Jones AM", 2015,
+         "Intramuscular determinants of the ability to recover work capacity above critical power",
+         "European Journal of Applied Physiology 115(4):703–713",
+         mark("The differential W′ balance model offered on the ride page: recovery speed depends on how far below "
+              "CP the rider is and how much W′ is left.")),
+    _ref('vassallo-2020', CP, "Vassallo C, Gray A, Cummins C, Murphy A, Waldron M", 2020,
+         "Exercise tolerance during flat over-ground intermittent running: modelling the expenditure and "
+         "reconstitution kinetics of work done above critical power",
+         "European Journal of Applied Physiology 120(1):219–230", doi="10.1007/s00421-019-04266-8",
+         used=mark("Evidence that the differential W′ model predicts exhaustion more closely than the integral one.")),
+    _ref('puchowicz-2020', CP, "Puchowicz MJ, Baker J, Clarke DC", 2020,
+         "Development and field validation of an omni-domain power-duration model",
+         "Journal of Sports Sciences", doi="10.1080/02640414.2020.1735609",
+         used=mark("The whole-curve (omni-domain) model on the Training page, with its decline after 30 minutes.")),
+    _ref('edwards-1993', POWER, "Edwards S", 1993, "The Heart Rate Monitor Book", "Polar Electro / Fleet Feet Press",
+         mark("Edwards TRIMP: minutes in five heart-rate zones of 10 % of maximum, weighted 1 to 5.")),
+    _ref('banister-1991', POWER, "Banister EW", 1991, "Modeling elite athletic performance",
+         "In: MacDougall JD, Wenger HA, Green HJ (eds), Physiological Testing of the High-Performance Athlete. "
+         "Human Kinetics", mark("Banister TRIMP from heart-rate reserve, with the constants for men or women from the profile.")),
+    _ref('sanchez-jimenez-2025', ENDURANCE, "Sánchez-Jiménez JL, Salas-Montoro JA, Mateo-March M, Priego-Quesada JI, "
+         "Zabala M, Pérez-Díaz JJ", 2025,
+         "Is intensity the most important factor in determining the amount of prior work accumulated that affects "
+         "cyclists' acute durability? A systematic review", "European Journal of Applied Physiology 126(1):163–179",
+         doi="10.1007/s00421-025-05885-0",
+         used=mark("Durability per kg of body mass and above CP: the thresholds of 15, 30 and 45 kJ/kg and of 2.5, 5 "
+                   "and 7.5 kJ/kg above CP.")),
     _ref('maunder-2021', ENDURANCE, "Maunder E, Seiler S, Mildenhall MJ, Kilding AE, Plews DJ", 2021,
          "The importance of ‘durability’ in the physiological profiling of endurance athletes",
          "Sports Medicine 51(8):1619–1628",

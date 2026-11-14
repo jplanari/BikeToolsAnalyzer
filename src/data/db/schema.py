@@ -266,6 +266,29 @@ def migrate_db():
             )
         ''')
         _add_column(c, 'users', 'crank_mm', 'REAL DEFAULT 172.5')
+        # Maximum and resting heart rate (bpm) for TRIMP; NULL = not set by the rider
+        _add_column(c, 'users', 'max_hr', 'INTEGER')
+        _add_column(c, 'users', 'rest_hr', 'INTEGER')
+        # 'm' or 'f': picks the Banister TRIMP constants, which were derived separately for men and women; NULL = not set
+        _add_column(c, 'users', 'sex', 'TEXT')
+        # Heart-rate training load per ride (src/analysis/trimp.py); NULL = no HR or no max/rest HR in the profile
+        _add_column(c, 'rides', 'trimp_edwards', 'REAL')
+        _add_column(c, 'rides', 'trimp_banister', 'REAL')
+        # Best power after X kJ per kg of body mass, in total or above CP (durability normalised; durability.work_curves)
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS power_records_work (
+                ride_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                basis TEXT NOT NULL,              -- 'total_kjkg' or 'above_cp_kjkg'
+                threshold REAL NOT NULL,          -- kJ per kg
+                duration_sec INTEGER NOT NULL,
+                watts REAL NOT NULL,
+                date_time TEXT,
+                PRIMARY KEY (ride_id, basis, threshold, duration_sec),
+                FOREIGN KEY(ride_id) REFERENCES rides(id) ON DELETE CASCADE
+            )
+        ''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_power_records_work_user ON power_records_work(user_id, basis, threshold)")
         _add_column(c, 'planned_sessions', 'blocks', 'TEXT')
         # Accounts (src/data/db/accounts.py): a rider can have an e-mail and password to sign in to a shared server.
         # Riders without them (the desktop app) work exactly as before.

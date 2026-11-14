@@ -14,6 +14,7 @@ from src.data.parsers.upload import sniff_kind
 from src.data.providers.strava import streams_to_dataframe
 from src.data.processing.cleaning import clean_channels
 from src.analysis.power import NP, power_curve, calculate_ride_kJ
+from src.analysis import trimp
 from src.analysis import balance as bal
 from src.analysis import nutrition as nut
 from src.analysis import ride_metrics as rm
@@ -89,8 +90,10 @@ def moving_mask(df):
     return pedalling
 
 
-def summarize_ride(df, ftp, lthr=None):
-    """Summary metrics shown on the ride page and saved to the database."""
+def summarize_ride(df, ftp, lthr=None, rider=None):
+    """Summary metrics shown on the ride page and saved to the database. `rider` is the profile (get_user_data):
+    weight, CP, maximum and resting heart rate, for durability per kg and TRIMP; without it those are left out."""
+    rider = rider or {}
     has_power = 'power' in df.columns and df['power'].notna().any()
     has_hr = 'hr' in df.columns and df['hr'].notna().any()
     hr = df['hr'] if has_hr else None
@@ -128,6 +131,13 @@ def summarize_ride(df, ftp, lthr=None):
                            if has_power and has_hr else None),
         'zones': rm.zone_seconds(df, ftp, lthr, is_moving),
         'fatigued': durability.fatigued_curves(df['power']) if has_power else {},
+        # above-CP work needs a CP: the profile's, or FTP standing in for it
+        'fatigued_work': (durability.work_curves(df['power'], rider.get('weight'), rider.get('cp') or ftp)
+                          if has_power else {}),
+        'trimp_edwards': trimp.edwards(hr, rider.get('max_hr'), is_moving) if has_hr else None,
+        'trimp_banister': (trimp.banister(hr, rider.get('rest_hr'), rider.get('max_hr'), is_moving,
+                                          trimp.constants_for(rider.get('sex'))) if has_hr else None),
+        'trimp_sex': rider.get('sex'),
         'hist': rm.joint_histograms(df, is_moving),
         'hrr60': hrr60,
         'has_balance': bal.has_balance(df),
@@ -144,7 +154,8 @@ def summarize_ride(df, ftp, lthr=None):
 def metrics_for_storage(summary):
     """The per-ride columns that build_ride_metadata() adds to the metadata."""
     keys = ['duration_s', 'moving_time_s', 'kj', 'tss_source', 'vi', 'ef',
-            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'hr20', 'fatigued', *bal.RIDE_KEYS, *nut.RIDE_KEYS]
+            'decoupling_pct', 'zones', 'hist', 'hrr60', 'hrr_efforts', 'hr20', 'fatigued', 'fatigued_work',
+            'trimp_edwards', 'trimp_banister', *bal.RIDE_KEYS, *nut.RIDE_KEYS]
     out = {k: summary.get(k) for k in keys}
     out['ftp_at_ride'] = summary.get('ftp') or None
     out['lthr_at_ride'] = summary.get('lthr') or None

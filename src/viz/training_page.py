@@ -7,7 +7,7 @@ import streamlit as st
 from src.data.db import (replace_planned_sessions, add_structured_session as db_add_session,
                          delete_planned_session, update_user_ftp, update_user_physics)
 from src.data.cached import (get_user_data, get_user_tss_history, get_ride_stats, get_power_records,
-                             get_kj_records, get_zone_rows, get_planned_sessions,
+                             get_kj_records, get_work_records, get_zone_rows, get_planned_sessions,
                              count_rides_needing_update, compute_pmc, cp_history, get_user_best_power)
 from src.analysis import training_load as tl
 from src.analysis import power_profile as pp
@@ -379,6 +379,7 @@ def _render_power(user_name, user, today, mode):
                      "Reliable only if you have recent all-out sprints."))
     if not two and not three:
         st.caption(t("Needs maximal efforts between 3 and 20 minutes in the last 90 days."))
+    _render_ompd(recent)
 
     hist = cp_history(recs, today=today)
     _chart(tp.plot_cp_history(hist, mode))
@@ -414,6 +415,28 @@ def _render_power(user_name, user, today, mode):
                                     c_90: st.column_config.NumberColumn(format="%.0f")})
 
     _render_cp_profile(user_name)
+
+
+def _render_ompd(curve):
+    """Omni-domain power-duration model: the whole curve, sprints to hours, including the decline after 30 min."""
+    fit = pp.fit_ompd(curve)
+    st.markdown(t("##### Whole-curve model (omni-domain)"))
+    if not fit:
+        st.caption(t("Needs best efforts across short and long durations (at least three of 2 minutes or more) in "
+                     "the last 90 days."))
+        return
+    c = st.columns(4)
+    c[0].metric(t("CP (omni-domain)"), f"{fit['cp']:.0f} W")
+    c[1].metric("W′", f"{fit['w_prime'] / 1000:.1f} kJ")
+    c[2].metric("Pmax", f"{fit['pmax']:.0f} W")
+    c[3].metric(t("Decline after 30 min"), f"{fit['a']:.0f} W" if fit['long_end'] else t("N/A"),
+                help=t("Watts lost each time the duration grows by a factor of e (about 2.7×) beyond 30 minutes. "
+                       "Lower = better endurance at long durations."))
+    st.caption(t("Fitted to your whole best-power curve (Puchowicz et al. 2020), so unlike the models above it also "
+                 "describes efforts longer than 30 minutes, where CP overestimates. Fit error {rmse:.0f} W.",
+                 rmse=fit['rmse'])
+               + ("" if fit['long_end'] else
+                  t(" No efforts longer than 30 minutes in this period, so the long-duration decline is not fitted.")))
 
 
 def _render_cp_profile(user_name):
@@ -479,6 +502,25 @@ def _render_durability(user_name, today, mode):
                            c_best: st.column_config.NumberColumn(format="%.0f"),
                            c_kept: st.column_config.NumberColumn(format="%.0f")})
     st.caption(t("A low value can also just mean you never went hard late in a long ride in this period."))
+    _render_durability_per_kg(user_name, start, today, mode)
+
+
+def _render_durability_per_kg(user_name, start, today, mode):
+    """The same question with the work in kJ per kg of body mass, in total or above CP (the intensity that matters)."""
+    st.markdown(t("##### Per kg of body mass"))
+    basis = remembered(st.radio, "dur_basis", "above_cp_kjkg", t("Work counted"), list(du.BASES), horizontal=True,
+                       format_func=lambda b: {"total_kjkg": t("All work"),
+                                              "above_cp_kjkg": t("Work above CP")}[b])
+    table = du.work_table(get_power_records(user_name, start, today), get_work_records(user_name, start, today),
+                          basis, start, today)
+    if table.empty:
+        st.info(t("No ride in this period reached these amounts of work, or the rides haven't been updated yet "
+                  "(run **Update ride history** in the User Corner)."))
+        return
+    _chart(tp.plot_durability_per_kg(table, basis, mode))
+    st.caption(t("Work above CP fatigues far more than easy work: in the research, 2.5–15 kJ/kg above CP cut later "
+                 "power by about 10–20 %, while work below CP usually cost less than 5 %. CP is your profile's, or "
+                 "FTP when no CP is saved."))
 
 
 # --- Intensity ---------------------------------------------------------------------

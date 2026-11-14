@@ -28,6 +28,7 @@ def import_activities(user_name, activities, ftp, lthr=None, progress=None):
     from src.data.processing.pipeline import prepare_ride, summarize_ride, metrics_for_storage    # parsers import streamlit
 
     res = ImportResult(found=len(activities))
+    rider = db.get_user_data(user_name)
     known_starts = list(db.get_ride_start_times(user_name))
     for i, act in enumerate(activities):
         if progress:
@@ -38,7 +39,7 @@ def import_activities(user_name, activities, ftp, lthr=None, progress=None):
                 res.no_data += 1
                 continue
             df, dist_m, ele_m = prepare_ride(act.name, act.data)
-            summ = summarize_ride(df, ftp, lthr)
+            summ = summarize_ride(df, ftp, lthr, rider)
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'], summ['norm_power'], summ['tss'],
                                           summ['if'], filename=act.name, metrics=metrics_for_storage(summ))
             start = pd.to_datetime(meta.get('date'), errors='coerce', utc=True)

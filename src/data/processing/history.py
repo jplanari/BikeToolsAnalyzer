@@ -34,6 +34,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
     rows = db.get_rides_for_recompute(user_name, all_rides=all_rides)
     if rows:
         db.backup_db("before-recompute")        # recompute overwrites every ride's metrics
+    rider = db.get_user_data(user_name)
     updated, failed = 0, []
     for i, row in enumerate(rows):
         if progress:
@@ -46,7 +47,7 @@ def recompute_history(user_name, current_ftp, current_lthr, all_rides=False, pro
             df, dist_m, ele_m = prepare_ride(row['filename'] or "", content)
             ftp = ftp_used_for_ride(row, current_ftp)
             lthr = row.get('lthr_at_ride') or current_lthr
-            summ = summarize_ride(df, ftp, lthr)
+            summ = summarize_ride(df, ftp, lthr, rider)
             meta = db.build_ride_metadata(df, dist_m, ele_m, summ['avg_speed_kph'],
                                           summ['norm_power'], summ['tss'], summ['if'],
                                           filename=row['filename'],
