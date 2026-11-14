@@ -142,6 +142,8 @@ def test_empty_ftp_and_lthr_follow_the_rides_in_the_history(empty_db):
 def test_training_page(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()      # the page opens on How you're evolving
+    _no_errors(at)
     labels = [m.label for m in at.metric]
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= set(labels)
 
@@ -230,6 +232,8 @@ def test_pages_see_data_saved_after_the_first_run(seeded_db):
 def test_build_a_session_from_intervals_and_remove_it(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()
+    _no_errors(at)
     assert {"Duration", "Normalized", "IF", "TSS"} <= {m.label for m in at.metric}   # builder preview
 
     at.button(key="add_session_Rider").click().run()                                  # default blocks
@@ -280,6 +284,8 @@ def test_looks_can_be_changed_and_navigation_is_a_top_bar(seeded_db):
         _no_errors(at)
     assert not [r for r in at.sidebar.radio if r.label == "Navigation"]      # no placement choice any more
     _widget(at.radio, "Go to").set_value("Training").run()
+    _no_errors(at)
+    _widget(at.radio, "Section").set_value("📈 Load").run()
     _no_errors(at)
     assert {"Fitness (CTL)", "Fatigue (ATL)", "Form (TSB)"} <= {m.label for m in at.metric}
 
