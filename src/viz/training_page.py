@@ -307,6 +307,17 @@ def _render_evolution(user_name, today):
                  "with the {days} days before. Rules of thumb, not medical advice.", days=days))
 
 
+def _trimp_coverage(stats, column):
+    """Under a TRIMP chart: how many rides in the period have no TRIMP, and why that happens."""
+    total = len(stats)
+    missing = int(stats[column].isna().sum()) if column in stats else total
+    st.caption(t("TRIMP is heart-rate training load, summed per period. Unlike TSS it needs no power meter."))
+    if missing:
+        st.caption(t("{missing} of {total} rides in this period have no TRIMP: no heart rate recorded, or saved "
+                     "before your maximum (and, for Banister, resting) heart rate was set. Set them in the User "
+                     "Corner and run **Update ride history**.", missing=missing, total=total))
+
+
 def _render_load(user_name, ftp, today, mode):
     history = get_user_tss_history(user_name)
     planned = _plan_editor(user_name, ftp, today)
@@ -360,7 +371,8 @@ def _render_load(user_name, ftp, today, mode):
     st.subheader(t("Volume"))
     v1, v2 = st.columns([1, 3])
     freq = remembered(v1.radio, "vol_freq", "Week", t("Group by"), [mark("Week"), mark("Month")], horizontal=True, format_func=tr)
-    metrics = {mark('Hours'): 'hours', mark('Distance (km)'): 'km', 'TSS': 'tss', mark('Work (kJ)'): 'kj',
+    metrics = {mark('Hours'): 'hours', mark('Distance (km)'): 'km', 'TSS': 'tss', mark('TRIMP (Edwards)'): 'trimp_edwards',
+               mark('TRIMP (Banister)'): 'trimp_banister', mark('Work (kJ)'): 'kj',
                mark('Elevation (m)'): 'elevation_m', mark('Rides'): 'rides'}
     m_label = remembered(v2.radio, "vol_metric", "Hours", t("Measure"), list(metrics), horizontal=True, format_func=tr)
     stats = get_ride_stats(user_name, start, today)
@@ -369,6 +381,8 @@ def _render_load(user_name, ftp, today, mode):
         st.info(t("No rides in this period."))
     else:
         _chart(tp.plot_volume(vol, metrics[m_label], m_label, mode))
+        if metrics[m_label].startswith('trimp'):
+            _trimp_coverage(stats, metrics[m_label])
         with st.expander(t("Table")):
             st.dataframe(vol.rename_axis(freq).round(1), use_container_width=True)
 
