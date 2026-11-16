@@ -170,6 +170,15 @@ def test_every_training_section_renders_and_keeps_its_settings(seeded_db):
     assert _widget(at.radio, "Show").value == "6 months"      # survived the other sections
 
 
+def test_volume_can_show_weekly_trimp(seeded_db):
+    at = _go(_app(), "Training")
+    _widget(at.radio, "Section").set_value("📈 Load").run()
+    for measure in ("TRIMP (Edwards)", "TRIMP (Banister)"):
+        _widget(at.radio, "Measure").set_value(measure).run()
+        _no_errors(at)
+    assert any("heart-rate training load" in str(c.value) for c in at.caption)
+
+
 def test_how_youre_evolving_renders_for_a_week_and_a_month(seeded_db):
     at = _go(_app(), "Training")
     _no_errors(at)                                 # it is the first section

@@ -125,9 +125,10 @@ def acwr(pmc, min_history_days=28):
 def volume(stats, freq='W'):
     """
     Training volume per week ('W', Monday start) or month ('M') from
-    per-ride stats (columns date, moving_s, distance_km, elevation_m, kj, tss).
+    per-ride stats (columns date, moving_s, distance_km, elevation_m, kj, tss; trimp_edwards and trimp_banister
+    when present). TRIMP sums count only the rides that have one.
     """
-    cols = ['rides', 'hours', 'km', 'elevation_m', 'kj', 'tss']
+    cols = ['rides', 'hours', 'km', 'elevation_m', 'kj', 'tss', 'trimp_edwards', 'trimp_banister']
     if stats is None or stats.empty:
         return pd.DataFrame(columns=cols)
     df = stats.dropna(subset=['date']).copy()
@@ -141,6 +142,8 @@ def volume(stats, freq='W'):
         'elevation_m': g['elevation_m'].sum(),
         'kj': g['kj'].sum(),
         'tss': g['tss'].sum(),
+        'trimp_edwards': g['trimp_edwards'].sum() if 'trimp_edwards' in df else 0.0,
+        'trimp_banister': g['trimp_banister'].sum() if 'trimp_banister' in df else 0.0,
     })
     # Include empty periods so gaps show as zero weeks
     full = pd.period_range(out.index.min(), out.index.max(), freq=period).start_time

@@ -35,7 +35,8 @@ def get_ride_stats(user_name, start=None, end=None):
                                           r.distance_km, r.elevation_m, r.kj,
                                           r.avg_power, r.bal_right_pct, r.bal_first_pct, r.bal_last_pct, r.bal_s,
                                           r.te_l, r.te_r, r.ps_l, r.ps_r, r.carb_g,
-                                          r.carb_eaten_g, r.fluid_ml, r.if_factor, r.filename
+                                          r.carb_eaten_g, r.fluid_ml, r.if_factor, r.filename,
+                                          r.trimp_edwards, r.trimp_banister
                                    FROM rides r WHERE r.user_id = ? AND r.date_time IS NOT NULL{where}
                                    ORDER BY r.date_time""", conn, params=[user['id'], *params])
     df['date'] = _parse_dates(df['date'], user)
