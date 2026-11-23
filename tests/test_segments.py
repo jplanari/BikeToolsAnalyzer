@@ -184,3 +184,23 @@ def test_lap_table_still_renders_without_a_recent_jinja2(monkeypatch):
     monkeypatch.setattr(pd.DataFrame, 'style', Boom(), raising=False)
     out = sa._lap_table(None, [], None, None)
     assert out['Distance (km)'].iloc[0] == "5.68" and out['Avg HR'].iloc[0] == "–"
+
+
+def test_channel_charts_can_be_dragged_and_share_the_overview_axis():
+    import numpy as np
+    import pandas as pd
+    from src.analysis import segments as sg
+    pytest.importorskip("streamlit_folium")
+    from src.viz import segment_analysis as ui
+    n = 1200
+    df = pd.DataFrame({'power': np.full(n, 250.0), 'hr': np.full(n, 150.0), 'ele': np.linspace(0, 100, n),
+                       'dist_m': np.arange(n) * 8.0})
+    fig = ui._channels(df, 300, 899)
+    assert fig.layout.dragmode == "select" and fig.layout.selectdirection == "h"
+    xs = [x for tr in fig.data for x in tr.x]
+    assert min(xs) == 300 * 8.0 / 1000 and max(xs) == 899 * 8.0 / 1000      # km from the start, as on the overview
+    a, b = sg.selection_range({'box': [{'x': [3.2, 4.8]}]}, 0, 9.6)        # a drag inside the charts...
+    assert sg.span_by_distance(df, a * 1000, b * 1000) == (400, 600)        # ...maps back to the ride rows
+    no_dist = df.drop(columns='dist_m')                                     # indoor: minutes from the ride's start
+    xs = [x for tr in ui._channels(no_dist, 300, 899).data for x in tr.x]
+    assert min(xs) == 5.0

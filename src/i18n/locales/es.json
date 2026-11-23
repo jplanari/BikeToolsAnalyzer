@@ -300,7 +300,7 @@
     "Downloading ride from Polar...": "Descargando la salida de Polar...",
     "Downloading ride from Strava...": "Descargando la salida de Strava...",
     "Downloading ride from Wahoo...": "Descargando la salida de Wahoo...",
-    "Drag across the profile to choose a stretch of the route. In *Custom selection* the range slider fine-tunes it in {value1} steps.": "Arrastra sobre el perfil para elegir un tramo de la ruta. En *Selección personalizada* el control deslizante lo ajusta en pasos de {value1}.",
+    "Drag across the profile to choose a stretch of the route, or across the charts below the map to narrow the current one. In *Custom selection* the range slider fine-tunes it in {value1} steps.": "Arrastra sobre el perfil para elegir un tramo de la ruta, o sobre los gráficos bajo el mapa para acotar el actual. En *Selección personalizada* el control deslizante lo ajusta en pasos de {value1}.",
     "Drift of power:HR between the first and second half (Pa:HR). Under ~5 % on a long steady ride suggests good aerobic endurance. Needs 20+ min with power and HR; not meaningful for intervals.": "Deriva de potencia:FC entre la primera y la segunda mitad (Pa:HR). Por debajo de ~5 % en una salida larga y constante indica buena resistencia aeróbica. Requiere 20+ min con potencia y FC; no tiene sentido en intervalos.",
     "Drift, start to end": "Deriva, de principio a fin",
     "Drivetrain loss": "Pérdida en la transmisión",
