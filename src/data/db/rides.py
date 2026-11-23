@@ -58,7 +58,8 @@ def _iso_timestamp(ts):
 # 5: decoupling ignores coasting (0 W) seconds
 # 6: impossible sensor readings (power spikes, HR dropouts) removed before scoring
 # 9: TRIMP (needs max / resting HR) and durability per kg of body mass (total and above CP)
-METRICS_VERSION = 9              # 8: carbohydrate burned (energy and fuel); 7: left/right balance (both need the original file, so older rides get them on update)
+# 10: average power, NP, VI and power TSS leave out stops (pauses had pulled NP below the average)
+METRICS_VERSION = 10             # 8: carbohydrate burned (energy and fuel); 7: left/right balance (both need the original file, so older rides get them on update)
 
 def build_ride_metadata(df, dist_m, ele_m, speed_kph, np_val, tss, if_val, filename=None,
                         metrics=None):

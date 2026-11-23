@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.analysis.power import NP, IF
-from src.data.processing.pipeline import moving_mask
+from src.data.processing.pipeline import moving_mask, power_mask
 
 MIN_NP_SAMPLES = 30          # NP uses a 30 s rolling average: with less data it is not defined
 ELE_WINDOW = 15              # samples; same smoothing the climb detector uses
@@ -109,17 +109,20 @@ def segment_stats(df, i0, i1, ftp=None, weight=None):
 
     power = _clean_series(seg, 'power')
     if len(power):
-        avg = float(seg.loc[moving, 'power'].mean()) if moving_s > 0 else float(power.mean())
+        # average, NP, VI and TSS all over the same seconds: stops (no speed, no power) left out
+        riding = power_mask(seg)
+        rp = seg.loc[riding, 'power'].dropna()
+        avg = float(rp.mean()) if len(rp) else float(power.mean())
         out.update(avg_power=avg, max_power=float(power.max()), kj=float(seg['power'].fillna(0).sum() / 1000.0))
         if weight:
             out['w_per_kg'] = avg / weight
-        if len(power) >= MIN_NP_SAMPLES:
-            npower = float(NP(seg['power']))
+        if len(rp) >= MIN_NP_SAMPLES:
+            npower = float(NP(rp))
             out['norm_power'] = npower
-            out['vi'] = npower / float(power.mean()) if power.mean() > 0 else None
+            out['vi'] = npower / avg if avg > 0 else None
             if ftp:
                 out['if'] = float(IF(npower, ftp))
-                out['tss'] = elapsed / 3600.0 * out['if'] ** 2 * 100.0
+                out['tss'] = len(rp) / 3600.0 * out['if'] ** 2 * 100.0
     hr = _clean_series(seg, 'hr')
     hr = hr[hr > 0]
     if len(hr):

@@ -74,6 +74,21 @@ def prepare_ride(filename, file_bytes):
     return df, total_dist, total_ascent
 
 
+def power_mask(df):
+    """
+    Seconds that count for average power, NP, VI and power TSS: all except stops, i.e. seconds with neither speed
+    (below MOVING_THRESHOLD_MS) nor power. Recording pauses are filled with speed 0 and power 0 by the parser; a
+    traffic light or a café stop looks the same. Coasting while moving stays in (it is part of riding), and so does
+    slow pedalling up a steep climb. Without a speed channel (indoor) every second counts.
+    Average power and NP must use the same seconds: otherwise NP can come out below the average (VI < 1).
+    """
+    if 'power' not in df.columns:
+        return pd.Series(True, index=df.index)
+    speed = df['speed'] if 'speed' in df.columns else pd.Series(np.nan, index=df.index)
+    stopped = (speed < MOVING_THRESHOLD_MS) & (df['power'].fillna(0) <= 0)
+    return ~stopped
+
+
 def moving_mask(df):
     """
     Seconds spent riding. Uses speed when the ride has a usable speed
@@ -104,12 +119,15 @@ def summarize_ride(df, ftp, lthr=None, rider=None):
     duration_s = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
 
     avg_speed_kph = speed[is_moving].mean() * 3.6 if moving_time_s > 0 else 0
-    avg_power = df.loc[is_moving, 'power'].mean() if has_power and moving_time_s > 0 else 0
+    riding = power_mask(df)
+    riding_power = df.loc[riding, 'power'] if has_power else None
+    avg_power = riding_power.mean() if has_power and riding_power.notna().any() else 0
     avg_hr = df.loc[is_moving, 'hr'].mean() if has_hr and moving_time_s > 0 else 0
-    norm_power = NP(df['power']) if has_power else 0
+    norm_power = NP(riding_power) if has_power else 0
     norm_power = 0 if pd.isna(norm_power) else norm_power
 
-    tss, if_val, tss_source = rm.training_stress(norm_power, duration_s, ftp, hr, lthr, is_moving)
+    # power TSS over the same seconds as NP (stops left out); hrTSS keeps its own moving mask
+    tss, if_val, tss_source = rm.training_stress(norm_power, int(riding.sum()), ftp, hr, lthr, is_moving)
     hrr60, hrr_n = rm.hr_recovery(df['power'], hr, ftp) if has_power and has_hr else (None, 0)
 
     return {
@@ -125,7 +143,7 @@ def summarize_ride(df, ftp, lthr=None, rider=None):
         'tss_source': tss_source,
         'kj': calculate_ride_kJ(df['power']) if has_power else 0,
         'power_curve': power_curve(df['power']) if has_power else {},
-        'vi': rm.variability_index(df['power']) if has_power else None,
+        'vi': rm.variability_index(riding_power) if has_power else None,
         'ef': rm.efficiency_factor(norm_power, hr, is_moving) if has_power and has_hr else None,
         'decoupling_pct': (rm.aerobic_decoupling(df['power'], hr, is_moving)
                            if has_power and has_hr else None),
