@@ -53,17 +53,16 @@ def _overview(df, i0, i1):
     return fig
 
 
-def _drawn_range(df, i0, i1, ride_id, lo, hi, step):
+def _drawn_range(fig, key, lo, hi, step):
     """
-    Draws the overview and returns the (start, end) the rider dragged across it, if any. The chart is keyed on the
-    current selection, so a drawn box disappears once it has been applied (the red line shows it instead).
+    Draws a selectable chart and returns the (start, end) the rider dragged across it, if any. Charts are keyed on
+    the current selection, so a drawn box disappears once it has been applied.
     """
     try:
-        event = st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}_{i0}_{i1}",
-                                on_select="rerun", selection_mode=("box",),
+        event = st.plotly_chart(fig, use_container_width=True, key=key, on_select="rerun", selection_mode=("box",),
                                 config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"]})
     except TypeError:                                              # Streamlit without chart selections
-        st.plotly_chart(_overview(df, i0, i1), use_container_width=True, key=f"seg_over_{ride_id}_{i0}_{i1}")
+        st.plotly_chart(fig, use_container_width=True, key=key)
         return None
     sel = None
     try:
@@ -76,7 +75,10 @@ def _drawn_range(df, i0, i1, ride_id, lo, hi, step):
 def _channels(df, i0, i1):
     """Power, heart rate, speed and cadence along the selection (the ones the file has)."""
     seg = df.iloc[i0:i1 + 1]
-    x = seg['dist_m'] / 1000.0 if 'dist_m' in seg.columns else pd.Series(np.arange(len(seg)) / 60.0, index=seg.index)
+    # the same x as the overview (km from the start, or minutes from the start of the ride), so a drag maps back
+    x = (seg['dist_m'] / 1000.0 if 'dist_m' in seg.columns
+         else pd.Series(np.arange(i0, i0 + len(seg)) / 60.0, index=seg.index))
+    step = max(1, len(seg) // MAX_SELECT_POINTS)
     spec = [('power', t('Power (W)'), '#1f77b4'), ('hr', t('HR (bpm)'), '#d62728'),
             ('speed_kmh', t('Speed (km/h)'), '#2ca02c'), ('cadence', t('Cadence (rpm)'), '#9467bd')]
     have = [s for s in spec if s[0] in seg.columns and seg[s[0]].notna().any()]
@@ -86,8 +88,13 @@ def _channels(df, i0, i1):
     for r, (col, title, color) in enumerate(have, 1):
         y = seg[col].rolling(5, min_periods=1, center=True).mean() if col == 'power' else seg[col]
         fig.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color=color, width=1.5), name=title), row=r, col=1)
+        fig.add_trace(go.Scatter(x=x.iloc[::step], y=y.iloc[::step], mode='markers', hoverinfo='skip',
+                                 marker=dict(size=8, opacity=0), showlegend=False,     # invisible: makes the box select
+                                 selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0))),
+                      row=r, col=1)
         fig.update_yaxes(title_text=title, row=r, col=1)
-    fig.update_layout(height=170 * len(have) + 40, margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
+    fig.update_layout(height=170 * len(have) + 40, margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
+                      dragmode="select", selectdirection="h")
     fig.update_xaxes(title_text=t("Distance (km)") if 'dist_m' in seg.columns else t("Minutes"), row=len(have), col=1)
     return fig
 
@@ -135,6 +142,14 @@ def _lap_table(df, spans, ftp, weight):
             if col in out.columns:
                 out[col] = out[col].map(lambda v, spec=spec: "–" if pd.isna(v) else spec.format(v))
         return out
+
+
+def _apply_drawn(drawn, mode, range_key, pending_key):
+    """A range dragged on a chart becomes the custom selection on the next run (sliders can't change mid-run)."""
+    if not drawn or (mode == "Custom selection" and drawn == tuple(st.session_state.get(range_key) or ())):
+        return
+    st.session_state[pending_key] = drawn
+    st.rerun()
 
 
 def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride_id="0"):
@@ -190,14 +205,12 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
 
     has_dist = 'dist_m' in df.columns and df['dist_m'].notna().any()
     top = round(float(df['dist_m'].max()) / 1000.0, 2) if has_dist else round(len(df) / 60.0, 1)
-    drawn = _drawn_range(df, i0, i1, ride_id, 0.0, top, DISTANCE_STEP_KM if has_dist else TIME_STEP_MIN)
-    st.caption(t('Drag across the profile to choose a stretch of the route. In *Custom selection* the range '
-                    'slider fine-tunes it in {value1} steps.', value1='10 m' if has_dist else '0.1 min'))
-    if drawn and mode == "Custom selection" and drawn == tuple(st.session_state.get(range_key) or ()):
-        drawn = None                                              # already the current range
-    if drawn:
-        st.session_state[pending_key] = drawn
-        st.rerun()
+    unit_step = DISTANCE_STEP_KM if has_dist else TIME_STEP_MIN
+    drawn = _drawn_range(_overview(df, i0, i1), f"seg_over_{ride_id}_{i0}_{i1}", 0.0, top, unit_step)
+    st.caption(t('Drag across the profile to choose a stretch of the route, or across the charts below the map to '
+                 'narrow the current one. In *Custom selection* the range slider fine-tunes it in {value1} steps.',
+                 value1='10 m' if has_dist else '0.1 min'))
+    _apply_drawn(drawn, mode, range_key, pending_key)
     if i1 - i0 < 5:
         st.info(t("The selection is too short to analyse. Widen the range."))
         return
@@ -219,7 +232,8 @@ def render_segment_analysis(df, settings, lap_time_spans=None, climbs=None, ride
 
     fig = _channels(df, i0, i1)
     if fig is not None:
-        st.plotly_chart(fig, use_container_width=True, key=f"seg_ch_{ride_id}_{i0}_{i1}")
+        narrowed = _drawn_range(fig, f"seg_ch_{ride_id}_{i0}_{i1}", 0.0, top, unit_step)
+        _apply_drawn(narrowed, mode, range_key, pending_key)
 
     climb = chosen or sg.as_climb(df, i0, i1)
     if climb['length_m'] >= MIN_ESTIMATOR_LENGTH_M and 'dist_m' in df.columns:
